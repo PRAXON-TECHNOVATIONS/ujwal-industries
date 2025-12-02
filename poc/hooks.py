@@ -98,7 +98,7 @@ app_license = "mit"
 
 # before_app_install = "poc.utils.before_app_install"
 # after_app_install = "poc.utils.after_app_install"
-
+after_migrate = "poc.poc.migrate_custom_fields.run_all"
 # Integration Cleanup
 # -------------------
 # To clean up dependencies/integrations with other apps
