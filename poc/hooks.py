@@ -44,6 +44,12 @@ app_license = "mit"
 
 # include js in doctype views
 # doctype_js = {"doctype" : "public/js/doctype.js"}
+
+doctype_js = {
+    "Supplier": "public/js/supplier.js",
+    "Supplier Quotation": "public/js/supplier_quotation.js"
+}
+
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -145,6 +151,12 @@ after_migrate = "poc.poc.migrate_custom_fields.run_all"
 # 	}
 # }
 
+doc_events = {
+    "Supplier": {
+        "before_save": "poc.api.supplier_gstin_check.check_duplicate_gstin"
+    }
+}
+
 # Scheduled Tasks
 # ---------------
 
@@ -241,4 +253,10 @@ after_migrate = "poc.poc.migrate_custom_fields.run_all"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+standard_queries = {
+    "Supplier": "poc.api.approved_supplier_only.supplier_query"
+}
 
+fixtures = [
+    {"doctype": "Workflow", "filters": [["name" , "in" , ("Supplier Approval")]]},
+] 
