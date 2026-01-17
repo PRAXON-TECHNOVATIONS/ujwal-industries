@@ -44,6 +44,13 @@ app_license = "mit"
 
 # include js in doctype views
 # doctype_js = {"doctype" : "public/js/doctype.js"}
+
+doctype_js = {
+    "Supplier": "public/js/supplier.js",
+    "Supplier Quotation": "public/js/supplier_quotation.js",
+    "Material Request": "public/js/material_request.js",
+}
+
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -145,6 +152,15 @@ after_migrate = "poc.poc.migrate_custom_fields.run_all"
 # 	}
 # }
 
+doc_events = {
+    "Supplier": {
+        "before_save": "poc.api.supplier_gstin_check.check_duplicate_gstin"
+    },
+    "Material Request": {
+        "before_insert": "poc.patches.mr_reorder.set_reorder_field"
+    },
+}
+
 # Scheduled Tasks
 # ---------------
 
@@ -241,4 +257,49 @@ after_migrate = "poc.poc.migrate_custom_fields.run_all"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+standard_queries = {
+    "Supplier": "poc.api.approved_supplier_only.supplier_query"
+}
 
+fixtures = [
+    {"doctype": "Workflow", "filters": [["name" , "in" , ("Supplier Approval")]]},
+    {
+        "doctype": "Workflow",
+        "filters": [
+            [
+                "name",
+                "in",
+                (
+                    "Purchase Order Approval",
+                    "Supplier Approval",
+                    "Material Request Approval",
+                ),
+            ]
+        ],
+    },
+    {   "doctype": "Workspace",
+        "filters": [
+            [
+                "name",
+                "in", 
+                (
+                    "Purchase",
+                    "Sales"
+                ),
+            ]
+        ]
+    },
+      {
+        "doctype": "Role",
+        "filters": [
+            [
+                "name",
+                "in",
+                (
+                    "Store Manager",
+                    "Sales Executive"
+                ),
+            ]
+        ],
+    },
+]
