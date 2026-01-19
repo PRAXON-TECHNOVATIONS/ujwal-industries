@@ -2,13 +2,12 @@ exclude: 'node_modules|.git'
 default_stages: [pre-commit]
 fail_fast: false
 
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        files: "poc.*"
+        files: "ujwal_industries.*"
         exclude: ".*json$|.*txt$|.*csv|.*md|.*svg"
       - id: check-merge-conflict
       - id: check-ast
@@ -37,14 +36,13 @@ repos:
         types_or: [javascript, vue, scss]
         # Ignore any files that might contain jinja / bundles
         exclude: |
-            (?x)^(
-                poc/public/dist/.*|
-                .*node_modules.*|
-                .*boilerplate.*|
-                poc/templates/includes/.*|
-                poc/public/js/lib/.*
-            )$
-
+          (?x)^(
+            ujwal_industries/public/dist/.*|
+            .*node_modules.*|
+            .*boilerplate.*|
+            ujwal_industries/templates/includes/.*|
+            ujwal_industries/public/js/lib/.*
+          )$
 
   - repo: https://github.com/pre-commit/mirrors-eslint
     rev: v8.44.0
@@ -54,16 +52,16 @@ repos:
         args: ['--quiet']
         # Ignore any files that might contain jinja / bundles
         exclude: |
-            (?x)^(
-                poc/public/dist/.*|
-                cypress/.*|
-                .*node_modules.*|
-                .*boilerplate.*|
-                poc/templates/includes/.*|
-                poc/public/js/lib/.*
-            )$
+          (?x)^(
+            ujwal_industries/public/dist/.*|
+            cypress/.*|
+            .*node_modules.*|
+            .*boilerplate.*|
+            ujwal_industries/templates/includes/.*|
+            ujwal_industries/public/js/lib/.*
+          )$
 
 ci:
-    autoupdate_schedule: weekly
-    skip: []
-    submodules: false
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
