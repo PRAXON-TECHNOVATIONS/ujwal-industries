@@ -43,9 +43,9 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {
-# 	"Production Plan": "public/js/production_plan.js"
-# }
+doctype_js = {
+	"Production Plan": "public/js/production_plan_subcontracting.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -140,11 +140,17 @@ app_license = "mit"
 # Hook on document methods and events
 
 doc_events = {
+	"Item": {
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+	},
 	"Stock Entry": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
 	},
 	"Production Plan": {
-		"before_save": "ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates"
+		"before_save": [
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
+		]
 	}
 }
 

@@ -232,3 +232,66 @@ def _to_datetime(date_value: Any) -> datetime:
 
     date_obj = getdate(date_value)
     return datetime.combine(date_obj, datetime.min.time())
+
+
+def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> None:
+    """
+    Auto-populate suppliers for subcontracted sub-assembly items.
+
+    Uses Item Subcontracting Supplier table to find default supplier for each item.
+    Only populates if:
+    - type_of_manufacturing = "Subcontract"
+    - supplier field is empty
+    - Default supplier exists in Item Subcontracting Supplier table
+
+    Args:
+        doc: Production Plan document
+        method: Hook method name (unused)
+    """
+    _ = method  # Unused but required for hook signature
+
+    if not doc.get("sub_assembly_items"):
+        return
+
+    # Collect items that need supplier auto-population
+    items_to_fetch: list[str] = [
+        d.production_item
+        for d in doc.sub_assembly_items
+        if d.type_of_manufacturing == "Subcontract" and not d.supplier
+    ]
+
+    if not items_to_fetch:
+        return
+
+    # Batch fetch default suppliers for the company
+    suppliers_data = frappe.db.sql(
+        """
+        SELECT
+            parent as item_code,
+            supplier,
+            lead_time_days
+        FROM `tabItem Subcontracting Supplier`
+        WHERE parent IN %(items)s
+          AND company = %(company)s
+          AND is_default = 1
+    """,
+        {"items": items_to_fetch, "company": doc.company},
+        as_dict=True,
+    )
+
+    # Create lookup map: item_code -> supplier_info
+    supplier_map: dict[str, Any] = {s.item_code: s for s in suppliers_data}
+
+    # Populate supplier field for subcontract items
+    for row in doc.sub_assembly_items:
+        if row.type_of_manufacturing != "Subcontract":
+            continue
+
+        if row.supplier:  # Already has supplier - don't override
+            continue
+
+        supplier_info = supplier_map.get(row.production_item)
+        if supplier_info:
+            row.supplier = supplier_info.supplier
+            # Note: Lead time from supplier can be used for future enhancements
+            # e.g., adjust schedule_date based on supplier lead_time_days
