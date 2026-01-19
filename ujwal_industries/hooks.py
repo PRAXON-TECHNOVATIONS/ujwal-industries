@@ -44,7 +44,10 @@ app_license = "mit"
 
 # include js in doctype views
 doctype_js = {
-	"Production Plan": "public/js/production_plan_subcontracting.js"
+	"Production Plan": "public/js/production_plan_subcontracting.js",
+	"Supplier": "public/js/supplier.js",
+	"Supplier Quotation": "public/js/supplier_quotation.js",
+	"Material Request": "public/js/material_request.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -100,6 +103,7 @@ doctype_js = {
 
 # before_app_install = "ujwal_industries.utils.before_app_install"
 # after_app_install = "ujwal_industries.utils.after_app_install"
+after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all"
 
 # Integration Cleanup
 # -------------------
@@ -151,6 +155,12 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
 		]
+	},
+	"Supplier": {
+		"before_save": "ujwal_industries.ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
+	},
+	"Material Request": {
+		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
 	}
 }
 
@@ -250,6 +260,57 @@ doc_events = {
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+# Standard Queries
+# ----------------
+standard_queries = {
+	"Supplier": "ujwal_industries.ujwal_industries.api.approved_supplier_only.supplier_query"
+}
+
+# Fixtures
+# --------
+fixtures = [
+	{
+		"doctype": "Workflow",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"Purchase Order Approval",
+					"Supplier Approval",
+					"Material Request Approval",
+				),
+			]
+		],
+	},
+	{
+		"doctype": "Workspace",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"Purchase",
+					"Sales"
+				),
+			]
+		]
+	},
+	{
+		"doctype": "Role",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"Store Manager",
+					"Sales Executive"
+				),
+			]
+		],
+	},
+]
 
 # Translation
 # ------------

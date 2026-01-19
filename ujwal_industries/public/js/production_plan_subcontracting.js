@@ -66,7 +66,7 @@ function populate_subcontracting_suppliers(frm) {
 
 	// Batch fetch default suppliers from server
 	frappe.call({
-		method: 'ujwal_industries.api.get_default_subcontracting_suppliers',
+		method: 'ujwal_industries.api.subcontracting_suppliers.get_default_subcontracting_suppliers',
 		args: {
 			items: items_to_fetch,
 			company: frm.doc.company
@@ -115,7 +115,7 @@ function populate_supplier_for_row(frm, cdt, cdn) {
 
 	// Fetch default supplier for this item
 	frappe.call({
-		method: 'ujwal_industries.api.get_default_subcontracting_suppliers',
+		method: 'ujwal_industries.api.subcontracting_suppliers.get_default_subcontracting_suppliers',
 		args: {
 			items: [row.production_item],
 			company: frm.doc.company
