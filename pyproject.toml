@@ -1,9 +1,9 @@
 [project]
-name = "ujwal-industries"
+name = "ujwal_industries"
 authors = [
     { name = "Ujjwal Aggrawal", email = "ujjmee2279@gmail.com"}
 ]
-description = "Custom app for POC purpose"
+description = "Custom application for all sorts of customizations"
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]
