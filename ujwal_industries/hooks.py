@@ -103,7 +103,7 @@ doctype_js = {
 
 # before_app_install = "ujwal_industries.utils.before_app_install"
 # after_app_install = "ujwal_industries.utils.after_app_install"
-after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all"
+after_migrate = "ujwal_industries.patches.migrate_custom_fields.run_all"
 
 # Integration Cleanup
 # -------------------
@@ -145,22 +145,22 @@ after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+		"validate": "ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
 	"Stock Entry": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+		"validate": "ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
 	},
 	"Production Plan": {
 		"before_save": [
-			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
+			"ujwal_industries.overrides.production_plan.set_planned_start_dates",
+			"ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
 		]
 	},
 	"Supplier": {
-		"before_save": "ujwal_industries.ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
+		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
 	},
 	"Material Request": {
-		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
+		"before_insert": "ujwal_industries.patches.mr_reorder.set_reorder_field"
 	}
 }
 
@@ -264,7 +264,7 @@ doc_events = {
 # Standard Queries
 # ----------------
 standard_queries = {
-	"Supplier": "ujwal_industries.ujwal_industries.api.approved_supplier_only.supplier_query"
+	"Supplier": "ujwal_industries.api.approved_supplier_only.supplier_query"
 }
 
 # Fixtures
