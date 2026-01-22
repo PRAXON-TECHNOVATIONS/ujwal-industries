@@ -10,31 +10,40 @@ from typing import Any, Optional
 
 import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
-from frappe.utils import add_days, getdate, get_datetime, now_datetime
+from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
 
 
 def onload_production_plan(doc: Document, method: str | None = None) -> None:
     """
-    Store original sub-assembly schedule_dates in __onload for comparison.
-    This allows detecting user changes and calculating deltas for FG date updates.
+    Store original sub-assembly schedule_dates and MR item dates in __onload for comparison.
+    This allows detecting user changes and calculating deltas for SFG/FG date updates.
     """
     _ = method  # Unused but required for hook signature
 
-    if not doc.get("sub_assembly_items"):
-        return
+    # Store original sub-assembly schedule dates
+    if doc.get("sub_assembly_items"):
+        original_dates = {}
+        for row in doc.sub_assembly_items:
+            if row.production_item and row.schedule_date:
+                original_dates[row.name] = {
+                    "production_item": row.production_item,
+                    "parent_item_code": row.parent_item_code,
+                    "schedule_date": str(row.schedule_date),
+                    "type_of_manufacturing": row.type_of_manufacturing
+                }
+        doc.set_onload("original_subassembly_dates", original_dates)
 
-    # Store original schedule dates
-    original_dates = {}
-    for row in doc.sub_assembly_items:
-        if row.production_item and row.schedule_date:
-            original_dates[row.name] = {
-                "production_item": row.production_item,
-                "parent_item_code": row.parent_item_code,
-                "schedule_date": str(row.schedule_date),
-                "type_of_manufacturing": row.type_of_manufacturing
-            }
-
-    doc.set_onload("original_subassembly_dates", original_dates)
+    # Store original MR item dates
+    if doc.get("mr_items"):
+        original_mr_dates = {}
+        for row in doc.mr_items:
+            if row.item_code and hasattr(row, 'custom_start_date') and row.custom_start_date:
+                original_mr_dates[row.name] = {
+                    "item_code": row.item_code,
+                    "custom_start_date": str(row.custom_start_date),
+                    "schedule_date": str(row.schedule_date) if row.schedule_date else None
+                }
+        doc.set_onload("original_mr_dates", original_mr_dates)
 
 
 def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
@@ -1385,3 +1394,742 @@ def get_item_default_warehouse(item_code: str, company: str) -> str | None:
     )
 
     return result if result else None
+
+
+@frappe.whitelist()
+def calculate_mr_item_dates(
+    production_plan_name: str,
+    mr_items_data: list[dict[str, Any]] | str
+) -> dict[str, dict[str, Any]]:
+    """
+    Calculate schedule dates and supplier info for Material Request Plan Items.
+
+    For each raw material that is linked to SFGs (via BOM):
+    1. Find all SFGs that use this raw material
+    2. Get the lowest schedule_date from those SFGs
+    3. Get the default supplier for the raw material
+    4. Calculate MR schedule_date = lowest_sfg_date - supplier_lead_time_days
+    5. Set custom_start_date = lowest_sfg_date
+
+    Args:
+        production_plan_name: Name of Production Plan
+        mr_items_data: List of dicts with item_code and other MR item info
+
+    Returns:
+        Dict mapping item_code to {custom_start_date, schedule_date, custom_supplier}
+    """
+    import json
+
+    if isinstance(mr_items_data, str):
+        mr_items_data = json.loads(mr_items_data)
+
+    if not mr_items_data:
+        return {}
+
+    # Get Production Plan document
+    doc = frappe.get_doc("Production Plan", production_plan_name)
+
+    if not doc.get("sub_assembly_items"):
+        return {}
+
+    # Extract all raw material item codes
+    raw_material_items = [item["item_code"] for item in mr_items_data if item.get("item_code")]
+
+    if not raw_material_items:
+        return {}
+
+    # Build mapping: raw_material -> list of SFGs that use it
+    # We need to query BOM Item to find which SFGs (from sub_assembly_items) use each raw material
+
+    # Get all SFG items from sub_assembly_items with their BOMs
+    sfg_bom_map = {}  # production_item -> {bom_no, schedule_date}
+    for row in doc.sub_assembly_items:
+        if row.production_item and row.bom_no and row.schedule_date:
+            sfg_bom_map[row.production_item] = {
+                "bom_no": row.bom_no,
+                "schedule_date": row.schedule_date
+            }
+
+    if not sfg_bom_map:
+        return {}
+
+    sfg_boms = list(set([info["bom_no"] for info in sfg_bom_map.values()]))
+
+    # Query BOM Item table to find which raw materials are in which BOMs
+    # We need to handle multi-level BOMs (raw materials might be in nested BOMs)
+    bom_items_data = frappe.db.sql(
+        """
+        SELECT
+            parent as bom_no,
+            item_code
+        FROM `tabBOM Item`
+        WHERE parent IN %(bom_nos)s
+          AND item_code IN %(raw_items)s
+    """,
+        {"bom_nos": sfg_boms, "raw_items": raw_material_items},
+        as_dict=True,
+    )
+
+    # Build reverse mapping: bom_no -> list of raw_materials
+    bom_to_raw: dict[str, list[str]] = {}
+    for row in bom_items_data:
+        if row.bom_no not in bom_to_raw:
+            bom_to_raw[row.bom_no] = []
+        bom_to_raw[row.bom_no].append(row.item_code)
+
+    # Now build: raw_material -> list of (sfg_item, schedule_date)
+    raw_to_sfgs: dict[str, list[dict[str, Any]]] = {}
+
+    for sfg_item, info in sfg_bom_map.items():
+        bom_no = info["bom_no"]
+        schedule_date = info["schedule_date"]
+
+        if bom_no in bom_to_raw:
+            for raw_item in bom_to_raw[bom_no]:
+                if raw_item not in raw_to_sfgs:
+                    raw_to_sfgs[raw_item] = []
+                raw_to_sfgs[raw_item].append({
+                    "sfg_item": sfg_item,
+                    "schedule_date": schedule_date
+                })
+
+    # Batch fetch default suppliers for all raw materials
+    supplier_data = frappe.db.sql(
+        """
+        SELECT
+            parent as item_code,
+            supplier,
+            lead_time_days
+        FROM `tabItem Subcontracting Supplier`
+        WHERE parent IN %(items)s
+          AND company = %(company)s
+          AND is_default = 1
+    """,
+        {"items": raw_material_items, "company": doc.company},
+        as_dict=True,
+    )
+
+    supplier_map = {s.item_code: s for s in supplier_data}
+
+    # Calculate dates for each raw material
+    results: dict[str, dict[str, Any]] = {}
+
+    for item_code in raw_material_items:
+        # Find lowest schedule_date from SFGs that use this raw material
+        if item_code not in raw_to_sfgs:
+            # This raw material is not linked to any SFG
+            # Skip custom date calculation
+            continue
+
+        sfg_dates = [get_datetime(sfg_info["schedule_date"]) for sfg_info in raw_to_sfgs[item_code]]
+        lowest_sfg_date = min(sfg_dates)
+
+        # Get supplier info
+        supplier_info = supplier_map.get(item_code)
+
+        # Only calculate dates if supplier is defined
+        if not supplier_info or not supplier_info.supplier:
+            # No default supplier defined - skip this item
+            continue
+
+        lead_time = int(supplier_info.lead_time_days or 0)
+        supplier_name = supplier_info.supplier
+
+        # custom_start_date = when to order from supplier (earliest date to place order)
+        # schedule_date = when material is needed (when SFG production starts)
+        if lead_time > 0:
+            custom_start_date = add_days(getdate(lowest_sfg_date), -lead_time)
+        else:
+            custom_start_date = getdate(lowest_sfg_date)
+
+        results[item_code] = {
+            "custom_start_date": str(_to_datetime(custom_start_date)),
+            "schedule_date": str(lowest_sfg_date),
+            "custom_supplier": supplier_name
+        }
+
+    return results
+
+
+@frappe.whitelist()
+def get_supplier_lead_time(item_code: str, supplier: str, company: str) -> dict[str, Any]:
+    """
+    Get supplier lead time for a specific item and supplier combination.
+
+    Args:
+        item_code: Item code
+        supplier: Supplier name
+        company: Company name
+
+    Returns:
+        Dict with lead_time_days
+    """
+    result = frappe.db.get_value(
+        "Item Subcontracting Supplier",
+        {
+            "parent": item_code,
+            "supplier": supplier,
+            "company": company,
+            "is_default": 1
+        },
+        "lead_time_days"
+    )
+
+    return {"lead_time_days": result if result is not None else 0}
+
+
+@frappe.whitelist()
+def calculate_production_time_from_bom(bom_no: str) -> dict[str, Any]:
+    """
+    Calculate total production time in minutes from BOM operations.
+
+    Args:
+        bom_no: BOM number
+
+    Returns:
+        Dict with production_minutes
+    """
+    # Get BOM quantity
+    bom_data = frappe.db.get_value("BOM", bom_no, ["quantity"], as_dict=True)
+    if not bom_data:
+        return {"production_minutes": 0}
+
+    qty = float(bom_data.get("quantity") or 1.0)
+
+    # Get BOM operations
+    operations = frappe.db.sql(
+        """
+        SELECT time_in_mins, batch_size
+        FROM `tabBOM Operation`
+        WHERE parent = %s
+        ORDER BY idx
+    """,
+        (bom_no,),
+        as_dict=True,
+    )
+
+    # Calculate total production time
+    production_minutes = 0.0
+    for op in operations:
+        time_in_mins = float(op.get("time_in_mins") or 0)
+        batch_size = float(op.get("batch_size") or 1)
+
+        if batch_size <= 0:
+            batch_size = 1
+
+        time_per_unit = time_in_mins / batch_size
+        operation_time = time_per_unit * qty
+        production_minutes += operation_time
+
+    return {"production_minutes": production_minutes}
+
+
+@frappe.whitelist()
+def cascade_sfg_date_change(
+    production_plan_name: str,
+    changed_sfg_item: str,
+    changed_sfg_bom: str,
+    new_schedule_date: str,
+    new_end_date: str | None = None,
+    company: str | None = None
+) -> dict[str, Any]:
+    """
+    Cascade SFG schedule_date changes to parent SFGs and child MR items.
+
+    Args:
+        production_plan_name: Production Plan name
+        changed_sfg_item: The SFG item code that changed
+        changed_sfg_bom: The BOM of the changed SFG
+        new_schedule_date: New schedule_date value
+        new_end_date: New custom_schedule_end_date value (optional)
+        company: Company name
+
+    Returns:
+        Dict with parent_sfg_updates and mr_item_updates
+    """
+    doc = frappe.get_doc("Production Plan", production_plan_name)
+
+    if not company:
+        company = doc.company
+
+    parent_sfg_updates = []
+    mr_item_updates = []
+
+    # Cascade UP to parent SFGs
+    if doc.get("sub_assembly_items"):
+        for parent_row in doc.sub_assembly_items:
+            if not parent_row.bom_no or parent_row.production_item == changed_sfg_item:
+                continue
+
+            # Check if changed SFG is in this parent's BOM
+            is_child = frappe.db.exists(
+                "BOM Item",
+                {"parent": parent_row.bom_no, "item_code": changed_sfg_item}
+            )
+
+            if is_child:
+                # Get production time for parent
+                prod_time_result = calculate_production_time_from_bom(parent_row.bom_no)
+                production_mins = prod_time_result.get("production_minutes", 0)
+
+                # Calculate new parent date
+                child_end = get_datetime(new_end_date if new_end_date else new_schedule_date)
+                new_parent_start = add_to_date(child_end, minutes=production_mins)
+                new_parent_end = add_to_date(new_parent_start, minutes=production_mins)
+
+                parent_sfg_updates.append({
+                    "row_name": parent_row.name,
+                    "production_item": parent_row.production_item,
+                    "new_schedule_date": str(new_parent_start),
+                    "new_custom_schedule_end_date": str(new_parent_end)
+                })
+
+    # Cascade DOWN to MR items
+    if doc.get("mr_items"):
+        # Get raw materials in changed SFG's BOM
+        raw_materials = frappe.db.sql(
+            """
+            SELECT item_code
+            FROM `tabBOM Item`
+            WHERE parent = %s
+        """,
+            (changed_sfg_bom,),
+            as_dict=True
+        )
+
+        raw_item_codes = [r.item_code for r in raw_materials]
+
+        for mr_row in doc.mr_items:
+            if mr_row.item_code in raw_item_codes and mr_row.custom_supplier:
+                # Get supplier lead time
+                lead_time_result = get_supplier_lead_time(
+                    mr_row.item_code,
+                    mr_row.custom_supplier,
+                    company
+                )
+                lead_time = int(lead_time_result.get("lead_time_days", 0))
+
+                # Calculate new MR dates
+                new_mr_schedule_date = get_datetime(new_schedule_date)
+                new_mr_custom_start_date = add_days(getdate(new_mr_schedule_date), -lead_time)
+
+                mr_item_updates.append({
+                    "row_name": mr_row.name,
+                    "item_code": mr_row.item_code,
+                    "new_schedule_date": str(new_mr_schedule_date),
+                    "new_custom_start_date": str(_to_datetime(new_mr_custom_start_date))
+                })
+
+    return {
+        "parent_sfg_updates": parent_sfg_updates,
+        "mr_item_updates": mr_item_updates
+    }
+
+
+@frappe.whitelist()
+def calculate_sfg_fg_dates_from_mr_items(
+    production_plan_name: str,
+    mr_items_data: list[dict[str, Any]] | str,
+    original_mr_dates: dict[str, dict[str, Any]] | str | None = None
+) -> dict[str, Any]:
+    """
+    Calculate SFG and FG date changes based on MR item custom_start_date changes.
+
+    Logic:
+    1. Compare current MR item dates vs original to detect changes
+    2. For each changed MR item, find which SFGs use that raw material
+    3. Calculate new SFG schedule_date = MR custom_start_date + supplier_lead_time
+    4. Propagate SFG changes up to FG items
+
+    Args:
+        production_plan_name: Name of Production Plan
+        mr_items_data: List of dicts with name, item_code, custom_start_date, schedule_date
+        original_mr_dates: Dict mapping row.name to original date info from __onload
+
+    Returns:
+        Dict with:
+        - sfg_updates: List of SFG items that need date updates
+        - fg_updates: List of FG items that need date updates
+    """
+    import json
+
+    if isinstance(mr_items_data, str):
+        mr_items_data = json.loads(mr_items_data)
+
+    if isinstance(original_mr_dates, str):
+        original_mr_dates = json.loads(original_mr_dates)
+
+    if not original_mr_dates:
+        original_mr_dates = {}
+
+    # Get Production Plan document
+    doc = frappe.get_doc("Production Plan", production_plan_name)
+
+    if not doc.get("sub_assembly_items") or not mr_items_data:
+        return {"sfg_updates": [], "fg_updates": []}
+
+    # Detect changes in MR items
+    changed_mr_items: dict[str, dict[str, Any]] = {}
+
+    for item_info in mr_items_data:
+        row_name = item_info.get("name")
+        item_code = item_info.get("item_code")
+        current_start_date_str = item_info.get("custom_start_date")
+
+        if not row_name or not item_code or not current_start_date_str:
+            continue
+
+        # Check if we have original date
+        if row_name not in original_mr_dates:
+            continue
+
+        original_info = original_mr_dates[row_name]
+        original_start_date_str = original_info.get("custom_start_date")
+
+        if not original_start_date_str:
+            continue
+
+        # Compare dates
+        current_date = get_datetime(current_start_date_str)
+        original_date = get_datetime(original_start_date_str)
+
+        # Calculate delta in seconds
+        delta_seconds = (current_date - original_date).total_seconds()
+
+        # Only consider significant changes (> 60 seconds)
+        if abs(delta_seconds) > 60:
+            changed_mr_items[item_code] = {
+                "delta_minutes": delta_seconds / 60.0,
+                "new_start_date": current_date
+            }
+
+    if not changed_mr_items:
+        return {"sfg_updates": [], "fg_updates": []}
+
+    # Build mapping: raw_material -> list of SFGs that use it (with their BOMs)
+    sfg_bom_map = {}  # production_item -> {bom_no, schedule_date, row_name}
+    for row in doc.sub_assembly_items:
+        if row.production_item and row.bom_no and row.schedule_date:
+            sfg_bom_map[row.production_item] = {
+                "bom_no": row.bom_no,
+                "schedule_date": row.schedule_date,
+                "row_name": row.name,
+                "parent_item_code": row.parent_item_code,
+                "type_of_manufacturing": row.type_of_manufacturing
+            }
+
+    if not sfg_bom_map:
+        return {"sfg_updates": [], "fg_updates": []}
+
+    sfg_boms = list(set([info["bom_no"] for info in sfg_bom_map.values()]))
+    changed_item_codes = list(changed_mr_items.keys())
+
+    # Query BOM Item to find which SFGs use the changed raw materials
+    bom_items_data = frappe.db.sql(
+        """
+        SELECT
+            parent as bom_no,
+            item_code
+        FROM `tabBOM Item`
+        WHERE parent IN %(bom_nos)s
+          AND item_code IN %(raw_items)s
+    """,
+        {"bom_nos": sfg_boms, "raw_items": changed_item_codes},
+        as_dict=True,
+    )
+
+    # Build mapping: raw_material -> list of BOMs
+    raw_to_boms: dict[str, list[str]] = {}
+    for row in bom_items_data:
+        if row.item_code not in raw_to_boms:
+            raw_to_boms[row.item_code] = []
+        raw_to_boms[row.item_code].append(row.bom_no)
+
+    # Get supplier lead times for changed items
+    supplier_data = frappe.db.sql(
+        """
+        SELECT
+            parent as item_code,
+            supplier,
+            lead_time_days
+        FROM `tabItem Subcontracting Supplier`
+        WHERE parent IN %(items)s
+          AND company = %(company)s
+          AND is_default = 1
+    """,
+        {"items": changed_item_codes, "company": doc.company},
+        as_dict=True,
+    )
+
+    supplier_map = {s.item_code: s for s in supplier_data}
+
+    # Calculate new SFG dates (Level 1: Direct children of changed raw materials)
+    sfg_updates = []
+    affected_sfgs: dict[str, datetime] = {}  # production_item -> new_schedule_date
+
+    for item_code, change_info in changed_mr_items.items():
+        new_start_date = change_info["new_start_date"]
+
+        # Find SFGs that use this raw material
+        if item_code in raw_to_boms:
+            for bom_no in raw_to_boms[item_code]:
+                # Find which SFG has this BOM
+                for sfg_item, sfg_info in sfg_bom_map.items():
+                    if sfg_info["bom_no"] == bom_no:
+                        current_sfg_date = sfg_info["schedule_date"]
+
+                        # Calculate new SFG date based on type_of_manufacturing
+                        mfg_type = sfg_info.get("type_of_manufacturing")
+
+                        if mfg_type == "Subcontract":
+                            # For Subcontract: use supplier lead time
+                            supplier_info = supplier_map.get(item_code)
+                            lead_time = int(supplier_info.lead_time_days or 0) if supplier_info else 0
+
+                            # new schedule_date = MR custom_start_date + lead_time
+                            if lead_time > 0:
+                                new_sfg_date = add_days(getdate(new_start_date), lead_time)
+                            else:
+                                new_sfg_date = getdate(new_start_date)
+
+                            new_sfg_datetime = _to_datetime(new_sfg_date)
+
+                        elif mfg_type == "In House":
+                            # For In House: material arrival date = SFG start date (no lead time offset)
+                            # The MR schedule_date IS when material arrives, which is when SFG can start
+                            # So: SFG schedule_date = MR schedule_date (not custom_start_date!)
+
+                            # But we changed custom_start_date, so schedule_date changed too
+                            # We need to get the NEW schedule_date for this MR item
+                            # schedule_date = custom_start_date + supplier_lead_time
+                            supplier_info = supplier_map.get(item_code)
+                            lead_time = int(supplier_info.lead_time_days or 0) if supplier_info else 0
+
+                            # Calculate when material will arrive
+                            material_arrival_date = add_days(getdate(new_start_date), lead_time) if lead_time > 0 else getdate(new_start_date)
+
+                            # SFG can start when material arrives
+                            new_sfg_datetime = _to_datetime(material_arrival_date)
+
+                        else:
+                            # Unknown type - skip
+                            continue
+
+                        # Only update if the new date is different
+                        time_diff = abs((get_datetime(new_sfg_datetime) - get_datetime(current_sfg_date)).total_seconds())
+                        if time_diff > 60:
+                            sfg_updates.append({
+                                "row_name": sfg_info["row_name"],
+                                "production_item": sfg_item,
+                                "parent_item_code": sfg_info["parent_item_code"],
+                                "current_date": str(current_sfg_date),
+                                "new_date": str(new_sfg_datetime),
+                                "affected_by_material": item_code,
+                                "bom_no": sfg_info["bom_no"],
+                                "type_of_manufacturing": mfg_type
+                            })
+
+                            # Track for cascade propagation
+                            if sfg_item not in affected_sfgs:
+                                affected_sfgs[sfg_item] = new_sfg_datetime
+                            else:
+                                # Use the latest date if multiple materials affect same SFG
+                                if new_sfg_datetime > affected_sfgs[sfg_item]:
+                                    affected_sfgs[sfg_item] = new_sfg_datetime
+
+    # Now cascade through parent SFGs recursively
+    # Keep looping until no more parent SFGs are found
+    max_iterations = 10  # Prevent infinite loops
+    iteration = 0
+
+    while affected_sfgs and iteration < max_iterations:
+        iteration += 1
+        new_affected_sfgs = {}
+
+        # Check if any affected SFGs are children of other SFGs
+        for affected_sfg_item, affected_sfg_date in affected_sfgs.items():
+            # Find if this SFG is a child in another SFG's BOM
+            for parent_sfg_item, parent_sfg_info in sfg_bom_map.items():
+                # Skip if we're looking at the same item
+                if parent_sfg_item == affected_sfg_item:
+                    continue
+
+                # Check if affected_sfg_item is in the BOM of parent_sfg_item
+                parent_bom = parent_sfg_info["bom_no"]
+
+                # Query if affected_sfg_item is in this parent's BOM
+                is_child = frappe.db.exists(
+                    "BOM Item",
+                    {"parent": parent_bom, "item_code": affected_sfg_item}
+                )
+
+                if is_child:
+                    # This SFG is a child of parent_sfg_item
+                    # Calculate parent's new schedule_date based on child's new date + production time
+
+                    # Get the BOM and planned qty for parent
+                    parent_bom_data = frappe.db.get_value(
+                        "BOM",
+                        parent_bom,
+                        ["quantity"],
+                        as_dict=True
+                    )
+
+                    if not parent_bom_data:
+                        continue
+
+                    parent_qty = float(parent_bom_data.get("quantity") or 1.0)
+
+                    # Get production time for parent SFG
+                    parent_operations = frappe.db.sql(
+                        """
+                        SELECT time_in_mins, batch_size
+                        FROM `tabBOM Operation`
+                        WHERE parent = %s
+                        ORDER BY idx
+                    """,
+                        (parent_bom,),
+                        as_dict=True,
+                    )
+
+                    # Calculate production time in minutes
+                    production_minutes = 0.0
+                    for op in parent_operations:
+                        time_in_mins = float(op.get("time_in_mins") or 0)
+                        batch_size = float(op.get("batch_size") or 1)
+
+                        if batch_size <= 0:
+                            batch_size = 1
+
+                        time_per_unit = time_in_mins / batch_size
+                        operation_time = time_per_unit * parent_qty
+                        production_minutes += operation_time
+
+                    # Calculate new parent schedule_date = child schedule_date + production_time
+                    child_date = get_datetime(affected_sfg_date)
+                    new_parent_date = add_to_date(child_date, minutes=production_minutes)
+
+                    # Also calculate custom_schedule_end_date (same as schedule_date + production time)
+                    new_parent_end_date = add_to_date(new_parent_date, minutes=production_minutes)
+
+                    current_parent_date = parent_sfg_info["schedule_date"]
+
+                    # Check if this is a significant change
+                    time_diff = abs((get_datetime(new_parent_date) - get_datetime(current_parent_date)).total_seconds())
+
+                    if time_diff > 60:
+                        # Check if this parent SFG is already in sfg_updates
+                        existing_update = None
+                        for update in sfg_updates:
+                            if update["production_item"] == parent_sfg_item:
+                                existing_update = update
+                                break
+
+                        if existing_update:
+                            # Update existing entry if new date is later
+                            if get_datetime(new_parent_date) > get_datetime(existing_update["new_date"]):
+                                existing_update["new_date"] = str(new_parent_date)
+                                existing_update["custom_schedule_end_date"] = str(new_parent_end_date)
+                                existing_update["affected_by_sfg"] = affected_sfg_item
+                        else:
+                            # Add new update
+                            sfg_updates.append({
+                                "row_name": parent_sfg_info["row_name"],
+                                "production_item": parent_sfg_item,
+                                "parent_item_code": parent_sfg_info["parent_item_code"],
+                                "current_date": str(current_parent_date),
+                                "new_date": str(new_parent_date),
+                                "custom_schedule_end_date": str(new_parent_end_date),
+                                "affected_by_sfg": affected_sfg_item,
+                                "bom_no": parent_bom
+                            })
+
+                        # Track this parent for next iteration
+                        if parent_sfg_item not in new_affected_sfgs:
+                            new_affected_sfgs[parent_sfg_item] = new_parent_date
+                        else:
+                            # Use the latest date if multiple children affect same parent
+                            if new_parent_date > new_affected_sfgs[parent_sfg_item]:
+                                new_affected_sfgs[parent_sfg_item] = new_parent_date
+
+        # Continue with newly affected parent SFGs
+        affected_sfgs = new_affected_sfgs
+
+    # Calculate custom_schedule_end_date for all affected SFGs
+    for sfg_update in sfg_updates:
+        if "custom_schedule_end_date" not in sfg_update:
+            # Calculate end date based on production time
+            bom_no = sfg_update["bom_no"]
+
+            # Get BOM quantity
+            bom_data = frappe.db.get_value("BOM", bom_no, ["quantity"], as_dict=True)
+            qty = float(bom_data.get("quantity") or 1.0) if bom_data else 1.0
+
+            # Get operations
+            operations = frappe.db.sql(
+                """
+                SELECT time_in_mins, batch_size
+                FROM `tabBOM Operation`
+                WHERE parent = %s
+                ORDER BY idx
+            """,
+                (bom_no,),
+                as_dict=True,
+            )
+
+            # Calculate production time
+            production_minutes = 0.0
+            for op in operations:
+                time_in_mins = float(op.get("time_in_mins") or 0)
+                batch_size = float(op.get("batch_size") or 1)
+
+                if batch_size <= 0:
+                    batch_size = 1
+
+                time_per_unit = time_in_mins / batch_size
+                operation_time = time_per_unit * qty
+                production_minutes += operation_time
+
+            # Calculate end date
+            start_date = get_datetime(sfg_update["new_date"])
+            end_date = add_to_date(start_date, minutes=production_minutes)
+            sfg_update["custom_schedule_end_date"] = str(end_date)
+
+    # Now propagate SFG changes to FG items
+    fg_updates = []
+
+    if sfg_updates:
+        # Build SFG data for FG calculation
+        sfg_data_for_fg = []
+        for sfg_update in sfg_updates:
+            sfg_data_for_fg.append({
+                "name": sfg_update["row_name"],
+                "production_item": sfg_update["production_item"],
+                "parent_item_code": sfg_update["parent_item_code"],
+                "schedule_date": sfg_update["new_date"],
+                "type_of_manufacturing": "Material Request Change"
+            })
+
+        # Create fake original dates (all current dates minus delta)
+        original_sfg_dates = {}
+        for sfg_update in sfg_updates:
+            original_sfg_dates[sfg_update["row_name"]] = {
+                "production_item": sfg_update["production_item"],
+                "parent_item_code": sfg_update["parent_item_code"],
+                "schedule_date": sfg_update["current_date"],
+                "type_of_manufacturing": ""
+            }
+
+        # Call existing FG calculation method
+        fg_impacts = calculate_fg_dates_from_subassembly(
+            production_plan_name,
+            sfg_data_for_fg,
+            original_sfg_dates
+        )
+
+        fg_updates = fg_impacts
+
+    return {
+        "sfg_updates": sfg_updates,
+        "fg_updates": fg_updates
+    }
