@@ -174,9 +174,9 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
 		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
 	},
-	"Work Order": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.work_order.validate_finish_qty"
-	},
+	# "Work Order": {
+	# 	"validate": "ujwal_industries.ujwal_industries.overrides.work_order.validate_finish_qty"
+	# },
 }
 
 # Scheduled Tasks
