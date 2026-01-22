@@ -27,11 +27,21 @@ frappe.ui.form.on('Production Plan', {
 			}
 		}
 
-		// Add custom button to recalculate FG dates from sub-assembly changes
-		if (frm.doc.sub_assembly_items && frm.doc.sub_assembly_items.length > 0 && !frm.is_new()) {
-			frm.add_custom_button(__('Update FG Dates from Sub-Assembly'), function() {
-				recalculate_fg_dates_from_subassembly(frm);
-			}, __('Sub Assembly Items'));
+		// Add custom buttons in a dropdown menu for date updates
+		if (!frm.is_new()) {
+			// Add FG date update button if we have sub-assembly items
+			if (frm.doc.sub_assembly_items && frm.doc.sub_assembly_items.length > 0) {
+				frm.add_custom_button(__('Update FG from Sub-Assembly'), function() {
+					recalculate_fg_dates_from_subassembly(frm);
+				}, __('Update Dates'));
+			}
+
+			// Add SFG/FG date update button if we have MR items
+			if (frm.doc.mr_items && frm.doc.mr_items.length > 0) {
+				frm.add_custom_button(__('Update SFG/FG from Material Request'), function() {
+					update_sfg_fg_dates_from_mr(frm);
+				}, __('Update Dates'));
+			}
 		}
 	},
 
@@ -40,6 +50,14 @@ frappe.ui.form.on('Production Plan', {
 		// Wait for items to be added, then populate suppliers and schedule_dates
 		setTimeout(() => {
 			populate_subcontracting_data(frm);
+		}, 500);
+	},
+
+	// Hook into "Get Items for Material Request" button
+	get_items_for_mr: function(frm) {
+		// Wait for MR items to be added, then calculate custom dates
+		setTimeout(() => {
+			calculate_mr_item_dates(frm);
 		}, 500);
 	}
 });
@@ -105,13 +123,13 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 		}
 
 		// User manually changed schedule_date
-		// Update custom_schedule_end_date based on manufacturing type
 		const row = locals[cdt][cdn];
 
 		if (!row.schedule_date) {
 			return;
 		}
 
+		// Update custom_schedule_end_date based on manufacturing type
 		if (row.type_of_manufacturing === 'Subcontract') {
 			// For Subcontract: custom_schedule_end_date = schedule_date + lead_time_days
 			update_subcontract_end_date(frm, row);
@@ -119,6 +137,49 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 			// For In House: custom_schedule_end_date = schedule_date + production_time
 			update_inhouse_end_date(frm, row);
 		}
+
+		// Cascade changes to parent SFGs and child MR items
+		cascade_sfg_date_change(frm, row);
+	}
+});
+
+// Material Request Plan Item events
+frappe.ui.form.on('Material Request Plan Item', {
+	custom_start_date: function(frm, cdt, cdn) {
+		// Skip if this is a programmatic update
+		if (is_programmatic_change()) {
+			return;
+		}
+
+		// When user changes custom_start_date, update schedule_date based on supplier lead time
+		const row = locals[cdt][cdn];
+
+		if (!row.custom_start_date || !row.item_code || !row.custom_supplier) {
+			return;
+		}
+
+		// Get supplier lead time using a custom server method
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_supplier_lead_time',
+			args: {
+				item_code: row.item_code,
+				supplier: row.custom_supplier,
+				company: frm.doc.company
+			},
+			callback: function(r) {
+				if (r.message !== undefined && r.message.lead_time_days !== undefined) {
+					const lead_time = parseInt(r.message.lead_time_days || 0);
+
+					// Calculate new schedule_date = custom_start_date + lead_time
+					const start_date = frappe.datetime.str_to_obj(row.custom_start_date);
+					const schedule_date = frappe.datetime.add_days(start_date, lead_time);
+
+					// Update schedule_date programmatically
+					mark_programmatic_update();
+					frappe.model.set_value(cdt, cdn, 'schedule_date', frappe.datetime.obj_to_str(schedule_date));
+				}
+			}
+		});
 	}
 });
 
@@ -666,6 +727,240 @@ function update_inhouse_end_date(frm, row) {
 					mark_programmatic_update();
 					frappe.model.set_value(row.doctype, row.name, 'custom_schedule_end_date', row.schedule_date);
 				}
+			}
+		}
+	});
+}
+
+/**
+ * Calculate custom dates for Material Request Plan Items based on SFG schedule dates
+ */
+function calculate_mr_item_dates(frm) {
+	if (!frm.doc.mr_items || frm.doc.mr_items.length === 0) {
+		return;
+	}
+
+	// Prepare MR items data
+	const mr_items_data = frm.doc.mr_items.map(row => ({
+		name: row.name,
+		item_code: row.item_code
+	}));
+
+	// Call server-side method to calculate dates
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.calculate_mr_item_dates',
+		args: {
+			production_plan_name: frm.doc.name,
+			mr_items_data: mr_items_data
+		},
+		callback: function(r) {
+			if (r.message) {
+				const date_map = r.message;
+
+				// Update each MR item with calculated dates
+				frm.doc.mr_items.forEach(row => {
+					if (row.item_code && date_map[row.item_code]) {
+						const dates = date_map[row.item_code];
+
+						mark_programmatic_update();
+
+						// Set custom_start_date (lowest SFG schedule_date)
+						if (dates.custom_start_date) {
+							frappe.model.set_value(row.doctype, row.name, 'custom_start_date', dates.custom_start_date);
+						}
+
+						// Set schedule_date (custom_start_date - lead_time_days)
+						if (dates.schedule_date) {
+							frappe.model.set_value(row.doctype, row.name, 'schedule_date', dates.schedule_date);
+						}
+
+						// Set custom_supplier (default supplier for raw material)
+						if (dates.custom_supplier) {
+							frappe.model.set_value(row.doctype, row.name, 'custom_supplier', dates.custom_supplier);
+						}
+					}
+				});
+
+				frm.refresh_field('mr_items');
+				frappe.show_alert({
+					message: __('Material Request dates calculated successfully'),
+					indicator: 'green'
+				}, 3);
+			}
+		}
+	});
+}
+
+/**
+ * Update SFG and FG dates based on MR item custom_start_date changes
+ */
+function update_sfg_fg_dates_from_mr(frm) {
+	if (!frm.doc.mr_items || frm.doc.mr_items.length === 0) {
+		frappe.msgprint(__('No Material Request items found'));
+		return;
+	}
+
+	// Get original MR dates from __onload
+	const original_dates = frm.doc.__onload && frm.doc.__onload.original_mr_dates || {};
+
+	// Prepare current MR item data
+	const mr_items_data = frm.doc.mr_items.map(row => ({
+		name: row.name,
+		item_code: row.item_code,
+		custom_start_date: row.custom_start_date,
+		schedule_date: row.schedule_date
+	}));
+
+	// Call server to calculate SFG/FG date updates
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.calculate_sfg_fg_dates_from_mr_items',
+		args: {
+			production_plan_name: frm.doc.name,
+			mr_items_data: mr_items_data,
+			original_mr_dates: original_dates
+		},
+		callback: function(r) {
+			if (r.message) {
+				const sfg_updates = r.message.sfg_updates || [];
+				const fg_updates = r.message.fg_updates || [];
+
+				if (sfg_updates.length === 0 && fg_updates.length === 0) {
+					frappe.msgprint(__('No date changes detected in Material Request items'));
+					return;
+				}
+
+				// Build confirmation message
+				let message = '<div style="max-height: 400px; overflow-y: auto;">';
+				message += '<h4>The following items will be updated:</h4>';
+
+				if (sfg_updates.length > 0) {
+					message += '<h5 style="margin-top: 15px;">Sub-Assembly Items:</h5>';
+					message += '<table class="table table-bordered" style="font-size: 12px;">';
+					message += '<thead><tr><th>Item</th><th>Current Schedule Date</th><th>New Schedule Date</th><th>New End Date</th><th>Triggered By</th></tr></thead><tbody>';
+
+					sfg_updates.forEach(update => {
+						const current = frappe.datetime.str_to_user(update.current_date);
+						const new_date = frappe.datetime.str_to_user(update.new_date);
+						const new_end_date = update.custom_schedule_end_date ? frappe.datetime.str_to_user(update.custom_schedule_end_date) : 'N/A';
+						const triggered_by = update.affected_by_material || update.affected_by_sfg || 'N/A';
+						message += `<tr><td>${update.production_item}</td><td>${current}</td><td>${new_date}</td><td>${new_end_date}</td><td>${triggered_by}</td></tr>`;
+					});
+
+					message += '</tbody></table>';
+				}
+
+				if (fg_updates.length > 0) {
+					message += '<h5 style="margin-top: 15px;">Finished Goods (FG) Items:</h5>';
+					message += '<table class="table table-bordered" style="font-size: 12px;">';
+					message += '<thead><tr><th>Item</th><th>Current Date</th><th>New Date</th></tr></thead><tbody>';
+
+					fg_updates.forEach(update => {
+						const current = frappe.datetime.str_to_user(update.current_date);
+						const new_date = frappe.datetime.str_to_user(update.new_date);
+						message += `<tr><td>${update.fg_item}</td><td>${current}</td><td>${new_date}</td></tr>`;
+					});
+
+					message += '</tbody></table>';
+				}
+
+				message += '</div>';
+
+				// Show confirmation dialog
+				frappe.confirm(
+					message,
+					function() {
+						// User clicked Yes - apply updates
+						mark_programmatic_update();
+
+						// Update SFG items
+						sfg_updates.forEach(update => {
+							const row = frm.doc.sub_assembly_items.find(r => r.name === update.row_name);
+							if (row) {
+								frappe.model.set_value(row.doctype, row.name, 'schedule_date', update.new_date);
+
+								// Also update custom_schedule_end_date if provided
+								if (update.custom_schedule_end_date) {
+									frappe.model.set_value(row.doctype, row.name, 'custom_schedule_end_date', update.custom_schedule_end_date);
+								}
+							}
+						});
+
+						// Update FG items
+						fg_updates.forEach(update => {
+							const fg_row = frm.doc.po_items.find(r => r.item_code === update.fg_item);
+							if (fg_row) {
+								frappe.model.set_value(fg_row.doctype, fg_row.name, 'planned_start_date', update.new_date);
+							}
+						});
+
+						frm.refresh_fields(['sub_assembly_items', 'po_items']);
+						frappe.show_alert({
+							message: __('SFG and FG dates updated successfully'),
+							indicator: 'green'
+						}, 5);
+					},
+					function() {
+						// User clicked No - do nothing
+						frappe.show_alert({
+							message: __('Update cancelled'),
+							indicator: 'orange'
+						}, 3);
+					}
+				);
+			}
+		}
+	});
+}
+
+
+/**
+ * Cascade SFG schedule_date changes to parent SFGs and child MR items in real-time
+ */
+function cascade_sfg_date_change(frm, changed_sfg_row) {
+	if (!changed_sfg_row.production_item || !changed_sfg_row.schedule_date || !changed_sfg_row.bom_no) {
+		return;
+	}
+
+	// Call server method to calculate cascade updates
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.cascade_sfg_date_change',
+		args: {
+			production_plan_name: frm.doc.name,
+			changed_sfg_item: changed_sfg_row.production_item,
+			changed_sfg_bom: changed_sfg_row.bom_no,
+			new_schedule_date: changed_sfg_row.schedule_date,
+			new_end_date: changed_sfg_row.custom_schedule_end_date,
+			company: frm.doc.company
+		},
+		callback: function(r) {
+			if (r.message) {
+				const parent_updates = r.message.parent_sfg_updates || [];
+				const mr_updates = r.message.mr_item_updates || [];
+
+				// Apply parent SFG updates
+				mark_programmatic_update();
+				parent_updates.forEach(update => {
+					const row = frm.doc.sub_assembly_items.find(r => r.name === update.row_name);
+					if (row) {
+						frappe.model.set_value(row.doctype, row.name, 'schedule_date', update.new_schedule_date);
+						if (update.new_custom_schedule_end_date) {
+							frappe.model.set_value(row.doctype, row.name, 'custom_schedule_end_date', update.new_custom_schedule_end_date);
+						}
+					}
+				});
+
+				// Apply MR item updates
+				mr_updates.forEach(update => {
+					const row = frm.doc.mr_items.find(r => r.name === update.row_name);
+					if (row) {
+						frappe.model.set_value(row.doctype, row.name, 'schedule_date', update.new_schedule_date);
+						frappe.model.set_value(row.doctype, row.name, 'custom_start_date', update.new_custom_start_date);
+					}
+				});
+
+				// Refresh tables
+				frm.refresh_field('sub_assembly_items');
+				frm.refresh_field('mr_items');
 			}
 		}
 	});
