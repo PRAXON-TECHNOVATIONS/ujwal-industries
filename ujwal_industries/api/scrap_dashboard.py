@@ -1,24 +1,14 @@
 import frappe
 from frappe.utils import flt
 
-
 @frappe.whitelist()
 def get_work_order_scrap_status(work_order):
-
     rows = []
 
     if not work_order:
         return []
 
-    # 1️⃣ Job Card Completed Qty (WO level)
-    job_cards = frappe.get_all(
-        "Job Card",
-        filters={"work_order": work_order, "docstatus": 1},
-        fields=["total_completed_qty"]
-    )
-    wo_completed_qty = sum(flt(j.total_completed_qty) for j in job_cards)
-
-    # 2️⃣ Work Order + BOM
+    # 1. Work Order + BOM Details
     wo = frappe.get_doc("Work Order", work_order)
     if not wo.bom_no:
         return []
@@ -26,7 +16,7 @@ def get_work_order_scrap_status(work_order):
     bom = frappe.get_doc("BOM", wo.bom_no)
     bom_qty = flt(bom.quantity) or 1
 
-    # 3️⃣ Scrap item (single scrap item as discussed)
+    # 2. Scrap Item Details
     if not bom.scrap_items:
         return []
 
@@ -34,7 +24,7 @@ def get_work_order_scrap_status(work_order):
     scrap_item_code = scrap.item_code
     scrap_item_name = frappe.db.get_value("Item", scrap_item_code, "item_name")
 
-    # 4️⃣ Manufacture Stock Entries only
+    # 3. Manufacture Stock Entries
     stock_entries = frappe.get_all(
         "Stock Entry",
         filters={
@@ -47,23 +37,21 @@ def get_work_order_scrap_status(work_order):
         order_by="posting_date, name"
     )
 
-    # keep only entries where FG actually produced
-    stock_entries = [
-        se for se in stock_entries
-        if flt(se.fg_completed_qty) > 0
-    ]
+    stock_entries = [se for se in stock_entries if flt(se.fg_completed_qty) >= 0]
 
     total_expected = 0
     total_actual = 0
+    total_manufactured = 0  # ✅ New Variable for Total Mfg Qty
 
-    # 5️⃣ One row per Stock Entry
+    # 4. Loop through Stock Entries
     for se in stock_entries:
-
         manufactured_qty = flt(se.fg_completed_qty)
+        total_manufactured += manufactured_qty  # ✅ Add to total
 
-        # ✅ Correct expected scrap PER ENTRY
+        # Expected Scrap for THIS entry
         expected_qty = (manufactured_qty / bom_qty) * flt(scrap.stock_qty)
-
+        
+        # Actual Scrap for THIS entry
         actual_qty = frappe.db.sql("""
             SELECT SUM(qty)
             FROM `tabStock Entry Detail`
@@ -76,6 +64,14 @@ def get_work_order_scrap_status(work_order):
         total_expected += expected_qty
         total_actual += actual_qty
 
+        # ✅ Row-wise Status Logic
+        if actual_qty == 0:
+            row_status = "Scrap Not Received"
+        elif actual_qty < expected_qty:
+            row_status = "Partial Received"
+        else:
+            row_status = "Fully Received"
+
         rows.append({
             "scrap_item_code": scrap_item_code,
             "scrap_item_name": scrap_item_name,
@@ -83,29 +79,26 @@ def get_work_order_scrap_status(work_order):
             "expected_scrap_qty": round(expected_qty, 3),
             "completed_qty": manufactured_qty,
             "actual_scrap_qty": round(actual_qty, 3),
-            "status": ""  # filled later
+            "status": row_status  # ✅ Individual Status
         })
 
-    # 6️⃣ WO-level status
+    # 5. Global Status Logic (For Total Row)
     if total_actual == 0:
-        status = "Scrap Not Received"
+        global_status = "Scrap Not Received"
     elif total_actual < total_expected:
-        status = "Partial Received"
+        global_status = "Partial Received"
     else:
-        status = "Fully Received"
+        global_status = "Fully Received"
 
-    for r in rows:
-        r["status"] = status
-
-    # 7️⃣ TOTAL ROW (ONLY ONCE, CORRECT)
+    # 6. Append Total Row
     rows.append({
         "scrap_item_code": "",
-        "scrap_item_name": "TOTAL",
+        "scrap_item_name": "<b>TOTAL</b>",
         "stock_entry": "",
         "expected_scrap_qty": round(total_expected, 3),
-        "completed_qty": "",
+        "completed_qty": total_manufactured,  # ✅ Total Manufactured Qty Added
         "actual_scrap_qty": round(total_actual, 3),
-        "status": status
+        "status": global_status  # ✅ Overall Status
     })
 
     return rows
