@@ -38,6 +38,9 @@ def validate_scrap_item_tolerance(doc: Document, method: str | None = None) -> N
         doc: Stock Entry document
         method: Event method name (unused, required for hook signature)
     """
+    if getattr(doc, "custom_is_scrap_entry", 1):
+        return
+    
     _ = method  # Unused but required for hook signature
 
     purpose = doc.get("purpose")
@@ -84,6 +87,7 @@ def _get_stock_entry_scrap_items(doc: Document) -> dict[str, float]:
     return scrap_items
 
 
+
 def _get_bom_scrap_items_with_tolerance(
     bom_no: str, fg_completed_qty: float
 ) -> dict[str, BOMScrapData]:
@@ -127,7 +131,6 @@ def _get_bom_scrap_items_with_tolerance(
             qty=scaled_qty,
             tolerance=flt(item["tolerance"]),
         )
-
     return bom_data
 
 

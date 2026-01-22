@@ -53,7 +53,7 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
     Formula: planned_start_date = delivery_datetime - production_time_minutes
 
     Production time is calculated from BOM operations:
-    - For each operation: time_per_unit = time_in_mins / batch_size
+    - For each operation: time_per_unit = time_in_mins / custom_batchsize
     - Total time for operation = time_per_unit × planned_qty
     - Sum all operations (in minutes) and subtract from delivery datetime
 
@@ -375,7 +375,7 @@ def calculate_planned_start_dates_realtime(
             SELECT
                 parent as bom_no,
                 time_in_mins,
-                batch_size,
+                custom_batchsize,
                 operation,
                 idx
             FROM `tabBOM Operation`
@@ -467,7 +467,7 @@ def calculate_inhouse_schedule_dates(
             SELECT
                 parent as bom_no,
                 time_in_mins,
-                batch_size,
+                custom_batchsize,
                 operation,
                 idx
             FROM `tabBOM Operation`
@@ -741,7 +741,7 @@ def _batch_fetch_bom_operations(doc: Document) -> dict[str, list[dict[str, Any]]
         doc: Production Plan document
 
     Returns:
-        Dict mapping BOM name to list of operations with time_in_mins and batch_size
+        Dict mapping BOM name to list of operations with time_in_mins and custom_batchsize
     """
     po_items_list = list(doc.get("po_items") or [])
     bom_nos = list(set([pi.bom_no for pi in po_items_list if pi.bom_no]))
@@ -755,7 +755,7 @@ def _batch_fetch_bom_operations(doc: Document) -> dict[str, list[dict[str, Any]]
         SELECT
             parent as bom_no,
             time_in_mins,
-            batch_size,
+            custom_batchsize,
             operation,
             idx
         FROM `tabBOM Operation`
@@ -785,7 +785,7 @@ def _calculate_production_minutes(
     Calculate production time in minutes based on BOM operations.
 
     Formula for each operation:
-    - time_per_unit = time_in_mins / batch_size
+    - time_per_unit = time_in_mins / custom_batchsize
     - total_time_for_operation = time_per_unit × planned_qty
     - Sum all operations
 
@@ -808,13 +808,13 @@ def _calculate_production_minutes(
 
     for op in operations:
         time_in_mins = float(op.get("time_in_mins") or 0)
-        batch_size = float(op.get("batch_size") or 1)
+        custom_batchsize = float(op.get("custom_batchsize") or 1)
 
-        if batch_size <= 0:
-            batch_size = 1  # Avoid division by zero
+        if custom_batchsize <= 0:
+            custom_batchsize = 1  # Avoid division by zero
 
         # Calculate time per unit
-        time_per_unit = time_in_mins / batch_size
+        time_per_unit = time_in_mins / custom_batchsize
 
         # Calculate total time for this operation
         operation_total_time = time_per_unit * planned_qty
@@ -894,7 +894,7 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
 
     For In House items:
     - Calculates schedule_date based on BOM operations time
-    - Uses same logic as FG items: time_per_unit = time_in_mins / batch_size
+    - Uses same logic as FG items: time_per_unit = time_in_mins / custom_batchsize
 
     Calculates schedule_date by working backwards from FG's planned_start_date:
     - Direct children of FG: schedule_date = FG.planned_start_date - production_time
@@ -1052,7 +1052,7 @@ def _batch_fetch_subassembly_bom_operations(doc: Document) -> dict[str, list[dic
         doc: Production Plan document
 
     Returns:
-        Dict mapping BOM name to list of operations with time_in_mins and batch_size
+        Dict mapping BOM name to list of operations with time_in_mins and custom_batchsize
     """
     if not doc.get("sub_assembly_items"):
         return {}
@@ -1069,7 +1069,7 @@ def _batch_fetch_subassembly_bom_operations(doc: Document) -> dict[str, list[dic
         SELECT
             parent as bom_no,
             time_in_mins,
-            batch_size,
+            custom_batchsize,
             operation,
             idx
         FROM `tabBOM Operation`
@@ -1340,7 +1340,7 @@ def get_production_time(bom_no: str, qty: float | str) -> float:
     # Fetch BOM operations
     operations = frappe.db.sql(
         """
-        SELECT time_in_mins, batch_size
+        SELECT time_in_mins, custom_batchsize
         FROM `tabBOM Operation`
         WHERE parent = %s
         ORDER BY idx
@@ -1356,13 +1356,13 @@ def get_production_time(bom_no: str, qty: float | str) -> float:
 
     for op in operations:
         time_in_mins = float(op.get("time_in_mins") or 0)
-        batch_size = float(op.get("batch_size") or 1)
+        custom_batchsize = float(op.get("custom_batchsize") or 1)
 
-        if batch_size <= 0:
-            batch_size = 1
+        if custom_batchsize <= 0:
+            custom_batchsize = 1
 
         # Calculate time per unit
-        time_per_unit = time_in_mins / batch_size
+        time_per_unit = time_in_mins / custom_batchsize
 
         # Calculate total time for this operation
         operation_total_time = time_per_unit * qty
@@ -1599,7 +1599,7 @@ def calculate_production_time_from_bom(bom_no: str) -> dict[str, Any]:
     # Get BOM operations
     operations = frappe.db.sql(
         """
-        SELECT time_in_mins, batch_size
+        SELECT time_in_mins, custom_batchsize
         FROM `tabBOM Operation`
         WHERE parent = %s
         ORDER BY idx
@@ -1612,12 +1612,12 @@ def calculate_production_time_from_bom(bom_no: str) -> dict[str, Any]:
     production_minutes = 0.0
     for op in operations:
         time_in_mins = float(op.get("time_in_mins") or 0)
-        batch_size = float(op.get("batch_size") or 1)
+        custom_batchsize = float(op.get("custom_batchsize") or 1)
 
-        if batch_size <= 0:
-            batch_size = 1
+        if custom_batchsize <= 0:
+            custom_batchsize = 1
 
-        time_per_unit = time_in_mins / batch_size
+        time_per_unit = time_in_mins / custom_batchsize
         operation_time = time_per_unit * qty
         production_minutes += operation_time
 
@@ -1983,7 +1983,7 @@ def calculate_sfg_fg_dates_from_mr_items(
                     # Get production time for parent SFG
                     parent_operations = frappe.db.sql(
                         """
-                        SELECT time_in_mins, batch_size
+                        SELECT time_in_mins, custom_batchsize
                         FROM `tabBOM Operation`
                         WHERE parent = %s
                         ORDER BY idx
@@ -1996,12 +1996,12 @@ def calculate_sfg_fg_dates_from_mr_items(
                     production_minutes = 0.0
                     for op in parent_operations:
                         time_in_mins = float(op.get("time_in_mins") or 0)
-                        batch_size = float(op.get("batch_size") or 1)
+                        custom_batchsize = float(op.get("custom_batchsize") or 1)
 
-                        if batch_size <= 0:
-                            batch_size = 1
+                        if custom_batchsize <= 0:
+                            custom_batchsize = 1
 
-                        time_per_unit = time_in_mins / batch_size
+                        time_per_unit = time_in_mins / custom_batchsize
                         operation_time = time_per_unit * parent_qty
                         production_minutes += operation_time
 
@@ -2068,7 +2068,7 @@ def calculate_sfg_fg_dates_from_mr_items(
             # Get operations
             operations = frappe.db.sql(
                 """
-                SELECT time_in_mins, batch_size
+                SELECT time_in_mins, custom_batchsize
                 FROM `tabBOM Operation`
                 WHERE parent = %s
                 ORDER BY idx
@@ -2081,12 +2081,12 @@ def calculate_sfg_fg_dates_from_mr_items(
             production_minutes = 0.0
             for op in operations:
                 time_in_mins = float(op.get("time_in_mins") or 0)
-                batch_size = float(op.get("batch_size") or 1)
+                custom_batchsize = float(op.get("custom_batchsize") or 1)
 
-                if batch_size <= 0:
-                    batch_size = 1
+                if custom_batchsize <= 0:
+                    custom_batchsize = 1
 
-                time_per_unit = time_in_mins / batch_size
+                time_per_unit = time_in_mins / custom_batchsize
                 operation_time = time_per_unit * qty
                 production_minutes += operation_time
 
