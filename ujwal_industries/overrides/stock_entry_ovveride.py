@@ -31,8 +31,6 @@ def check_if_operations_completed_wrapper(self):
 # 3. Override in runtime
 StockEntry.check_if_operations_completed = check_if_operations_completed_wrapper
 
-
-
 # Store original function validate work order
 original_validate_work_order = StockEntry.validate_work_order
 
@@ -58,12 +56,6 @@ def validate_work_order_wrapper(self):
 
 # Monkey patch
 StockEntry.validate_work_order = validate_work_order_wrapper
-
-
-
-
-
-
 
 # Store original validate finished goods
 _original_validate_finished_goods = StockEntry.validate_finished_goods
