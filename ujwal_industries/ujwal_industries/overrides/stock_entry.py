@@ -38,9 +38,6 @@ def validate_scrap_item_tolerance(doc: Document, method: str | None = None) -> N
         doc: Stock Entry document
         method: Event method name (unused, required for hook signature)
     """
-    if getattr(doc, "custom_is_scrap_entry", 1):
-        return
-    
     _ = method  # Unused but required for hook signature
 
     purpose = doc.get("purpose")
@@ -56,10 +53,29 @@ def validate_scrap_item_tolerance(doc: Document, method: str | None = None) -> N
         return
 
     # Fetch BOM scrap items with tolerance (single query)
-    fg_completed_qty = doc.get("fg_completed_qty")
+    # fg_completed_qty = doc.get("fg_completed_qty")
+    # bom_data = _get_bom_scrap_items_with_tolerance(
+    #     cast(str, bom_no),
+    #     cast(float, fg_completed_qty),
+    # )
+    
+    is_scrap_entry = bool(getattr(doc, "custom_is_scrap_entry", 0))
+
+    if is_scrap_entry:
+        qty_for_scaling = flt(
+            frappe.db.get_value("Work Order", work_order, "produced_qty")
+        )
+    else:
+        qty_for_scaling = flt(doc.get("fg_completed_qty"))
+
+    if not qty_for_scaling:
+        frappe.throw(
+            ("Cannot create Scrap Entry because Produced Qty in Work Order is 0")
+        )
+
     bom_data = _get_bom_scrap_items_with_tolerance(
         cast(str, bom_no),
-        cast(float, fg_completed_qty),
+        cast(float, qty_for_scaling)
     )
     if not bom_data:
         return
