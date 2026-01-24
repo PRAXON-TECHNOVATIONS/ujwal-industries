@@ -144,47 +144,42 @@ frappe.ui.form.on('Work Order', {
 
 function render_scrap_table(frm, data) {
     let html = `
-        <div style="margin-bottom: 15px;">
+        <div class="scrap-title">
             <h4>Scrap Tracking</h4>
         </div>
-        <table class="table table-bordered table-sm">
-            <thead style="background-color: #f8f9fa;">
-                <tr>
-                    <th style="width: 25%">Scrap Item</th>
-                    <th style="width: 15%">Stock Entry</th>
-                    <th style="width: 12%; text-align: right;">Expected Qty</th>
-                    <th style="width: 15%; text-align: right;">Manufactured Qty</th>
-                    <th style="width: 15%; text-align: right;">Actual Scrap Qty</th>
-                    <th style="width: 15%">Status</th>
-                </tr>
-            </thead>
-            <tbody>
+        <div class="erp-scrap-wrapper">
+            <table class="table table-sm erp-scrap-table">
+                <thead>
+                    <tr>
+                        <th width="20%">Scrap Item</th>
+                        <th width="15%">Stock Entry</th>
+                        <th width="12%">Expected Qty</th>
+                        <th width="15%">Manufactured Qty</th>
+                        <th width="15%">Actual Scrap Qty</th>
+                        <th width="20%">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
     `;
 
     data.forEach(row => {
-        // Color Logic
-        let color = "red"; // Default Not Received
-        if (row.status === "Fully Received") {
-            color = "green";
-        } else if (row.status === "Partial Received") {
-            color = "orange";
-        }
-
-        // Bold row for Total
         let is_total = row.scrap_item_name.includes("TOTAL");
-        let row_style = is_total ? "font-weight: bold; background-color: #f0f0f0;" : "";
+        let row_class = is_total ? "erp-total-row" : "";
 
         html += `
-            <tr style="${row_style}">
-                <td>${row.scrap_item_code ? row.scrap_item_code + " - " + row.scrap_item_name : row.scrap_item_name}</td>
-                <td>${row.stock_entry || ""}</td>
-                <td style="text-align: right;">${row.expected_scrap_qty}</td>
-                <td style="text-align: right;">${row.completed_qty || 0}</td>
-                <td style="text-align: right;">${row.actual_scrap_qty}</td>
-                <td style="color:${color}; font-weight:bold;">
-                    ${row.status}
-                </td>
-            </tr>
+                <tr class="${row_class}">
+                    <td>${row.scrap_item_code ? row.scrap_item_code + " - " + row.scrap_item_name : row.scrap_item_name}</td>
+                    <td>${row.stock_entry || ""}</td>
+                    <td>${row.expected_scrap_qty}</td>
+                    <td>${row.completed_qty || 0}</td>
+                    <td>${row.actual_scrap_qty}</td>
+                    <td>
+                        <span class="erp-status ${row.status.replaceAll(' ', '-').toLowerCase()}">
+                            ${row.status}
+                        </span>
+                    </td>
+                </tr>
+        </div>
         `;
     });
 
