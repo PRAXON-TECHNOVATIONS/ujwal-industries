@@ -8,11 +8,13 @@ def get_work_order_scrap_status(work_order):
     if not work_order:
         return []
 
+    if not frappe.db.exists("Work Order", work_order):
+        return []
+    
     # 1. Work Order + BOM Details
     wo = frappe.get_doc("Work Order", work_order)
     if not wo.bom_no:
         return []
-
     bom = frappe.get_doc("BOM", wo.bom_no)
     bom_qty = flt(bom.quantity) or 1
 

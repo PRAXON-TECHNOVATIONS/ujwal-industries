@@ -117,9 +117,10 @@ frappe.ui.form.on("Work Order", {
 
 frappe.ui.form.on('Work Order', {
     refresh(frm) {
-        if (!frm.doc.name) return;
-
-        if (!frm.fields_dict.custom_scrap_tracking) {
+        if (frm.fields_dict.custom_scrap_tracking) {
+            frm.fields_dict.custom_scrap_tracking.$wrapper.empty();
+        }
+        if (frm.is_new()) {
             return;
         }
 
