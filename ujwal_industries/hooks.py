@@ -174,28 +174,23 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
 		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
 	},
+	"Downtime Entry": {
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
+	},
 }
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"ujwal_industries.tasks.all"
-# 	],
-# 	"daily": [
-# 		"ujwal_industries.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"ujwal_industries.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"ujwal_industries.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"ujwal_industries.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"* * * * *": [
+			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
+		]
+	},
+}
 
 # Testing
 # -------
@@ -304,7 +299,8 @@ fixtures = [
 				"in",
 				(
 					"Purchase",
-					"Sales"
+					"Sales",
+					"Manufacturing"
 				),
 			]
 		]
