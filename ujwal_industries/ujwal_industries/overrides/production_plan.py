@@ -12,7 +12,169 @@ import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
 
+def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> None:
+    """
+    MASTER FUNCTION: Updates Planned Start Date based on Manufacturing Type.
+    
+    Logic Update:
+    1. Subcontract:
+       - Check if user selected a 'custom_supplier'.
+       - If YES: Fetch Lead Time for THAT supplier.
+       - If NO: Fetch Default Supplier & Lead Time. Auto-populate field.
+       - Date = Delivery Date - Lead Time.
+       
+    2. In House:
+       - Clear Supplier field.
+       - Date = Delivery Date - BOM Production Time.
+    """
+    
+    if not doc.get("po_items"):
+        return
 
+    # Filter rows
+    target_rows = [
+        row for row in doc.po_items 
+        if row.get("custom_manufacturing_type") in ["Subcontract", "In House"]
+    ]
+    
+    if not target_rows:
+        return
+
+    combine_items = bool(doc.get("combine_items"))
+    
+    # A. Delivery Dates
+    delivery_cache = _batch_fetch_delivery_dates(doc, combine_items)
+    
+    # B. BOM Times (For In House)
+    bom_time_cache = _batch_fetch_bom_operations(doc)
+    
+    # C. Supplier Cache
+    sub_items = [r.item_code for r in target_rows if r.get("custom_manufacturing_type") == "Subcontract"]
+    item_supplier_data = {}
+    
+    if sub_items:
+        # Fetch ALL supplier mappings for these items
+        raw_data = frappe.db.sql("""
+            SELECT parent as item_code, supplier, lead_time_days, is_default 
+            FROM `tabItem Subcontracting Supplier`
+            WHERE parent IN %(items)s
+        """, {"items": list(set(sub_items))}, as_dict=True)
+        
+        # Group data by Item Code
+        for d in raw_data:
+            if d.item_code not in item_supplier_data:
+                item_supplier_data[d.item_code] = []
+            item_supplier_data[d.item_code].append(d)
+
+
+    # --- 2. MAIN LOGIC LOOP ---
+    for row in target_rows:
+        try:
+            mfg_type = row.get("custom_manufacturing_type")
+            
+            # Delivery Date logic
+            delivery_date = _get_delivery_date_from_cache(row, combine_items, delivery_cache)
+            if not delivery_date: continue
+            
+            delivery_dt_obj = get_datetime(delivery_date)
+
+            # === SUBCONTRACT LOGIC ===
+            if mfg_type == "Subcontract":
+                available_suppliers = item_supplier_data.get(row.item_code, [])
+                
+                target_supplier_row = None
+                
+                if row.custom_supplier:
+                    target_supplier_row = next((s for s in available_suppliers if s.supplier == row.custom_supplier), None)
+    
+                if not target_supplier_row:
+                    target_supplier_row = next((s for s in available_suppliers if s.is_default), None)
+                    
+                    if target_supplier_row:
+                        row.custom_supplier = target_supplier_row.supplier
+                
+                lead_time = int(target_supplier_row.lead_time_days) if target_supplier_row else 0
+                
+                new_date = add_days(getdate(delivery_dt_obj), -lead_time)
+                row.planned_start_date = _to_datetime(new_date)
+
+            # === IN HOUSE LOGIC ===
+            elif mfg_type == "In House":
+                row.custom_supplier = None # Clear Supplier
+                
+                prod_minutes = _calculate_production_minutes(
+                    row.bom_no, row.planned_qty, bom_time_cache
+                )
+                
+                if prod_minutes > 0:
+                    row.planned_start_date = _subtract_minutes_from_datetime(
+                        delivery_dt_obj, prod_minutes
+                    )
+                else:
+                    row.planned_start_date = delivery_dt_obj
+
+        except Exception as e:
+            frappe.log_error(f"Master Date Logic Error: {str(e)}")
+ 
+@frappe.whitelist()
+def get_item_suppliers_query(doctype, txt, searchfield, start, page_len, filters):
+    """
+    Returns a list of Suppliers specifically linked to an Item.
+    Used by JavaScript to filter the dropdown.
+    """
+    if not filters or not filters.get("item_code"):
+        return []
+
+    return frappe.db.sql("""
+        SELECT supplier
+        FROM `tabItem Subcontracting Supplier`
+        WHERE parent = %(item_code)s
+        AND supplier LIKE %(txt)s
+        ORDER BY is_default DESC
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        "item_code": filters.get("item_code"),
+        "txt": f"%{txt}%",
+        "start": start,
+        "page_len": page_len
+    })
+    
+@frappe.whitelist()
+def get_subcontract_updates_client(item_code: str, company: str, sales_order_item: str | None = None) -> dict[str, Any]:
+    """
+    JS Helper: Returns Default Supplier AND Calculated Planned Start Date.
+    """
+    # 1. Fetch Supplier & Lead Time
+    supp_data = frappe.db.get_value("Item Subcontracting Supplier",
+        {"parent": item_code, "company": company, "is_default": 1},
+        ["supplier", "lead_time_days"], as_dict=True
+    )
+    
+    if not supp_data:
+        return {}
+
+    result = {
+        "custom_supplier": supp_data.supplier
+    }
+
+    # 2. Fetch Delivery Date
+    if sales_order_item:
+        # Try fetching specific SO Item delivery date, fallback to parent SO date
+        delivery_date = frappe.db.get_value("Sales Order Item", sales_order_item, "delivery_date")
+        
+        if not delivery_date:
+            so_name = frappe.db.get_value("Sales Order Item", sales_order_item, "parent")
+            if so_name:
+                delivery_date = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+        
+        # 3. Calculate Date (Delivery - Lead Time)
+        if delivery_date:
+            lead_time = int(supp_data.lead_time_days or 0)
+            new_date = add_days(getdate(delivery_date), -lead_time)
+            result["planned_start_date"] = str(_to_datetime(new_date))
+
+    return result
+    
 def onload_production_plan(doc: Document, method: str | None = None) -> None:
     """
     Store original sub-assembly schedule_dates and MR item dates in __onload for comparison.
@@ -29,6 +191,7 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
                     "production_item": row.production_item,
                     "parent_item_code": row.parent_item_code,
                     "schedule_date": str(row.schedule_date),
+                    "custom_schedule_end_date": str(row.custom_schedule_end_date) if row.custom_schedule_end_date else None,
                     "type_of_manufacturing": row.type_of_manufacturing
                 }
         doc.set_onload("original_subassembly_dates", original_dates)
@@ -37,13 +200,99 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
     if doc.get("mr_items"):
         original_mr_dates = {}
         for row in doc.mr_items:
-            if row.item_code and hasattr(row, 'custom_start_date') and row.custom_start_date:
+            # Store if either custom_start_date or schedule_date exists
+            has_custom_start = hasattr(row, 'custom_start_date') and row.custom_start_date
+            has_schedule = row.schedule_date
+            if row.item_code and (has_custom_start or has_schedule):
                 original_mr_dates[row.name] = {
                     "item_code": row.item_code,
-                    "custom_start_date": str(row.custom_start_date),
-                    "schedule_date": str(row.schedule_date) if row.schedule_date else None
+                    "custom_start_date": str(row.custom_start_date) if has_custom_start else None,
+                    "schedule_date": str(row.schedule_date) if has_schedule else None
                 }
         doc.set_onload("original_mr_dates", original_mr_dates)
+
+
+@frappe.whitelist()
+def refresh_original_mr_dates(
+    production_plan_name: str,
+    mr_items_data: list[dict[str, Any]] | str
+) -> dict[str, dict[str, Any]]:
+    """
+    Refresh original_mr_dates based on current client-side MR items data.
+
+    Call this after "Get Items for Material Request" is clicked and dates are calculated,
+    so subsequent comparisons work correctly.
+
+    Args:
+        production_plan_name: Name of the Production Plan
+        mr_items_data: Current MR items from client with their calculated dates
+
+    Returns:
+        Dict mapping row.name to date info
+    """
+    import json
+
+    if isinstance(mr_items_data, str):
+        mr_items_data = json.loads(mr_items_data)
+
+    original_dates = {}
+    for item_info in mr_items_data:
+        row_name = item_info.get("name")
+        item_code = item_info.get("item_code")
+        custom_start_date = item_info.get("custom_start_date")
+        schedule_date = item_info.get("schedule_date")
+
+        if item_code and (custom_start_date or schedule_date):
+            key = row_name if row_name else item_code
+            original_dates[key] = {
+                "item_code": item_code,
+                "custom_start_date": str(custom_start_date) if custom_start_date else None,
+                "schedule_date": str(schedule_date) if schedule_date else None
+            }
+
+    return original_dates
+
+
+@frappe.whitelist()
+def refresh_original_subassembly_dates(
+    production_plan_name: str,
+    subassembly_data: list[dict[str, Any]] | str
+) -> dict[str, dict[str, Any]]:
+    """
+    Refresh original_subassembly_dates based on current client-side data.
+
+    Call this after "Get Sub Assembly Items" is clicked and dates are calculated,
+    so subsequent comparisons work correctly.
+
+    Args:
+        production_plan_name: Name of the Production Plan
+        subassembly_data: Current sub-assembly items from client with their calculated dates
+
+    Returns:
+        Dict mapping row.name (or production_item as fallback) to date info
+    """
+    import json
+
+    if isinstance(subassembly_data, str):
+        subassembly_data = json.loads(subassembly_data)
+
+    original_dates = {}
+    for item_info in subassembly_data:
+        row_name = item_info.get("name")
+        prod_item = item_info.get("production_item")
+        schedule_date = item_info.get("schedule_date")
+
+        if prod_item and schedule_date:
+            key = row_name if row_name else prod_item
+            original_dates[key] = {
+                "production_item": prod_item,
+                "parent_item_code": item_info.get("parent_item_code"),
+                "schedule_date": str(schedule_date) if schedule_date else None,
+                "custom_schedule_end_date": str(item_info.get("custom_schedule_end_date")) if item_info.get("custom_schedule_end_date") else None,
+                "type_of_manufacturing": item_info.get("type_of_manufacturing")
+            }
+
+    return original_dates
 
 
 def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
@@ -1173,36 +1422,62 @@ def calculate_fg_dates_from_subassembly(
     # Store deltas in minutes (positive = moved later, negative = moved earlier)
     changed_items: dict[str, dict[str, Any]] = {}
 
+    # Build a fallback lookup by production_item for when row names don't match
+    # (e.g., when "Get Sub Assembly Items" regenerates rows after doc was loaded)
+    original_by_production_item: dict[str, dict[str, Any]] = {}
+    for row_name, info in original_dates.items():
+        prod_item = info.get("production_item")
+        if prod_item:
+            original_by_production_item[prod_item] = info
+
     for item_info in subassembly_data:
         row_name = item_info.get("name")
         prod_item = item_info.get("production_item")
         current_date_str = item_info.get("schedule_date")
+        current_end_date_str = item_info.get("custom_schedule_end_date")
 
-        if not row_name or not prod_item or not current_date_str:
+        if not prod_item or not current_date_str:
             continue
 
-        # Check if we have original date for this row
-        if row_name not in original_dates:
+        # Check if we have original date for this row (by name first, then by production_item)
+        original_info = None
+        if row_name and row_name in original_dates:
+            original_info = original_dates[row_name]
+        elif prod_item in original_by_production_item:
+            # Fallback: match by production_item when row names don't match
+            original_info = original_by_production_item[prod_item]
+
+        if not original_info:
             # No original date - skip
             continue
 
-        original_info = original_dates[row_name]
         original_date_str = original_info.get("schedule_date")
+        original_end_date_str = original_info.get("custom_schedule_end_date")
 
         if not original_date_str:
             continue
 
-        # Compare dates
+        # Compare schedule_date
         current_date = get_datetime(current_date_str)
         original_date = get_datetime(original_date_str)
-
-        # Calculate delta in seconds
         delta_seconds = (current_date - original_date).total_seconds()
 
+        # Also compare custom_schedule_end_date if available
+        end_date_delta_seconds = 0.0
+        if current_end_date_str and original_end_date_str:
+            current_end_date = get_datetime(current_end_date_str)
+            original_end_date = get_datetime(original_end_date_str)
+            end_date_delta_seconds = (current_end_date - original_end_date).total_seconds()
+
+        # Use the larger delta (either schedule_date or custom_schedule_end_date changed)
+        effective_delta_seconds = delta_seconds
+        if abs(end_date_delta_seconds) > abs(delta_seconds):
+            effective_delta_seconds = end_date_delta_seconds
+
         # Only consider significant changes (> 60 seconds)
-        if abs(delta_seconds) > 60:
+        if abs(effective_delta_seconds) > 60:
             changed_items[prod_item] = {
-                "delta_minutes": delta_seconds / 60.0,
+                "delta_minutes": effective_delta_seconds / 60.0,
                 "parent_item_code": item_info.get("parent_item_code")
             }
 
@@ -1404,12 +1679,12 @@ def calculate_mr_item_dates(
     """
     Calculate schedule dates and supplier info for Material Request Plan Items.
 
-    For each raw material that is linked to SFGs (via BOM):
-    1. Find all SFGs that use this raw material
-    2. Get the lowest schedule_date from those SFGs
+    Logic:
+    1. If SFGs exist: Find raw materials linked to SFGs, use lowest SFG schedule_date as base
+    2. If NO SFGs: Find raw materials linked to FG BOMs, use FG planned_start_date as base
     3. Get the default supplier for the raw material
-    4. Calculate MR schedule_date = lowest_sfg_date - supplier_lead_time_days
-    5. Set custom_start_date = lowest_sfg_date
+    4. Calculate: custom_start_date = base_date - supplier_lead_time_days
+    5. Set schedule_date = base_date (when material is needed)
 
     Args:
         production_plan_name: Name of Production Plan
@@ -1429,69 +1704,83 @@ def calculate_mr_item_dates(
     # Get Production Plan document
     doc = frappe.get_doc("Production Plan", production_plan_name)
 
-    if not doc.get("sub_assembly_items"):
-        return {}
-
     # Extract all raw material item codes
     raw_material_items = [item["item_code"] for item in mr_items_data if item.get("item_code")]
 
     if not raw_material_items:
         return {}
 
-    # Build mapping: raw_material -> list of SFGs that use it
-    # We need to query BOM Item to find which SFGs (from sub_assembly_items) use each raw material
+    # Determine base dates: either from SFGs or from FGs (po_items)
+    # raw_to_base_dates will map: raw_material -> list of base dates
+    raw_to_base_dates: dict[str, list[dict[str, Any]]] = {}
 
-    # Get all SFG items from sub_assembly_items with their BOMs
-    sfg_bom_map = {}  # production_item -> {bom_no, schedule_date}
-    for row in doc.sub_assembly_items:
-        if row.production_item and row.bom_no and row.schedule_date:
-            sfg_bom_map[row.production_item] = {
-                "bom_no": row.bom_no,
-                "schedule_date": row.schedule_date
-            }
+    has_sfgs = bool(doc.get("sub_assembly_items"))
 
-    if not sfg_bom_map:
+    if has_sfgs:
+        # Case 1: SFGs exist - use SFG schedule_dates as base (original logic)
+        sfg_bom_map = {}  # production_item -> {bom_no, schedule_date}
+        for row in doc.sub_assembly_items:
+            if row.production_item and row.bom_no and row.schedule_date:
+                sfg_bom_map[row.production_item] = {
+                    "bom_no": row.bom_no,
+                    "schedule_date": row.schedule_date
+                }
+
+        if sfg_bom_map:
+            sfg_boms = list(set([info["bom_no"] for info in sfg_bom_map.values()]))
+
+            # Query BOM Item table to find which raw materials are in which SFG BOMs
+            bom_items_data = frappe.db.sql(
+                """
+                SELECT parent as bom_no, item_code
+                FROM `tabBOM Item`
+                WHERE parent IN %(bom_nos)s
+                  AND item_code IN %(raw_items)s
+            """,
+                {"bom_nos": sfg_boms, "raw_items": raw_material_items},
+                as_dict=True,
+            )
+
+            # Build reverse mapping: bom_no -> list of raw_materials
+            bom_to_raw: dict[str, list[str]] = {}
+            for row in bom_items_data:
+                if row.bom_no not in bom_to_raw:
+                    bom_to_raw[row.bom_no] = []
+                bom_to_raw[row.bom_no].append(row.item_code)
+
+            # Build: raw_material -> list of base dates from SFGs
+            for sfg_item, info in sfg_bom_map.items():
+                bom_no = info["bom_no"]
+                schedule_date = info["schedule_date"]
+
+                if bom_no in bom_to_raw:
+                    for raw_item in bom_to_raw[bom_no]:
+                        if raw_item not in raw_to_base_dates:
+                            raw_to_base_dates[raw_item] = []
+                        raw_to_base_dates[raw_item].append({
+                            "source_item": sfg_item,
+                            "base_date": schedule_date
+                        })
+
+    # Case 2: No SFGs - use earliest FG planned_start_date for ALL MR items
+    if not has_sfgs and doc.get("po_items"):
+        # Get the earliest planned_start_date from all FG items
+        fg_dates = []
+        for row in doc.po_items:
+            if row.planned_start_date:
+                fg_dates.append(get_datetime(row.planned_start_date))
+
+        if fg_dates:
+            earliest_fg_date = min(fg_dates)
+            # Assign this date to ALL raw materials
+            for raw_item in raw_material_items:
+                raw_to_base_dates[raw_item] = [{
+                    "source_item": "FG",
+                    "base_date": earliest_fg_date
+                }]
+
+    if not raw_to_base_dates:
         return {}
-
-    sfg_boms = list(set([info["bom_no"] for info in sfg_bom_map.values()]))
-
-    # Query BOM Item table to find which raw materials are in which BOMs
-    # We need to handle multi-level BOMs (raw materials might be in nested BOMs)
-    bom_items_data = frappe.db.sql(
-        """
-        SELECT
-            parent as bom_no,
-            item_code
-        FROM `tabBOM Item`
-        WHERE parent IN %(bom_nos)s
-          AND item_code IN %(raw_items)s
-    """,
-        {"bom_nos": sfg_boms, "raw_items": raw_material_items},
-        as_dict=True,
-    )
-
-    # Build reverse mapping: bom_no -> list of raw_materials
-    bom_to_raw: dict[str, list[str]] = {}
-    for row in bom_items_data:
-        if row.bom_no not in bom_to_raw:
-            bom_to_raw[row.bom_no] = []
-        bom_to_raw[row.bom_no].append(row.item_code)
-
-    # Now build: raw_material -> list of (sfg_item, schedule_date)
-    raw_to_sfgs: dict[str, list[dict[str, Any]]] = {}
-
-    for sfg_item, info in sfg_bom_map.items():
-        bom_no = info["bom_no"]
-        schedule_date = info["schedule_date"]
-
-        if bom_no in bom_to_raw:
-            for raw_item in bom_to_raw[bom_no]:
-                if raw_item not in raw_to_sfgs:
-                    raw_to_sfgs[raw_item] = []
-                raw_to_sfgs[raw_item].append({
-                    "sfg_item": sfg_item,
-                    "schedule_date": schedule_date
-                })
 
     # Batch fetch default suppliers for all raw materials
     supplier_data = frappe.db.sql(
@@ -1515,14 +1804,14 @@ def calculate_mr_item_dates(
     results: dict[str, dict[str, Any]] = {}
 
     for item_code in raw_material_items:
-        # Find lowest schedule_date from SFGs that use this raw material
-        if item_code not in raw_to_sfgs:
-            # This raw material is not linked to any SFG
+        # Find lowest base_date from sources (SFGs or FGs) that use this raw material
+        if item_code not in raw_to_base_dates:
+            # This raw material is not linked to any SFG or FG BOM
             # Skip custom date calculation
             continue
 
-        sfg_dates = [get_datetime(sfg_info["schedule_date"]) for sfg_info in raw_to_sfgs[item_code]]
-        lowest_sfg_date = min(sfg_dates)
+        base_dates = [get_datetime(info["base_date"]) for info in raw_to_base_dates[item_code]]
+        lowest_base_date = min(base_dates)
 
         # Get supplier info
         supplier_info = supplier_map.get(item_code)
@@ -1535,16 +1824,16 @@ def calculate_mr_item_dates(
         lead_time = int(supplier_info.lead_time_days or 0)
         supplier_name = supplier_info.supplier
 
-        # custom_start_date = when to order from supplier (earliest date to place order)
-        # schedule_date = when material is needed (when SFG production starts)
+        # custom_start_date = when to order from supplier (base_date - lead_time)
+        # schedule_date = when material is needed (base_date)
         if lead_time > 0:
-            custom_start_date = add_days(getdate(lowest_sfg_date), -lead_time)
+            custom_start_date = add_days(getdate(lowest_base_date), -lead_time)
         else:
-            custom_start_date = getdate(lowest_sfg_date)
+            custom_start_date = getdate(lowest_base_date)
 
         results[item_code] = {
             "custom_start_date": str(_to_datetime(custom_start_date)),
-            "schedule_date": str(lowest_sfg_date),
+            "schedule_date": str(lowest_base_date),
             "custom_supplier": supplier_name
         }
 
@@ -1765,18 +2054,22 @@ def calculate_sfg_fg_dates_from_mr_items(
     # Get Production Plan document
     doc = frappe.get_doc("Production Plan", production_plan_name)
 
-    if not doc.get("sub_assembly_items") or not mr_items_data:
+    if not mr_items_data:
         return {"sfg_updates": [], "fg_updates": []}
 
+    has_sfgs = bool(doc.get("sub_assembly_items"))
+
     # Detect changes in MR items
+    # Compare both custom_start_date and schedule_date changes
     changed_mr_items: dict[str, dict[str, Any]] = {}
 
     for item_info in mr_items_data:
         row_name = item_info.get("name")
         item_code = item_info.get("item_code")
         current_start_date_str = item_info.get("custom_start_date")
+        current_schedule_date_str = item_info.get("schedule_date")
 
-        if not row_name or not item_code or not current_start_date_str:
+        if not row_name or not item_code:
             continue
 
         # Check if we have original date
@@ -1785,27 +2078,62 @@ def calculate_sfg_fg_dates_from_mr_items(
 
         original_info = original_mr_dates[row_name]
         original_start_date_str = original_info.get("custom_start_date")
+        original_schedule_date_str = original_info.get("schedule_date")
 
-        if not original_start_date_str:
-            continue
+        # Compare custom_start_date
+        delta_seconds = 0.0
+        if current_start_date_str and original_start_date_str:
+            current_date = get_datetime(current_start_date_str)
+            original_date = get_datetime(original_start_date_str)
+            delta_seconds = (current_date - original_date).total_seconds()
 
-        # Compare dates
-        current_date = get_datetime(current_start_date_str)
-        original_date = get_datetime(original_start_date_str)
+        # Also compare schedule_date if custom_start_date didn't change
+        schedule_delta_seconds = 0.0
+        if current_schedule_date_str and original_schedule_date_str:
+            current_schedule = get_datetime(current_schedule_date_str)
+            original_schedule = get_datetime(original_schedule_date_str)
+            schedule_delta_seconds = (current_schedule - original_schedule).total_seconds()
 
-        # Calculate delta in seconds
-        delta_seconds = (current_date - original_date).total_seconds()
+        # Use the larger delta
+        effective_delta = delta_seconds if abs(delta_seconds) > abs(schedule_delta_seconds) else schedule_delta_seconds
 
         # Only consider significant changes (> 60 seconds)
-        if abs(delta_seconds) > 60:
+        if abs(effective_delta) > 60:
             changed_mr_items[item_code] = {
-                "delta_minutes": delta_seconds / 60.0,
-                "new_start_date": current_date
+                "delta_minutes": effective_delta / 60.0,
+                "new_start_date": get_datetime(current_start_date_str) if current_start_date_str else get_datetime(current_schedule_date_str),
+                "new_schedule_date": get_datetime(current_schedule_date_str) if current_schedule_date_str else None
             }
 
     if not changed_mr_items:
         return {"sfg_updates": [], "fg_updates": []}
 
+    # Case 1: No SFGs - directly update FG dates based on MR item changes
+    if not has_sfgs:
+        fg_updates = []
+
+        # Get the largest delta from all changed MR items
+        max_delta_minutes = 0.0
+        for item_code, change_info in changed_mr_items.items():
+            if abs(change_info["delta_minutes"]) > abs(max_delta_minutes):
+                max_delta_minutes = change_info["delta_minutes"]
+
+        # Apply delta to all FG items
+        if abs(max_delta_minutes) > 1 and doc.get("po_items"):  # More than 1 minute change
+            for po_item in doc.po_items:
+                if po_item.planned_start_date:
+                    current_date = get_datetime(po_item.planned_start_date)
+                    new_date = current_date + timedelta(minutes=max_delta_minutes)
+
+                    fg_updates.append({
+                        "fg_item": po_item.item_code,
+                        "current_date": str(current_date),
+                        "new_date": str(new_date)
+                    })
+
+        return {"sfg_updates": [], "fg_updates": fg_updates}
+
+    # Case 2: SFGs exist - use original logic
     # Build mapping: raw_material -> list of SFGs that use it (with their BOMs)
     sfg_bom_map = {}  # production_item -> {bom_no, schedule_date, row_name}
     for row in doc.sub_assembly_items:
@@ -2133,3 +2461,5 @@ def calculate_sfg_fg_dates_from_mr_items(
         "sfg_updates": sfg_updates,
         "fg_updates": fg_updates
     }
+
+

@@ -1,48 +1,156 @@
 frappe.ui.form.on("Work Order", {
     refresh(frm) {
-        if (!erpnext || !erpnext.work_order) return;
-        const original_fn = erpnext.work_order.show_prompt_for_qty_input;
-        erpnext.work_order.show_prompt_for_qty_input = function (frm, purpose) {
-            return original_fn.call(this, frm, purpose).then((data) => {
-                let input_qty = flt(data.qty);
+    if (erpnext?.work_order && !erpnext.work_order._qty_prompt_overridden) {
+    erpnext.work_order._qty_prompt_overridden = true;
 
-                let remaining_qty = flt(frm.doc.qty - frm.doc.produced_qty);
-                if (remaining_qty <= 0) {
-                    frappe.throw(__("All quantity already produced"));
-                }
-                return frappe.call({
-                    method: "frappe.client.get_value",
-                    args: {
-                        doctype: "Item",
-                        filters: { name: frm.doc.production_item },
-                        fieldname: "custom_tolerance_"
-                    }
-                }).then(r => {
-                    let tolerance_pct = flt(r.message.custom_tolerance_ || 0);
-                    let tol_qty = remaining_qty * tolerance_pct / 100;
+    erpnext.work_order.show_prompt_for_qty_input = function (frm, purpose) {
+        let max = this.get_max_transferable_qty(frm, purpose);
 
-                    let min_qty = Math.max(0, remaining_qty - tol_qty);
-                    let max_qty = remaining_qty + tol_qty;
-                    if (input_qty < min_qty || input_qty > max_qty) {
-                        frappe.throw(
-                            __(
-                                "Qty must be between {0} and {1} (Remaining: {2}, Tolerance: {3}%)",
-                                [min_qty, max_qty, remaining_qty, tolerance_pct]
-                            )
+        let fields = [
+            {
+                fieldtype: "Float",
+                label: __("Qty for {0}", [__(purpose)]),
+                fieldname: "qty",
+                description: __("Max: {0}", [max]),
+                default: max,
+            },
+            {
+                fieldtype: "Check",
+                label: __("Consider Process Loss"),
+                fieldname: "consider_process_loss",
+                default: 0,
+                onchange() {
+                    if (this.value) {
+                        frm.qty_prompt.set_value(
+                            "qty",
+                            max - (frm.doc.process_loss_qty || 0)
                         );
+                    } else {
+                        frm.qty_prompt.set_value("qty", max);
                     }
-                    return data;
-                });
+                },
+            },
+        ];
+
+        if (purpose === "Disassemble") {
+            fields.push({
+                fieldtype: "Link",
+                options: "Warehouse",
+                fieldname: "target_warehouse",
+                label: __("Target Warehouse"),
+                default: frm.doc.source_warehouse || frm.doc.wip_warehouse,
+                get_query() {
+                    return {
+                        filters: {
+                            company: frm.doc.company,
+                            is_group: 0,
+                        },
+                    };
+                },
             });
-        };
+        }
+
+        return new Promise((resolve) => {
+            frm.qty_prompt = frappe.prompt(
+                fields,
+                (data) => {
+
+                    data.purpose = purpose;
+
+                    // let input_qty = flt(data.qty);
+                    // let remaining_qty = flt(frm.doc.qty - frm.doc.produced_qty);
+
+                    // if (remaining_qty <= 0) {
+                    //     frappe.throw(__("All quantity already produced"));
+                    // }
+
+                    // frappe
+                    //     .call({
+                    //         method: "frappe.client.get_value",
+                    //         args: {
+                    //             doctype: "Item",
+                    //             filters: { name: frm.doc.production_item },
+                    //             fieldname: "custom_tolerance_",
+                    //         },
+                    //     })
+                    //     .then((r) => {
+                    //         let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
+                    //         let tol_qty = (remaining_qty * tolerance_pct) / 100;
+
+                    //         let max_qty = remaining_qty;
+
+                    //         if (tolerance_pct > 0) {
+                    //             max_qty = remaining_qty + tol_qty;
+                    //         }
+                    //         if (input_qty > max_qty) {
+                    //             frappe.throw(
+                    //                 __(
+                    //                     "Qty cannot be more than {0} (Remaining: {1}, Tolerance: {2}%)",
+                    //                     [
+                    //                         max_qty,
+                    //                         remaining_qty,
+                    //                         tolerance_pct,
+                    //                     ]
+                    //                 )
+                    //             );
+                    //         }
+                    //         resolve(data);
+                    //     });
+                    let input_qty = flt(data.qty);
+
+// Work Order base qty
+let wo_qty = flt(frm.doc.qty);
+let produced_qty = flt(frm.doc.produced_qty);
+
+frappe.call({
+    method: "frappe.client.get_value",
+    args: {
+        doctype: "Item",
+        filters: { name: frm.doc.production_item },
+        fieldname: "custom_tolerance_",
+    },
+}).then((r) => {
+    let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
+
+    // TOTAL max allowed (WO qty + tolerance)
+    let total_max_qty =
+        wo_qty + ((wo_qty * tolerance_pct) / 100);
+
+    // Remaining allowed considering already produced
+    let max_qty = total_max_qty - produced_qty;
+
+    if (max_qty <= 0) {
+        frappe.throw(__("All quantity already produced"));
     }
+
+    if (input_qty > max_qty) {
+        frappe.throw(
+            __(
+                "Qty cannot be more than {0} (Produced: {1}, Tolerance: {2}%)",
+                [max_qty, produced_qty, tolerance_pct]
+            )
+        );
+    }
+
+    resolve(data);
+});
+
+                },
+                __("Select Quantity"),
+                __("Create")
+            );
+        });
+    };
+}
+}
 });
 
 frappe.ui.form.on('Work Order', {
     refresh(frm) {
-        if (!frm.doc.name) return;
-
-        if (!frm.fields_dict.custom_scrap_tracking) {
+        if (frm.fields_dict.custom_scrap_tracking) {
+            frm.fields_dict.custom_scrap_tracking.$wrapper.empty();
+        }
+        if (frm.is_new()) {
             return;
         }
 
@@ -53,12 +161,26 @@ frappe.ui.form.on('Work Order', {
             },
             callback(r) {
                 if (!r.message || !r.message.length) {
-                    frm.fields_dict.custom_scrap_tracking.$wrapper.html(
-                        "<p class='text-muted'>No Manufacture Entries Found</p>"
-                    );
+                    frm.fields_dict.custom_scrap_tracking.$wrapper.html(`
+                        <div class="text-muted" style="padding: 10px;">
+                            Scrap tracking not started yet.
+                        </div>
+                    `);
                     return;
                 }
-                render_scrap_table(frm, r.message);
+                let valid_rows = r.message.filter(row => {
+                    return row.stock_entry || row.actual_scrap_qty > 0 || row.expected_scrap_qty > 0;
+                });
+
+                if (!valid_rows.length) {
+                    frm.fields_dict.custom_scrap_tracking.$wrapper.html(`
+                        <div class="text-muted" style="padding: 10px;">
+                            Scrap tracking not started yet.
+                        </div>
+                    `);
+                    return;
+                }
+                render_scrap_table(frm, valid_rows);
             }
         });
     }

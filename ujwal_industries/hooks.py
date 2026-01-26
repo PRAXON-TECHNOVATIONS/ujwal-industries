@@ -30,7 +30,6 @@ from ujwal_industries.overrides import stock_entry_ovveride
 # include js, css files in header of desk.html
 # app_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # app_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
-
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # web_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
@@ -143,7 +142,7 @@ permission_query_conditions = {
 # Override standard doctype classes
 
 # override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
+# 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
 # }
 
 # Document Events
@@ -161,7 +160,8 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
 		]
 	},
 	"Supplier": {
@@ -174,31 +174,23 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
 		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
 	},
-	"Work Order": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.work_order.validate_finish_qty"
+	"Downtime Entry": {
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
 	},
 }
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"ujwal_industries.tasks.all"
-# 	],
-# 	"daily": [
-# 		"ujwal_industries.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"ujwal_industries.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"ujwal_industries.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"ujwal_industries.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"* * * * *": [
+			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
+		]
+	},
+}
 
 # Testing
 # -------
@@ -307,7 +299,8 @@ fixtures = [
 				"in",
 				(
 					"Purchase",
-					"Sales"
+					"Sales",
+					"Manufacturing"
 				),
 			]
 		]
