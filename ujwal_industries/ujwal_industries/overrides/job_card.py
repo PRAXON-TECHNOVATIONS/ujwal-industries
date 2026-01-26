@@ -49,7 +49,8 @@ def validate_sequence_id_with_tolerance(self) -> None:
     - Max acceptable for current operation = 1,608,000
     """
     from frappe import _
-    from frappe.utils import bold, get_link_to_form
+    from frappe.utils import get_link_to_form
+    from frappe import bold
 
     if self.is_corrective_job_card:
         return
