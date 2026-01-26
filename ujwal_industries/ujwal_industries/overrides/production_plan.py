@@ -31,12 +31,17 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
     if not doc.get("po_items"):
         return
 
+    # If there are sub_assembly_items, FG dates should be driven by SFG dates
+    # (via "Update FG from Sub-Assembly" button), not recalculated here
+    if doc.get("sub_assembly_items"):
+        return
+
     # Filter rows
     target_rows = [
-        row for row in doc.po_items 
+        row for row in doc.po_items
         if row.get("custom_manufacturing_type") in ["Subcontract", "In House"]
     ]
-    
+
     if not target_rows:
         return
 
