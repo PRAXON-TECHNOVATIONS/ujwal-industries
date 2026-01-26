@@ -73,6 +73,9 @@ frappe.ui.form.on('Production Plan', {
 
 	// Hook into "Get Sub Assembly Items" button
 	get_sub_assembly_items: function(frm) {
+		// Reset the flag since we're regenerating all items
+		frm.doc.custom_sfg_dates_manually_changed = 0;
+
 		// Wait for items to be added, then populate suppliers and schedule_dates
 		setTimeout(() => {
 			populate_subcontracting_data(frm);
@@ -188,6 +191,10 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 			return;
 		}
 
+		// Set flag to indicate SFG dates were manually changed
+		// This tells the before_save hook to skip recalculating SFG dates
+		frm.doc.custom_sfg_dates_manually_changed = 1;
+
 		// Update custom_schedule_end_date based on manufacturing type
 		if (row.type_of_manufacturing === 'Subcontract') {
 			// For Subcontract: custom_schedule_end_date = schedule_date + lead_time_days
@@ -196,6 +203,26 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 			// For In House: custom_schedule_end_date = schedule_date + production_time
 			update_inhouse_end_date(frm, row);
 		}
+
+		// Cascade changes to parent SFGs and child MR items
+		cascade_sfg_date_change(frm, row);
+	},
+
+	custom_schedule_end_date: function(frm, cdt, cdn) {
+		// Skip if this is a programmatic update (to prevent loops)
+		if (is_programmatic_change()) {
+			return;
+		}
+
+		// User manually changed custom_schedule_end_date
+		const row = locals[cdt][cdn];
+
+		if (!row.custom_schedule_end_date) {
+			return;
+		}
+
+		// Set flag to indicate SFG dates were manually changed
+		frm.doc.custom_sfg_dates_manually_changed = 1;
 
 		// Cascade changes to parent SFGs and child MR items
 		cascade_sfg_date_change(frm, row);
@@ -690,6 +717,10 @@ function recalculate_fg_dates_from_subassembly(frm) {
 						// User confirmed - update FG planned_start_dates
 						mark_programmatic_update();
 
+						// Set flag to indicate SFG dates were manually changed
+						// This tells the before_save hook to skip recalculating SFG dates
+						frm.doc.custom_sfg_dates_manually_changed = 1;
+
 						impacts.forEach(impact => {
 							frm.doc.po_items.forEach(po_item => {
 								if (po_item.item_code === impact.fg_item) {
@@ -1084,8 +1115,9 @@ function cascade_sfg_date_change(frm, changed_sfg_row) {
 			changed_sfg_item: changed_sfg_row.production_item,
 			changed_sfg_bom: changed_sfg_row.bom_no,
 			new_schedule_date: changed_sfg_row.schedule_date,
-			new_end_date: changed_sfg_row.custom_schedule_end_date,
-			company: frm.doc.company
+			new_end_date: changed_sfg_row.custom_schedule_end_date || null,
+			company: frm.doc.company,
+			changed_sfg_idx: changed_sfg_row.idx
 		},
 		callback: function(r) {
 			if (r.message) {
@@ -1093,16 +1125,19 @@ function cascade_sfg_date_change(frm, changed_sfg_row) {
 				const mr_updates = r.message.mr_item_updates || [];
 
 				// Apply parent SFG updates
-				mark_programmatic_update();
-				parent_updates.forEach(update => {
-					const row = frm.doc.sub_assembly_items.find(r => r.name === update.row_name);
-					if (row) {
-						frappe.model.set_value(row.doctype, row.name, 'schedule_date', update.new_schedule_date);
-						if (update.new_custom_schedule_end_date) {
-							frappe.model.set_value(row.doctype, row.name, 'custom_schedule_end_date', update.new_custom_schedule_end_date);
+				if (parent_updates.length > 0 || mr_updates.length > 0) {
+					mark_programmatic_update();
+					parent_updates.forEach(update => {
+						const row = frm.doc.sub_assembly_items.find(r => r.name === update.row_name);
+						if (row) {
+							frappe.model.set_value(row.doctype, row.name, 'schedule_date', update.new_schedule_date);
+							// Only set custom_schedule_end_date if it's provided and the field exists
+							if (update.new_custom_schedule_end_date && 'custom_schedule_end_date' in row) {
+								frappe.model.set_value(row.doctype, row.name, 'custom_schedule_end_date', update.new_custom_schedule_end_date);
+							}
 						}
-					}
-				});
+					});
+				}
 
 				// Apply MR item updates
 				mr_updates.forEach(update => {
