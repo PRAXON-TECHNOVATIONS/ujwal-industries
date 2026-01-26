@@ -30,7 +30,6 @@ from ujwal_industries.overrides import stock_entry_ovveride
 # include js, css files in header of desk.html
 # app_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # app_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
-app_include_css = "/assets/ujwal_industries/css/work_order_scrap.css"
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # web_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
@@ -161,7 +160,8 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
 		]
 	},
 	"Supplier": {

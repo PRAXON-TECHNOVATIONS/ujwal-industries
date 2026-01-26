@@ -111,3 +111,91 @@ def validate_finished_goods_wrapper(self):
 
 # Monkey patch
 StockEntry.validate_finished_goods = validate_finished_goods_wrapper
+
+
+import frappe
+from frappe.utils import flt
+from erpnext.manufacturing.doctype.work_order.work_order import WorkOrder
+from erpnext.manufacturing.doctype.work_order.work_order import StockOverProductionError
+from frappe import _
+
+
+_original_update_work_order_qty = WorkOrder.update_work_order_qty
+
+
+def get_item_tolerance_percentage(item_code):
+    if not item_code:
+        return 0
+    return flt(
+        frappe.db.get_value("Item", item_code, "custom_tolerance_") or 0
+    )
+
+
+def update_work_order_qty_wrapper(self):
+    """Override: Update Manufactured Qty with Item Tolerance + Overproduction"""
+
+    allowance_percentage = flt(
+        frappe.db.get_single_value(
+            "Manufacturing Settings",
+            "overproduction_percentage_for_work_order",
+        )
+    )
+
+    item_tolerance = get_item_tolerance_percentage(self.production_item)
+
+    for purpose, fieldname in (
+        ("Manufacture", "produced_qty"),
+        ("Material Transfer for Manufacture", "material_transferred_for_manufacturing"),
+    ):
+        if (
+            purpose == "Material Transfer for Manufacture"
+            and self.operations
+            and self.transfer_material_against == "Job Card"
+        ):
+            continue
+
+        qty = self.get_transferred_or_manufactured_qty(purpose)
+
+        allowed_qty = (
+            self.qty
+            + ((allowance_percentage / 100) * self.qty)
+            + ((item_tolerance / 100) * self.qty)
+        )
+
+        if qty > allowed_qty:
+            frappe.throw(
+                _(
+                    "{0} ({1}) cannot be greater than allowed quantity ({2}) "
+                    "(WO Qty: {3}, Overproduction: {4}%, Item Tolerance: {5}%) "
+                    "in Work Order {6}"
+                ).format(
+                    _(self.meta.get_label(fieldname)),
+                    flt(qty),
+                    flt(allowed_qty),
+                    self.qty,
+                    allowance_percentage,
+                    item_tolerance,
+                    self.name,
+                ),
+                StockOverProductionError,
+            )
+
+        self.db_set(fieldname, qty)
+        self.set_process_loss_qty()
+
+        from erpnext.selling.doctype.sales_order.sales_order import (
+            update_produced_qty_in_so_item,
+        )
+
+        if self.sales_order and self.sales_order_item:
+            update_produced_qty_in_so_item(
+                self.sales_order, self.sales_order_item
+            )
+
+    if self.production_plan:
+        self.set_produced_qty_for_sub_assembly_item()
+        self.update_production_plan_status()
+
+
+# Monkey patch
+WorkOrder.update_work_order_qty = update_work_order_qty_wrapper

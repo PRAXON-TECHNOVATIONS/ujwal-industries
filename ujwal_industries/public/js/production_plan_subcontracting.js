@@ -15,6 +15,32 @@ function mark_programmatic_update() {
 
 frappe.ui.form.on('Production Plan', {
 	refresh: function(frm) {
+		frm.set_query("custom_supplier", "po_items", function(doc, cdt, cdn) {
+            var row = locals[cdt][cdn];
+            if (!row.item_code) {
+                return {};
+            }
+            return {
+                query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
+                filters: {
+                    item_code: row.item_code
+                }
+            };
+        });
+		frm.set_query("supplier", "sub_assembly_items", function(doc, cdt, cdn) {
+            var row = locals[cdt][cdn];
+            
+            if (!row.production_item) {
+                return {};
+            }
+
+            return {
+                query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
+                filters: {
+                    item_code: row.production_item 
+                }
+            };
+        });
 		// Auto-populate suppliers and schedule_dates when form loads
 		// But DON'T trigger on every refresh - only when needed
 		if (frm.doc.sub_assembly_items && frm.doc.sub_assembly_items.length > 0) {
@@ -62,8 +88,41 @@ frappe.ui.form.on('Production Plan', {
 	}
 });
 
-// Production Plan Item (po_items) events
 frappe.ui.form.on('Production Plan Item', {
+	custom_manufacturing_type: function(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        
+        if (row.custom_manufacturing_type === 'Subcontract') {
+            
+            if (row.item_code) {
+                frappe.call({
+                    method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_subcontract_updates_client',
+                    args: {
+                        item_code: row.item_code,
+                        company: frm.doc.company,
+                        sales_order_item: row.sales_order_item
+                    },
+                    callback: function(r) {
+                        if (r.message) {
+                            mark_programmatic_update();
+                            
+                            if (r.message.custom_supplier && !row.custom_supplier) {
+                                frappe.model.set_value(cdt, cdn, 'custom_supplier', r.message.custom_supplier);
+                            }
+                            
+                            if (r.message.planned_start_date) {
+                                frappe.model.set_value(cdt, cdn, 'planned_start_date', r.message.planned_start_date);
+                            }
+                        }
+                    }
+                });
+            }
+        } 
+        else if (row.custom_manufacturing_type === 'In House') {
+            mark_programmatic_update();
+            frappe.model.set_value(cdt, cdn, 'custom_supplier', '');
+        }
+    },
 	planned_start_date: function(frm, cdt, cdn) {
 		// Skip if this is a programmatic update (to prevent loops)
 		if (is_programmatic_change()) {

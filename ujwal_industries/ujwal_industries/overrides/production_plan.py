@@ -12,7 +12,169 @@ import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
 
+def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> None:
+    """
+    MASTER FUNCTION: Updates Planned Start Date based on Manufacturing Type.
+    
+    Logic Update:
+    1. Subcontract:
+       - Check if user selected a 'custom_supplier'.
+       - If YES: Fetch Lead Time for THAT supplier.
+       - If NO: Fetch Default Supplier & Lead Time. Auto-populate field.
+       - Date = Delivery Date - Lead Time.
+       
+    2. In House:
+       - Clear Supplier field.
+       - Date = Delivery Date - BOM Production Time.
+    """
+    
+    if not doc.get("po_items"):
+        return
 
+    # Filter rows
+    target_rows = [
+        row for row in doc.po_items 
+        if row.get("custom_manufacturing_type") in ["Subcontract", "In House"]
+    ]
+    
+    if not target_rows:
+        return
+
+    combine_items = bool(doc.get("combine_items"))
+    
+    # A. Delivery Dates
+    delivery_cache = _batch_fetch_delivery_dates(doc, combine_items)
+    
+    # B. BOM Times (For In House)
+    bom_time_cache = _batch_fetch_bom_operations(doc)
+    
+    # C. Supplier Cache
+    sub_items = [r.item_code for r in target_rows if r.get("custom_manufacturing_type") == "Subcontract"]
+    item_supplier_data = {}
+    
+    if sub_items:
+        # Fetch ALL supplier mappings for these items
+        raw_data = frappe.db.sql("""
+            SELECT parent as item_code, supplier, lead_time_days, is_default 
+            FROM `tabItem Subcontracting Supplier`
+            WHERE parent IN %(items)s
+        """, {"items": list(set(sub_items))}, as_dict=True)
+        
+        # Group data by Item Code
+        for d in raw_data:
+            if d.item_code not in item_supplier_data:
+                item_supplier_data[d.item_code] = []
+            item_supplier_data[d.item_code].append(d)
+
+
+    # --- 2. MAIN LOGIC LOOP ---
+    for row in target_rows:
+        try:
+            mfg_type = row.get("custom_manufacturing_type")
+            
+            # Delivery Date logic
+            delivery_date = _get_delivery_date_from_cache(row, combine_items, delivery_cache)
+            if not delivery_date: continue
+            
+            delivery_dt_obj = get_datetime(delivery_date)
+
+            # === SUBCONTRACT LOGIC ===
+            if mfg_type == "Subcontract":
+                available_suppliers = item_supplier_data.get(row.item_code, [])
+                
+                target_supplier_row = None
+                
+                if row.custom_supplier:
+                    target_supplier_row = next((s for s in available_suppliers if s.supplier == row.custom_supplier), None)
+    
+                if not target_supplier_row:
+                    target_supplier_row = next((s for s in available_suppliers if s.is_default), None)
+                    
+                    if target_supplier_row:
+                        row.custom_supplier = target_supplier_row.supplier
+                
+                lead_time = int(target_supplier_row.lead_time_days) if target_supplier_row else 0
+                
+                new_date = add_days(getdate(delivery_dt_obj), -lead_time)
+                row.planned_start_date = _to_datetime(new_date)
+
+            # === IN HOUSE LOGIC ===
+            elif mfg_type == "In House":
+                row.custom_supplier = None # Clear Supplier
+                
+                prod_minutes = _calculate_production_minutes(
+                    row.bom_no, row.planned_qty, bom_time_cache
+                )
+                
+                if prod_minutes > 0:
+                    row.planned_start_date = _subtract_minutes_from_datetime(
+                        delivery_dt_obj, prod_minutes
+                    )
+                else:
+                    row.planned_start_date = delivery_dt_obj
+
+        except Exception as e:
+            frappe.log_error(f"Master Date Logic Error: {str(e)}")
+ 
+@frappe.whitelist()
+def get_item_suppliers_query(doctype, txt, searchfield, start, page_len, filters):
+    """
+    Returns a list of Suppliers specifically linked to an Item.
+    Used by JavaScript to filter the dropdown.
+    """
+    if not filters or not filters.get("item_code"):
+        return []
+
+    return frappe.db.sql("""
+        SELECT supplier
+        FROM `tabItem Subcontracting Supplier`
+        WHERE parent = %(item_code)s
+        AND supplier LIKE %(txt)s
+        ORDER BY is_default DESC
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        "item_code": filters.get("item_code"),
+        "txt": f"%{txt}%",
+        "start": start,
+        "page_len": page_len
+    })
+    
+@frappe.whitelist()
+def get_subcontract_updates_client(item_code: str, company: str, sales_order_item: str | None = None) -> dict[str, Any]:
+    """
+    JS Helper: Returns Default Supplier AND Calculated Planned Start Date.
+    """
+    # 1. Fetch Supplier & Lead Time
+    supp_data = frappe.db.get_value("Item Subcontracting Supplier",
+        {"parent": item_code, "company": company, "is_default": 1},
+        ["supplier", "lead_time_days"], as_dict=True
+    )
+    
+    if not supp_data:
+        return {}
+
+    result = {
+        "custom_supplier": supp_data.supplier
+    }
+
+    # 2. Fetch Delivery Date
+    if sales_order_item:
+        # Try fetching specific SO Item delivery date, fallback to parent SO date
+        delivery_date = frappe.db.get_value("Sales Order Item", sales_order_item, "delivery_date")
+        
+        if not delivery_date:
+            so_name = frappe.db.get_value("Sales Order Item", sales_order_item, "parent")
+            if so_name:
+                delivery_date = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+        
+        # 3. Calculate Date (Delivery - Lead Time)
+        if delivery_date:
+            lead_time = int(supp_data.lead_time_days or 0)
+            new_date = add_days(getdate(delivery_date), -lead_time)
+            result["planned_start_date"] = str(_to_datetime(new_date))
+
+    return result
+    
 def onload_production_plan(doc: Document, method: str | None = None) -> None:
     """
     Store original sub-assembly schedule_dates and MR item dates in __onload for comparison.
