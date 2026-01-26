@@ -57,45 +57,84 @@ frappe.ui.form.on("Work Order", {
 
                     data.purpose = purpose;
 
+                    // let input_qty = flt(data.qty);
+                    // let remaining_qty = flt(frm.doc.qty - frm.doc.produced_qty);
+
+                    // if (remaining_qty <= 0) {
+                    //     frappe.throw(__("All quantity already produced"));
+                    // }
+
+                    // frappe
+                    //     .call({
+                    //         method: "frappe.client.get_value",
+                    //         args: {
+                    //             doctype: "Item",
+                    //             filters: { name: frm.doc.production_item },
+                    //             fieldname: "custom_tolerance_",
+                    //         },
+                    //     })
+                    //     .then((r) => {
+                    //         let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
+                    //         let tol_qty = (remaining_qty * tolerance_pct) / 100;
+
+                    //         let max_qty = remaining_qty;
+
+                    //         if (tolerance_pct > 0) {
+                    //             max_qty = remaining_qty + tol_qty;
+                    //         }
+                    //         if (input_qty > max_qty) {
+                    //             frappe.throw(
+                    //                 __(
+                    //                     "Qty cannot be more than {0} (Remaining: {1}, Tolerance: {2}%)",
+                    //                     [
+                    //                         max_qty,
+                    //                         remaining_qty,
+                    //                         tolerance_pct,
+                    //                     ]
+                    //                 )
+                    //             );
+                    //         }
+                    //         resolve(data);
+                    //     });
                     let input_qty = flt(data.qty);
-                    let remaining_qty = flt(frm.doc.qty - frm.doc.produced_qty);
 
-                    if (remaining_qty <= 0) {
-                        frappe.throw(__("All quantity already produced"));
-                    }
+// Work Order base qty
+let wo_qty = flt(frm.doc.qty);
+let produced_qty = flt(frm.doc.produced_qty);
 
-                    frappe
-                        .call({
-                            method: "frappe.client.get_value",
-                            args: {
-                                doctype: "Item",
-                                filters: { name: frm.doc.production_item },
-                                fieldname: "custom_tolerance_",
-                            },
-                        })
-                        .then((r) => {
-                            let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
-                            let tol_qty = (remaining_qty * tolerance_pct) / 100;
+frappe.call({
+    method: "frappe.client.get_value",
+    args: {
+        doctype: "Item",
+        filters: { name: frm.doc.production_item },
+        fieldname: "custom_tolerance_",
+    },
+}).then((r) => {
+    let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
 
-                            let max_qty = remaining_qty;
+    // TOTAL max allowed (WO qty + tolerance)
+    let total_max_qty =
+        wo_qty + ((wo_qty * tolerance_pct) / 100);
 
-                            if (tolerance_pct > 0) {
-                                max_qty = remaining_qty + tol_qty;
-                            }
-                            if (input_qty > max_qty) {
-                                frappe.throw(
-                                    __(
-                                        "Qty cannot be more than {0} (Remaining: {1}, Tolerance: {2}%)",
-                                        [
-                                            max_qty,
-                                            remaining_qty,
-                                            tolerance_pct,
-                                        ]
-                                    )
-                                );
-                            }
-                            resolve(data);
-                        });
+    // Remaining allowed considering already produced
+    let max_qty = total_max_qty - produced_qty;
+
+    if (max_qty <= 0) {
+        frappe.throw(__("All quantity already produced"));
+    }
+
+    if (input_qty > max_qty) {
+        frappe.throw(
+            __(
+                "Qty cannot be more than {0} (Produced: {1}, Tolerance: {2}%)",
+                [max_qty, produced_qty, tolerance_pct]
+            )
+        );
+    }
+
+    resolve(data);
+});
+
                 },
                 __("Select Quantity"),
                 __("Create")
