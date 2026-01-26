@@ -799,7 +799,8 @@ function update_inhouse_end_date(frm, row) {
 }
 
 /**
- * Calculate custom dates for Material Request Plan Items based on SFG schedule dates
+ * Calculate custom dates for Material Request Plan Items
+ * Uses SFG schedule_dates if available, otherwise falls back to FG planned_start_dates
  */
 function calculate_mr_item_dates(frm) {
 	if (!frm.doc.mr_items || frm.doc.mr_items.length === 0) {
@@ -852,6 +853,47 @@ function calculate_mr_item_dates(frm) {
 					message: __('Material Request dates calculated successfully'),
 					indicator: 'green'
 				}, 3);
+
+				// Refresh original MR dates for later comparison
+				setTimeout(() => {
+					refresh_original_mr_dates(frm);
+				}, 500);
+			}
+		}
+	});
+}
+
+/**
+ * Refresh original_mr_dates in __onload after MR item dates are calculated
+ * This ensures "Update SFG/FG from Material Request" will correctly detect user changes
+ */
+function refresh_original_mr_dates(frm) {
+	if (!frm.doc.mr_items || frm.doc.mr_items.length === 0) {
+		return;
+	}
+
+	// Collect current MR items data
+	const mr_items_data = frm.doc.mr_items.map(row => ({
+		name: row.name,
+		item_code: row.item_code,
+		custom_start_date: row.custom_start_date || null,
+		schedule_date: row.schedule_date || null
+	}));
+
+	// Call server to build the original_dates structure
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.refresh_original_mr_dates',
+		args: {
+			production_plan_name: frm.doc.name || '',
+			mr_items_data: mr_items_data
+		},
+		callback: function(r) {
+			if (r.message) {
+				// Store in __onload for later comparison
+				if (!frm.doc.__onload) {
+					frm.doc.__onload = {};
+				}
+				frm.doc.__onload.original_mr_dates = r.message;
 			}
 		}
 	});
