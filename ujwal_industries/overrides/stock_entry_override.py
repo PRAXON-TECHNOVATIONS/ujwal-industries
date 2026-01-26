@@ -172,6 +172,7 @@ import frappe
 from frappe.utils import flt
 from erpnext.stock.doctype.stock_entry.stock_entry import StockEntry
 
+
 _original_set_process_loss_qty = StockEntry.set_process_loss_qty
 
 
@@ -194,10 +195,7 @@ def set_process_loss_qty_wrapper(self):
 
     return _original_set_process_loss_qty(self)
 
-
-# Apply monkey patch
 StockEntry.set_process_loss_qty = set_process_loss_qty_wrapper
-
 
 from erpnext.stock.doctype.stock_entry.stock_entry import StockEntry
 
@@ -205,11 +203,12 @@ _original_validate_work_order = StockEntry.validate_work_order
 
 def validate_work_order_override(self):
     if getattr(self, "custom_is_scrap_entry", 0):
-        #  allow even if WO is Completed
+        # 🔓 allow even if WO is Completed
         return
     return _original_validate_work_order(self)
 
 StockEntry.validate_work_order = validate_work_order_override
+
 
 _original_check_duplicate = StockEntry.check_duplicate_entry_for_work_order
 
@@ -219,3 +218,4 @@ def check_duplicate_entry_override(self):
     return _original_check_duplicate(self)
 
 StockEntry.check_duplicate_entry_for_work_order = check_duplicate_entry_override
+
