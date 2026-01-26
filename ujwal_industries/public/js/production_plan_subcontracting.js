@@ -389,7 +389,13 @@ function calculate_all_schedule_dates(frm, supplier_map) {
 
 	// For In House items, we need to call the server since we need BOM operations
 	// This will calculate and set the dates immediately without saving
-	calculate_inhouse_dates_realtime(frm, fg_dates, true);  // Pass true to store original dates
+	calculate_inhouse_dates_realtime(frm, fg_dates);
+
+	// After all dates are calculated, refresh the original dates for comparison
+	// This ensures "Update FG from Sub-Assembly" will detect user changes correctly
+	setTimeout(() => {
+		refresh_original_subassembly_dates(frm);
+	}, 1000);  // Wait for async date calculations to complete
 }
 
 /**
@@ -637,6 +643,7 @@ function recalculate_fg_dates_from_subassembly(frm) {
 				production_item: row.production_item,
 				parent_item_code: row.parent_item_code,
 				schedule_date: row.schedule_date,
+				custom_schedule_end_date: row.custom_schedule_end_date || null,
 				type_of_manufacturing: row.type_of_manufacturing
 			});
 		}
@@ -971,6 +978,53 @@ function update_sfg_fg_dates_from_mr(frm) {
 	});
 }
 
+
+/**
+ * Refresh original_subassembly_dates in __onload after dates are calculated
+ * This ensures "Update FG from Sub-Assembly" will correctly detect user changes
+ */
+function refresh_original_subassembly_dates(frm) {
+	if (!frm.doc.sub_assembly_items || frm.doc.sub_assembly_items.length === 0) {
+		return;
+	}
+
+	// Collect current sub-assembly data
+	const subassembly_data = [];
+	frm.doc.sub_assembly_items.forEach(row => {
+		if (row.production_item && row.schedule_date) {
+			subassembly_data.push({
+				name: row.name,
+				production_item: row.production_item,
+				parent_item_code: row.parent_item_code,
+				schedule_date: row.schedule_date,
+				custom_schedule_end_date: row.custom_schedule_end_date || null,
+				type_of_manufacturing: row.type_of_manufacturing
+			});
+		}
+	});
+
+	if (subassembly_data.length === 0) {
+		return;
+	}
+
+	// Call server to build the original_dates structure
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.refresh_original_subassembly_dates',
+		args: {
+			production_plan_name: frm.doc.name || '',
+			subassembly_data: subassembly_data
+		},
+		callback: function(r) {
+			if (r.message) {
+				// Store in __onload for later comparison
+				if (!frm.doc.__onload) {
+					frm.doc.__onload = {};
+				}
+				frm.doc.__onload.original_subassembly_dates = r.message;
+			}
+		}
+	});
+}
 
 /**
  * Cascade SFG schedule_date changes to parent SFGs and child MR items in real-time

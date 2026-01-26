@@ -191,6 +191,7 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
                     "production_item": row.production_item,
                     "parent_item_code": row.parent_item_code,
                     "schedule_date": str(row.schedule_date),
+                    "custom_schedule_end_date": str(row.custom_schedule_end_date) if row.custom_schedule_end_date else None,
                     "type_of_manufacturing": row.type_of_manufacturing
                 }
         doc.set_onload("original_subassembly_dates", original_dates)
@@ -206,6 +207,48 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
                     "schedule_date": str(row.schedule_date) if row.schedule_date else None
                 }
         doc.set_onload("original_mr_dates", original_mr_dates)
+
+
+@frappe.whitelist()
+def refresh_original_subassembly_dates(
+    production_plan_name: str,
+    subassembly_data: list[dict[str, Any]] | str
+) -> dict[str, dict[str, Any]]:
+    """
+    Refresh original_subassembly_dates based on current client-side data.
+
+    Call this after "Get Sub Assembly Items" is clicked and dates are calculated,
+    so subsequent comparisons work correctly.
+
+    Args:
+        production_plan_name: Name of the Production Plan
+        subassembly_data: Current sub-assembly items from client with their calculated dates
+
+    Returns:
+        Dict mapping row.name (or production_item as fallback) to date info
+    """
+    import json
+
+    if isinstance(subassembly_data, str):
+        subassembly_data = json.loads(subassembly_data)
+
+    original_dates = {}
+    for item_info in subassembly_data:
+        row_name = item_info.get("name")
+        prod_item = item_info.get("production_item")
+        schedule_date = item_info.get("schedule_date")
+
+        if prod_item and schedule_date:
+            key = row_name if row_name else prod_item
+            original_dates[key] = {
+                "production_item": prod_item,
+                "parent_item_code": item_info.get("parent_item_code"),
+                "schedule_date": str(schedule_date) if schedule_date else None,
+                "custom_schedule_end_date": str(item_info.get("custom_schedule_end_date")) if item_info.get("custom_schedule_end_date") else None,
+                "type_of_manufacturing": item_info.get("type_of_manufacturing")
+            }
+
+    return original_dates
 
 
 def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
@@ -1335,36 +1378,62 @@ def calculate_fg_dates_from_subassembly(
     # Store deltas in minutes (positive = moved later, negative = moved earlier)
     changed_items: dict[str, dict[str, Any]] = {}
 
+    # Build a fallback lookup by production_item for when row names don't match
+    # (e.g., when "Get Sub Assembly Items" regenerates rows after doc was loaded)
+    original_by_production_item: dict[str, dict[str, Any]] = {}
+    for row_name, info in original_dates.items():
+        prod_item = info.get("production_item")
+        if prod_item:
+            original_by_production_item[prod_item] = info
+
     for item_info in subassembly_data:
         row_name = item_info.get("name")
         prod_item = item_info.get("production_item")
         current_date_str = item_info.get("schedule_date")
+        current_end_date_str = item_info.get("custom_schedule_end_date")
 
-        if not row_name or not prod_item or not current_date_str:
+        if not prod_item or not current_date_str:
             continue
 
-        # Check if we have original date for this row
-        if row_name not in original_dates:
+        # Check if we have original date for this row (by name first, then by production_item)
+        original_info = None
+        if row_name and row_name in original_dates:
+            original_info = original_dates[row_name]
+        elif prod_item in original_by_production_item:
+            # Fallback: match by production_item when row names don't match
+            original_info = original_by_production_item[prod_item]
+
+        if not original_info:
             # No original date - skip
             continue
 
-        original_info = original_dates[row_name]
         original_date_str = original_info.get("schedule_date")
+        original_end_date_str = original_info.get("custom_schedule_end_date")
 
         if not original_date_str:
             continue
 
-        # Compare dates
+        # Compare schedule_date
         current_date = get_datetime(current_date_str)
         original_date = get_datetime(original_date_str)
-
-        # Calculate delta in seconds
         delta_seconds = (current_date - original_date).total_seconds()
 
+        # Also compare custom_schedule_end_date if available
+        end_date_delta_seconds = 0.0
+        if current_end_date_str and original_end_date_str:
+            current_end_date = get_datetime(current_end_date_str)
+            original_end_date = get_datetime(original_end_date_str)
+            end_date_delta_seconds = (current_end_date - original_end_date).total_seconds()
+
+        # Use the larger delta (either schedule_date or custom_schedule_end_date changed)
+        effective_delta_seconds = delta_seconds
+        if abs(end_date_delta_seconds) > abs(delta_seconds):
+            effective_delta_seconds = end_date_delta_seconds
+
         # Only consider significant changes (> 60 seconds)
-        if abs(delta_seconds) > 60:
+        if abs(effective_delta_seconds) > 60:
             changed_items[prod_item] = {
-                "delta_minutes": delta_seconds / 60.0,
+                "delta_minutes": effective_delta_seconds / 60.0,
                 "parent_item_code": item_info.get("parent_item_code")
             }
 
