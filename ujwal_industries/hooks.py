@@ -141,9 +141,9 @@ permission_query_conditions = {
 # ---------------
 # Override standard doctype classes
 
-# override_doctype_class = {
-# 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
-# }
+override_doctype_class = {
+	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
+}
 
 # Document Events
 # ---------------
