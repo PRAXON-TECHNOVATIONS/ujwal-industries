@@ -154,9 +154,11 @@ doc_events = {
 	"Item": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
-	"Stock Entry": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
-	},
+ 	"Stock Entry": {
+        "validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+        ]
+    },
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"before_save": [

@@ -166,7 +166,6 @@ def update_work_order_qty_wrapper(self):
         self.update_production_plan_status()
 
 
-# Monkey patch
 WorkOrder.update_work_order_qty = update_work_order_qty_wrapper
 
 import frappe
