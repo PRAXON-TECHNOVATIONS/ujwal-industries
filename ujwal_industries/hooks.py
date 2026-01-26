@@ -5,6 +5,9 @@ app_description = "Custom application for all sorts of customizations"
 app_email = "ujjmee2279@gmail.com"
 app_license = "mit"
 
+
+# Import your override at bench startup
+from ujwal_industries.overrides import stock_entry_ovveride
 # Apps
 # ------------------
 
@@ -27,7 +30,6 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # app_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
-
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # web_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
@@ -48,6 +50,9 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
+	"Job Card": "public/js/job_card.js",
+	"Workstation": "public/js/workstation.js",
+ 	"Work Order": "public/js/work_order_scrap.js"
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -103,7 +108,7 @@ doctype_js = {
 
 # before_app_install = "ujwal_industries.utils.before_app_install"
 # after_app_install = "ujwal_industries.utils.after_app_install"
-after_migrate = "ujwal_industries.patches.migrate_custom_fields.run_all"
+after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all"
 
 # Integration Cleanup
 # -------------------
@@ -123,9 +128,10 @@ after_migrate = "ujwal_industries.patches.migrate_custom_fields.run_all"
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
+permission_query_conditions = {
+	"Workstation": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_workstation",
+	"Job Card": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_job_card",
+}
 #
 # has_permission = {
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
@@ -136,7 +142,7 @@ after_migrate = "ujwal_industries.patches.migrate_custom_fields.run_all"
 # Override standard doctype classes
 
 # override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
+# 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
 # }
 
 # Document Events
@@ -145,45 +151,46 @@ after_migrate = "ujwal_industries.patches.migrate_custom_fields.run_all"
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
 	"Stock Entry": {
-		"validate": "ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
 	},
 	"Production Plan": {
+		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"before_save": [
-			"ujwal_industries.overrides.production_plan.set_planned_start_dates",
-			"ujwal_industries.overrides.production_plan.set_subcontracting_suppliers"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
 		]
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
 	},
 	"Material Request": {
-		"before_insert": "ujwal_industries.patches.mr_reorder.set_reorder_field"
-	}
+		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
+	},
+	"Job Card": {
+		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
+	},
+	"Downtime Entry": {
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
+	},
 }
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"ujwal_industries.tasks.all"
-# 	],
-# 	"daily": [
-# 		"ujwal_industries.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"ujwal_industries.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"ujwal_industries.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"ujwal_industries.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"* * * * *": [
+			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
+		]
+	},
+}
 
 # Testing
 # -------
@@ -292,7 +299,8 @@ fixtures = [
 				"in",
 				(
 					"Purchase",
-					"Sales"
+					"Sales",
+					"Manufacturing"
 				),
 			]
 		]

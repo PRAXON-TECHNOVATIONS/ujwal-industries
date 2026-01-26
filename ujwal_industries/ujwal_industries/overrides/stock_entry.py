@@ -53,10 +53,29 @@ def validate_scrap_item_tolerance(doc: Document, method: str | None = None) -> N
         return
 
     # Fetch BOM scrap items with tolerance (single query)
-    fg_completed_qty = doc.get("fg_completed_qty")
+    # fg_completed_qty = doc.get("fg_completed_qty")
+    # bom_data = _get_bom_scrap_items_with_tolerance(
+    #     cast(str, bom_no),
+    #     cast(float, fg_completed_qty),
+    # )
+    
+    is_scrap_entry = bool(getattr(doc, "custom_is_scrap_entry", 0))
+
+    if is_scrap_entry:
+        qty_for_scaling = flt(
+            frappe.db.get_value("Work Order", work_order, "produced_qty")
+        )
+    else:
+        qty_for_scaling = flt(doc.get("fg_completed_qty"))
+
+    if not qty_for_scaling:
+        frappe.throw(
+            ("Cannot create Scrap Entry because Produced Qty in Work Order is 0")
+        )
+
     bom_data = _get_bom_scrap_items_with_tolerance(
         cast(str, bom_no),
-        cast(float, fg_completed_qty),
+        cast(float, qty_for_scaling)
     )
     if not bom_data:
         return
@@ -82,6 +101,7 @@ def _get_stock_entry_scrap_items(doc: Document) -> dict[str, float]:
             item_code: str = item.item_code
             scrap_items[item_code] = scrap_items.get(item_code, 0) + flt(item.qty)
     return scrap_items
+
 
 
 def _get_bom_scrap_items_with_tolerance(
@@ -127,7 +147,6 @@ def _get_bom_scrap_items_with_tolerance(
             qty=scaled_qty,
             tolerance=flt(item["tolerance"]),
         )
-
     return bom_data
 
 
