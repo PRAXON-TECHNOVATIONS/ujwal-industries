@@ -1163,6 +1163,24 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
     if not doc.get("sub_assembly_items"):
         return
 
+    # If SFG dates were manually changed, skip recalculating them
+    # The manual changes (and cascade updates) should be preserved
+    if getattr(doc, 'custom_sfg_dates_manually_changed', 0):
+        # Still populate warehouses for new items
+        for row in doc.sub_assembly_items:
+            if not row.fg_warehouse and row.production_item:
+                warehouse = frappe.db.get_value(
+                    "Item Default",
+                    {"parent": row.production_item, "company": doc.company},
+                    "default_warehouse"
+                )
+                if warehouse:
+                    row.fg_warehouse = warehouse
+
+        # Clear the flag after processing
+        doc.custom_sfg_dates_manually_changed = 0
+        return
+
     # Build FG item -> planned_start_date map from po_items
     fg_dates: dict[str, Any] = {}
     for po_item in doc.get("po_items") or []:
@@ -1925,7 +1943,8 @@ def cascade_sfg_date_change(
     changed_sfg_bom: str,
     new_schedule_date: str,
     new_end_date: str | None = None,
-    company: str | None = None
+    company: str | None = None,
+    changed_sfg_idx: int | None = None
 ) -> dict[str, Any]:
     """
     Cascade SFG schedule_date changes to parent SFGs and child MR items.
@@ -1937,6 +1956,7 @@ def cascade_sfg_date_change(
         new_schedule_date: New schedule_date value
         new_end_date: New custom_schedule_end_date value (optional)
         company: Company name
+        changed_sfg_idx: The idx of the changed SFG row (only update rows with idx < this)
 
     Returns:
         Dict with parent_sfg_updates and mr_item_updates
@@ -1949,10 +1969,19 @@ def cascade_sfg_date_change(
     parent_sfg_updates = []
     mr_item_updates = []
 
+    # Convert changed_sfg_idx to int if it's a string
+    if changed_sfg_idx is not None:
+        changed_sfg_idx = int(changed_sfg_idx)
+
     # Cascade UP to parent SFGs
     if doc.get("sub_assembly_items"):
         for parent_row in doc.sub_assembly_items:
             if not parent_row.bom_no or parent_row.production_item == changed_sfg_item:
+                continue
+
+            # Only update rows ABOVE (idx < changed_sfg_idx) the changed row
+            # Rows below should NOT be affected by changes above them
+            if changed_sfg_idx is not None and parent_row.idx >= changed_sfg_idx:
                 continue
 
             # Check if changed SFG is in this parent's BOM
