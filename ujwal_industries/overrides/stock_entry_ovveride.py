@@ -132,16 +132,9 @@ def get_item_tolerance_percentage(item_code):
 
 
 def update_work_order_qty_wrapper(self):
-    """Override: Update Manufactured Qty with Item Tolerance + Overproduction"""
-
-    allowance_percentage = flt(
-        frappe.db.get_single_value(
-            "Manufacturing Settings",
-            "overproduction_percentage_for_work_order",
-        )
-    )
-
-    item_tolerance = get_item_tolerance_percentage(self.production_item)
+    """Override: Update Manufactured Qty without overproduction cap.
+    The per-job-card tolerance (custom_tolerance_) already controls
+    how much each operation can produce, so no WO-level cap is needed."""
 
     for purpose, fieldname in (
         ("Manufacture", "produced_qty"),
@@ -155,30 +148,6 @@ def update_work_order_qty_wrapper(self):
             continue
 
         qty = self.get_transferred_or_manufactured_qty(purpose)
-
-        allowed_qty = (
-            self.qty
-            + ((allowance_percentage / 100) * self.qty)
-            + ((item_tolerance / 100) * self.qty)
-        )
-
-        if qty > allowed_qty:
-            frappe.throw(
-                _(
-                    "{0} ({1}) cannot be greater than allowed quantity ({2}) "
-                    "(WO Qty: {3}, Overproduction: {4}%, Item Tolerance: {5}%) "
-                    "in Work Order {6}"
-                ).format(
-                    _(self.meta.get_label(fieldname)),
-                    flt(qty),
-                    flt(allowed_qty),
-                    self.qty,
-                    allowance_percentage,
-                    item_tolerance,
-                    self.name,
-                ),
-                StockOverProductionError,
-            )
 
         self.db_set(fieldname, qty)
         self.set_process_loss_qty()
