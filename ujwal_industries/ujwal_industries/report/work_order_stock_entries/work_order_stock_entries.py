@@ -239,7 +239,12 @@ def get_data(filters):
                         "item_name": item.item_name,
                         "is_scrap": item.is_scrap_item,
                         "qty_to_produce": None,
-                        "produced_qty": None,
+                        # "produced_qty": None,
+                        "produced_qty": (
+                                    flt(item.qty)
+                                    if se.purpose == "Manufacture" and item.is_finished_item
+                                    else None
+                                ),
                         "required_qty": None,
                         "transferred_qty": flt(item.qty) if se.purpose == "Material Transfer for Manufacture" else None,
                         "consumed_qty": flt(item.qty) if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item else None,
