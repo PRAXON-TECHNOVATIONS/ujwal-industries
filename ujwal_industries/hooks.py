@@ -7,7 +7,7 @@ app_license = "mit"
 
 
 # Import your override at bench startup
-from ujwal_industries.overrides import stock_entry_ovveride
+from ujwal_industries.overrides import stock_entry_override
 # Apps
 # ------------------
 
@@ -52,7 +52,8 @@ doctype_js = {
 	"Material Request": "public/js/material_request.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
- 	"Work Order": "public/js/work_order_scrap.js"
+ 	"Work Order": "public/js/work_order_scrap.js",
+	"Stock Entry": "public/js/stock_entry.js"
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
