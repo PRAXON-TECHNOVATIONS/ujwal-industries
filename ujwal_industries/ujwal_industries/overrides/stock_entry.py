@@ -27,63 +27,121 @@ class BOMScrapRow(TypedDict):
     tolerance: float
 
 
-def validate_scrap_item_tolerance(doc: Document, method: str | None = None) -> None:
+@frappe.whitelist()
+def get_bom_scrap_items(bom_no):
+    if not bom_no:
+        return []
+
+    return frappe.get_all(
+        "BOM Scrap Item",
+        filters={
+            "parent": bom_no,
+            "parenttype": "BOM"
+        },
+        pluck="item_code"
+    )
+    
+def validate_scrap_item_tolerance(doc: Document, method=None) -> None:
     """
-    Validate scrap item quantities against BOM-defined tolerance.
+    FINAL SCRAP VALIDATION (REMAINING-BASED)
 
-    Called via doc_events hook on Stock Entry validate.
-    Only applies to Manufacture entries with a work order.
-
-    Args:
-        doc: Stock Entry document
-        method: Event method name (unused, required for hook signature)
+    ✔ Runs ONLY when custom_is_scrap_entry = 1
+    ✔ Uses Work Order produced_qty (cumulative)
+    ✔ Allows under-scrap
+    ✔ Allows over-scrap within tolerance
+    ✔ Blocks only excessive over-scrap
     """
-    _ = method  # Unused but required for hook signature
 
-    purpose = doc.get("purpose")
+    if doc.get("purpose") != "Manufacture":
+        return
+
+    if not bool(getattr(doc, "custom_is_scrap_entry", 0)):
+        return
+
     work_order = doc.get("work_order")
     bom_no = doc.get("bom_no")
 
-    if purpose != "Manufacture" or not work_order or not bom_no:
+    if not work_order or not bom_no:
         return
-
-    # Get scrap items from Stock Entry (O(n) single pass)
+    
     scrap_items = _get_stock_entry_scrap_items(doc)
     if not scrap_items:
         return
 
-    # Fetch BOM scrap items with tolerance (single query)
-    # fg_completed_qty = doc.get("fg_completed_qty")
-    # bom_data = _get_bom_scrap_items_with_tolerance(
-    #     cast(str, bom_no),
-    #     cast(float, fg_completed_qty),
-    # )
-    
-    is_scrap_entry = bool(getattr(doc, "custom_is_scrap_entry", 0))
-
-    if is_scrap_entry:
-        qty_for_scaling = flt(
-            frappe.db.get_value("Work Order", work_order, "produced_qty")
-        )
-    else:
-        qty_for_scaling = flt(doc.get("fg_completed_qty"))
-
-    if not qty_for_scaling:
-        frappe.throw(
-            ("Cannot create Scrap Entry because Produced Qty in Work Order is 0")
-        )
-
-    bom_data = _get_bom_scrap_items_with_tolerance(
-        cast(str, bom_no),
-        cast(float, qty_for_scaling)
+    produced_qty = flt(
+        frappe.db.get_value("Work Order", work_order, "produced_qty")
     )
+
+    if produced_qty <= 0:
+        frappe.throw(
+            _("Cannot create Scrap Entry because Produced Qty in Work Order is 0")
+        )
+
+    bom_data = _get_bom_scrap_items_with_tolerance(bom_no, produced_qty)
     if not bom_data:
         return
+    already_booked = frappe.db.sql(
+        """
+        SELECT
+            sed.item_code,
+            SUM(sed.qty) AS qty
+        FROM `tabStock Entry` se
+        JOIN `tabStock Entry Detail` sed
+            ON sed.parent = se.name
+        WHERE
+            se.work_order = %s
+            AND se.docstatus = 1
+            AND sed.is_scrap_item = 1
+            AND se.name != %s
+        GROUP BY sed.item_code
+        """,
+        (work_order, doc.name),
+        as_dict=True,
+    )
 
-    # Validate quantities
-    _validate_scrap_quantities(scrap_items, bom_data)
+    already_scrap_map = {
+        row.item_code: flt(row.qty) for row in already_booked
+    }
+    
+    errors = []
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 6
 
+    for item_code, current_qty in scrap_items.items():
 
+        bom_item = bom_data.get(item_code)
+        if not bom_item:
+            continue
+
+        total_expected = flt(bom_item["qty"], precision)
+        tolerance_pct = max(0, flt(bom_item["tolerance"]))
+
+        already_done = flt(already_scrap_map.get(item_code, 0), precision)
+        remaining = total_expected - already_done
+
+        # Tolerance applies on REMAINING qty
+        tolerance_qty = abs(remaining) * (tolerance_pct / 100)
+        max_allowed = remaining + tolerance_qty
+
+        if flt(current_qty, precision) > flt(max_allowed, precision):
+            errors.append(
+                _(
+                    "Scrap item {0}: qty {1} exceeds allowed remaining "
+                    "{2} (Remaining: {3}, Tolerance: ±{4}%)"
+                ).format(
+                    frappe.bold(item_code),
+                    flt(current_qty, precision),
+                    flt(max_allowed, precision),
+                    flt(remaining, precision),
+                    tolerance_pct,
+                )
+            )
+
+    if errors:
+        frappe.throw(
+            "<br>".join(errors),
+            title=_("Scrap Quantity Tolerance Exceeded"),
+        )
+        
 def _get_stock_entry_scrap_items(doc: Document) -> dict[str, float]:
     """
     Extract and aggregate scrap items from Stock Entry.
