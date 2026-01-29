@@ -208,6 +208,12 @@ scheduler_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "ujwal_industries.event.get_events"
 # }
+override_whitelisted_methods = {
+    "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+}
+
+
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

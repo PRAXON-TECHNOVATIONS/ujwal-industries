@@ -9,6 +9,102 @@ import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import flt
 
+#######################################
+
+# reference to original function
+from erpnext.manufacturing.doctype.job_card.job_card import make_time_log as _original_make_time_log
+
+@frappe.whitelist()
+def make_time_log_with_material_check(args):
+    """
+        OVERRIDE: Job Card Start Validation - Material Availability Check
+
+        Method to overrides standard `make_time_log` for Job Card
+        to enforce material availability validation
+
+        Purpose:
+        - Prevent starting a Job Card if sufficient material has not been
+        transferred against the related Work Order.
+        - Ensure previously consumed material by earlier Job Cards is deducted.
+        - Allow multiple Job Cards sequentially without double-counting material.
+
+        Scope:
+        - Applies ONLY on "Start Job" / "Resume Job"
+        - Does NOT block Job Card creation, saving, or submission
+        - Does NOT alter ERPNext core manufacturing flow
+
+        Business Logic:
+        Available Qty = Total Material Transferred (WO) - Total Qty Consumed by Completed Job Cards
+
+        If Available Qty < Job Card Qty → Block Start Job.
+    """
+    if isinstance(args, str):
+        import json
+        args = json.loads(args)
+
+    job_card_id = args.get("job_card_id")
+    status = args.get("status")
+
+    # check when Start / Resume
+    if status in ("Work In Progress", "Resume Job"):
+        jc = frappe.get_doc("Job Card", job_card_id)
+
+        if jc.work_order:
+            # Total Transferred against WO
+            transferred_qty = (
+                frappe.db.sql(
+                    """
+                    SELECT SUM(fg_completed_qty)
+                    FROM `tabStock Entry`
+                    WHERE work_order=%s
+                      AND purpose='Material Transfer for Manufacture'
+                      AND docstatus=1
+                    """,
+                    jc.work_order,
+                )[0][0]
+                or 0
+            )
+
+            # Already Consumed (from comppleted job cards)
+            consumed_qty = (
+                frappe.db.sql(
+                    """
+                    SELECT SUM(for_quantity)
+                    FROM `tabJob Card`
+                    WHERE work_order=%s
+                      AND docstatus=1
+                    """,
+                    jc.work_order,
+                )[0][0]
+                or 0
+            )
+
+            available_qty = flt(transferred_qty) - flt(consumed_qty)
+            required_qty = flt(jc.for_quantity)
+            pending_qty = required_qty - available_qty
+
+            if pending_qty > 0:
+                frappe.throw(
+                    title="Material Transfer Pending",
+                    msg=f"""
+                    <b>Material not available to start Job</b><br><br>
+
+                    <b>Required Qty for Job:</b> {required_qty}<br>
+                    <b>Already Consumed in earlier Jobs:</b> {consumed_qty}<br>
+                    <b>Total Transferred Qty in Work Order:</b> {transferred_qty}<br>
+                    <b>Available Qty for Job:</b> {available_qty}<br><br>
+
+                    <b style="color:red;">Pending Transfer Required: {pending_qty}</b><br><br>
+
+                    Please transfer at least <b>{pending_qty}</b> quantity
+                    against the Work Order to start this Job.
+                    """
+                )
+
+    return _original_make_time_log(args)
+
+
+#######################################
 
 def _get_item_tolerance(production_item: str) -> float:
     """Get tolerance percentage from Item master's custom_tolerance_ field."""
