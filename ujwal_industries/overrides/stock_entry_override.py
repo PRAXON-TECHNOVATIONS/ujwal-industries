@@ -168,24 +168,22 @@ def update_work_order_qty_wrapper(self):
 
 WorkOrder.update_work_order_qty = update_work_order_qty_wrapper
 
-import frappe
-from frappe.utils import flt
 from erpnext.stock.doctype.stock_entry.stock_entry import StockEntry
 
 
 _original_set_process_loss_qty = StockEntry.set_process_loss_qty
 
-
 def set_process_loss_qty_wrapper(self):
     """
-    HARD OVERRIDE:
-    - Skip process loss calculation for scrap-only entries
-    - Prevent ZeroDivisionError when fg_completed_qty = 0
+    FINAL OVERRIDE:
+    1 Scrap Entry  → keep your custom behavior
+    2 Manufacture → NEVER calculate process loss
+    3 Others      → ERPNext default
     """
 
+    # CASE 1: Scrap Entry
     if (
-        self.doctype == "Stock Entry"
-        and self.purpose == "Manufacture"
+        self.purpose == "Manufacture"
         and getattr(self, "custom_is_scrap_entry", 0)
     ):
         self.process_loss_qty = 0
@@ -193,6 +191,13 @@ def set_process_loss_qty_wrapper(self):
         self.fg_completed_qty = 0
         return
 
+    # CASE 2: Normal Manufacture Entry
+    if self.purpose == "Manufacture":
+        self.process_loss_qty = 0
+        self.process_loss_percentage = 0
+        return
+
+    # CASE 3: Everything else → ERPNext default
     return _original_set_process_loss_qty(self)
 
 StockEntry.set_process_loss_qty = set_process_loss_qty_wrapper

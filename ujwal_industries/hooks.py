@@ -7,7 +7,9 @@ app_license = "mit"
 
 
 # Import your override at bench startup
-from ujwal_industries.overrides import stock_entry_ovveride
+from ujwal_industries.overrides import stock_entry_override
+from ujwal_industries.overrides import job_card_override
+from ujwal_industries.overrides import work_order_override
 # Apps
 # ------------------
 
