@@ -1,5 +1,150 @@
+// frappe.ui.form.on("Work Order", {
+// 	refresh(frm) {
+// 		if (frm.doc.docstatus !== 1) return;
+        
+// 		render_work_order_progress(frm);
+
+// 	}
+// });
+
+function render_work_order_progress(frm) {
+	const total = flt(frm.doc.qty || 0);
+	const produced = flt(frm.doc.produced_qty || 0);
+	const transferred = flt(frm.doc.material_transferred_for_manufacturing || 0);
+	const in_progress = Math.max(transferred - produced, 0);
+
+	const produced_pct = total ? ((produced / total) * 100).toFixed(2) : "0.00";
+	const in_progress_pct = total ? ((in_progress / total) * 100).toFixed(2) : "0.00";
+
+	if (!document.getElementById("production-progress-text")) {
+		const firstProgress = document.querySelector(".form-dashboard .progress");
+		if (firstProgress) {
+			const line = document.createElement("div");
+			line.id = "production-progress-text";
+			line.className = "text-muted";
+			line.style.margin = "5px 0 5px 0";
+			line.innerHTML = `
+				<b>Production Percentage:</b>
+				Produced (${produced_pct}%),
+				In Progress (${in_progress_pct}%)
+			`;
+			firstProgress.after(line);
+		}
+	}
+
+	setTimeout(() => {
+		const bars = document.querySelectorAll(".form-dashboard .progress-bar");
+
+		if (bars.length < 2) {
+			return;
+		}
+
+		bars[0].setAttribute(
+			"title",
+			`Produced ${produced} (${produced_pct}%)`
+		);
+		bars[0].setAttribute("data-bs-toggle", "tooltip");
+
+		bars[1].setAttribute(
+			"title",
+			`${in_progress} items in progress (${in_progress_pct}%)`
+		);
+		bars[1].setAttribute("data-bs-toggle", "tooltip");
+
+		let index = 2;
+
+		if (bars[index]) {
+			bars[index].setAttribute(
+				"title",
+				`Working ${working} (${working_pct}%)`
+			);
+			bars[index].setAttribute("data-bs-toggle", "tooltip");
+			index++;
+		}
+
+		if (bars[index]) {
+			bars[index].setAttribute(
+				"title",
+				`Completed ${completed} (${completed_pct}%)`
+			);
+			bars[index].setAttribute("data-bs-toggle", "tooltip");
+			index++;
+		}
+
+		if (bars[index]) {
+			bars[index].setAttribute(
+				"title",
+				`Not Started ${not_started} (${not_started_pct}%)`
+			);
+			bars[index].setAttribute("data-bs-toggle", "tooltip");
+		}
+
+		if (window.bootstrap) {
+			bars.forEach(bar => {
+				if (!bootstrap.Tooltip.getInstance(bar)) {
+					new bootstrap.Tooltip(bar);
+				}
+			});
+		}
+	}, 300);
+
+	frappe.call({
+		method: "ujwal_industries.api.work_order_progress.get_job_card_progress",
+		args: { work_order: frm.doc.name },
+		callback(r) {
+			if (!r.message) return;
+
+			const completed = flt(r.message.completed);
+			const working = flt(r.message.working);
+			const not_started = flt(r.message.not_started);
+
+			const completed_pct = total ? ((completed / total) * 100).toFixed(2) : "0.00";
+			const working_pct = total ? ((working / total) * 100).toFixed(2) : "0.00";
+			const not_started_pct = total ? ((not_started / total) * 100).toFixed(2) : "0.00";
+
+			const bars = [];
+
+			if (completed > 0) {
+				bars.push({
+					title: `Completed ${completed} (${completed_pct}%)`,
+					width: completed_pct + "%",
+					progress_class: "progress-bar-success",
+				});
+			}
+
+			if (working > 0) {
+				bars.push({
+					title: `Working ${working} (${working_pct}%),`,
+					width: working_pct + "%",
+					progress_class: "progress-bar-info"
+				});
+			}
+
+			if (not_started > 0) {
+				bars.push({
+					title: `Not Started ${not_started} (${not_started_pct}%)`,
+					width: not_started_pct + "%",
+					progress_class: "progress-bar-secondary"
+				});
+			}
+
+			frm.dashboard.add_progress(
+				"Job Card Execution Progress",
+				bars,
+				`<b>Job Cards:</b>
+				Completed ${completed} (${completed_pct}%),
+				Working ${working} (${working_pct}%),
+				Not Started ${not_started} (${not_started_pct}%)`
+			);
+		}
+	});
+}
+
 frappe.ui.form.on("Work Order", {
     refresh(frm) {
+    if (frm.doc.docstatus !== 1) return;
+	render_work_order_progress(frm);
+
     if (erpnext?.work_order && !erpnext.work_order._qty_prompt_overridden) {
     erpnext.work_order._qty_prompt_overridden = true;
 
@@ -56,84 +201,44 @@ frappe.ui.form.on("Work Order", {
                 (data) => {
 
                     data.purpose = purpose;
-
-                    // let input_qty = flt(data.qty);
-                    // let remaining_qty = flt(frm.doc.qty - frm.doc.produced_qty);
-
-                    // if (remaining_qty <= 0) {
-                    //     frappe.throw(__("All quantity already produced"));
-                    // }
-
-                    // frappe
-                    //     .call({
-                    //         method: "frappe.client.get_value",
-                    //         args: {
-                    //             doctype: "Item",
-                    //             filters: { name: frm.doc.production_item },
-                    //             fieldname: "custom_tolerance_",
-                    //         },
-                    //     })
-                    //     .then((r) => {
-                    //         let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
-                    //         let tol_qty = (remaining_qty * tolerance_pct) / 100;
-
-                    //         let max_qty = remaining_qty;
-
-                    //         if (tolerance_pct > 0) {
-                    //             max_qty = remaining_qty + tol_qty;
-                    //         }
-                    //         if (input_qty > max_qty) {
-                    //             frappe.throw(
-                    //                 __(
-                    //                     "Qty cannot be more than {0} (Remaining: {1}, Tolerance: {2}%)",
-                    //                     [
-                    //                         max_qty,
-                    //                         remaining_qty,
-                    //                         tolerance_pct,
-                    //                     ]
-                    //                 )
-                    //             );
-                    //         }
-                    //         resolve(data);
-                    //     });
                     let input_qty = flt(data.qty);
 
-// Work Order base qty
-let wo_qty = flt(frm.doc.qty);
-let produced_qty = flt(frm.doc.produced_qty);
+                    // Work Order base qty
+                    let wo_qty = flt(frm.doc.qty);
+                    let produced_qty = flt(frm.doc.produced_qty);
 
-frappe.call({
-    method: "frappe.client.get_value",
-    args: {
-        doctype: "Item",
-        filters: { name: frm.doc.production_item },
-        fieldname: "custom_tolerance_",
-    },
-}).then((r) => {
-    let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
+                    frappe.call({
+                        method: "frappe.client.get_value",
+                        args: {
+                            doctype: "Item",
+                            filters: { name: frm.doc.production_item },
+                            fieldname: "custom_tolerance_",
+                        },
+                    }).then((r) => {
+                        let tolerance_pct = flt(r?.message?.custom_tolerance_ || 0);
 
-    // TOTAL max allowed (WO qty + tolerance)
-    let total_max_qty =
-        wo_qty + ((wo_qty * tolerance_pct) / 100);
+                        // TOTAL max allowed (WO qty + tolerance)
+                        let total_max_qty =
+                            wo_qty + ((wo_qty * tolerance_pct) / 100);
 
-    // Remaining allowed considering already produced
-    let max_qty = total_max_qty - produced_qty;
+                        // Remaining allowed considering already produced
+                        let max_qty = total_max_qty - produced_qty;
 
-    if (max_qty <= 0) {
-        frappe.throw(__("All quantity already produced"));
-    }
+                        if (max_qty <= 0) {
+                            frappe.throw(__("All quantity already produced"));
+                        }
 
-    if (input_qty > max_qty) {
-        frappe.throw(
-            __(
-                "Qty cannot be more than {0} (Produced: {1}, Tolerance: {2}%)",
-                [max_qty, produced_qty, tolerance_pct]
-            )
-        );
-    }
+                        if (input_qty > max_qty) {
+                            frappe.throw(
+                                __(
+                                    "Qty cannot be more than {0} (Produced: {1}, Tolerance: {2}%)",
+                                    [max_qty, produced_qty, tolerance_pct]
+                                )
+                            );
+                        }
 
-    resolve(data);
-});
+                        resolve(data);
+                    });
 
                 },
                 __("Select Quantity"),
