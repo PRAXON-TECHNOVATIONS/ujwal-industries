@@ -22,7 +22,6 @@ frappe.ui.form.on('Material Request', {
     //             frm.remove_custom_button(btn, 'Get Items From');
     //         });
     //     }, 100);
-
         if (frm.fields_dict.material_request_type) {
             frm.set_df_property(
                 'material_request_type',
@@ -30,33 +29,23 @@ frappe.ui.form.on('Material Request', {
                 ['Purchase', 'Material Transfer' , 'Manufacture'].join('\n')
             );
         }
-        // if (frm.doc.docstatus !== 1) {
-        //     hide_create_button(frm);
-        // } else {
-        //     show_create_button(frm);
-        // }
+        if (frm.doc.docstatus === 1) {
+            add_custom_po_button(frm);
+        }
     }
 });
+function add_custom_po_button(frm) {
+    frm.remove_custom_button(__('Purchase Order'), __('Create'));
 
-// function hide_create_button(frm) {
-//     frm.page.btn_group && frm.page.btn_group.find('.dropdown-toggle')
-//         ?.filter(function () {
-//             return $(this).text().trim() === 'Create';
-//         }).hide();
-// }
+    frm.add_custom_button(__('Purchase Order'), () => {
+        frappe.call({
+            method: 'ujwal_industries.api.create_po_from_mr.make_po_from_mr',
+            args: { material_request: frm.doc.name }
+        }).then(r => {
+            if (!r.message) return;
 
-// function show_create_button(frm) {
-//     frm.page.btn_group && frm.page.btn_group.find('.dropdown-toggle')
-//         ?.show();
-//     frm.remove_custom_button(__('Purchase Order'), __('Create'));
-//     frm.add_custom_button(__('Purchase Order'), () => {
-//         frappe.call({
-//             method: 'poc.api.po_create_button.make_po_from_mr',
-//             args: { material_request: frm.doc.name }
-//         }).then(r => {
-//             if (!r.message) return;
-//             let doc = frappe.model.sync(r.message)[0];
-//             frappe.set_route('Form', doc.doctype, doc.name);
-//         });
-//     }, __('Create'));
-// }
+            let doc = frappe.model.sync(r.message)[0];
+            frappe.set_route('Form', doc.doctype, doc.name);
+        });
+    }, __('Create'));
+}

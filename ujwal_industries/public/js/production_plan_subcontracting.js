@@ -15,6 +15,18 @@ function mark_programmatic_update() {
 
 frappe.ui.form.on('Production Plan', {
 	refresh: function(frm) {
+		// Always Draft and not display want to submit popup box
+		if (frm.doc.docstatus === 1) {
+			frm.remove_custom_button(__("Material Request"), __("Create"));
+
+			frm.add_custom_button(
+				__("Material Request"),
+				() => {
+					frm.events.create_material_request(frm, 0);
+				},
+				__("Create")
+			);
+    	}
 		frm.set_query("custom_supplier", "po_items", function(doc, cdt, cdn) {
             var row = locals[cdt][cdn];
             if (!row.item_code) {

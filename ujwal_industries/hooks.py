@@ -8,6 +8,8 @@ app_license = "mit"
 
 # Import your override at bench startup
 from ujwal_industries.overrides import stock_entry_override
+from ujwal_industries.overrides import job_card_override
+from ujwal_industries.overrides import work_order_override
 # Apps
 # ------------------
 
@@ -53,7 +55,7 @@ doctype_js = {
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
  	"Work Order": "public/js/work_order_scrap.js",
-	"Stock Entry": "public/js/stock_entry.js"
+  	"Stock Entry": "public/js/stock_entry.js"
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -154,15 +156,17 @@ doc_events = {
 	"Item": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
-	"Stock Entry": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
-	},
+ 	"Stock Entry": {
+        "validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+        ]
+    },
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 		]
 	},
 	"Supplier": {
@@ -173,7 +177,8 @@ doc_events = {
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
-		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+        "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
 	},
 	"Downtime Entry": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
@@ -204,6 +209,11 @@ scheduler_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "ujwal_industries.event.get_events"
 # }
+override_whitelisted_methods = {
+    "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+}
+
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
