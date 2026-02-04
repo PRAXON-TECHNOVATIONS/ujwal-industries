@@ -76,6 +76,13 @@ frappe.query_reports["Work Order Stock Entries"] = {
 			value = $value.wrap("<p></p>").parent().html();
 		}
 
+		// Make Stock Entry header rows (indent=1) semi-bold and slightly colored
+		if (data.indent === 1 && column.fieldname === "stock_entry") {
+			value = $(`<span>${value}</span>`);
+			var $value = $(value).css({ "font-weight": "600", "color": "#5e64ff" });
+			value = $value.wrap("<p></p>").parent().html();
+		}
+
 		// Highlight scrap items in red
 		if (column.fieldname === "item_code" || column.fieldname === "item_name") {
 			if (data.is_scrap) {

@@ -163,10 +163,15 @@ doc_events = {
     },
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
+		"validate": "ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
+<<<<<<< HEAD
+=======
+			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate"
+>>>>>>> f5424f9 (feat(MFG-0001): so tracking, backdated logic, custom batchsize logic)
 		]
 	},
 	"Supplier": {
@@ -336,3 +341,13 @@ fixtures = [
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+# =============================================================================
+# Apply Custom Batch Size Overrides
+# =============================================================================
+# Import and apply monkey patches for custom_batchsize field
+# These must be at the end to ensure all ERPNext modules are loaded first
+from ujwal_industries.overrides.work_order import apply_work_order_overrides
+from ujwal_industries.overrides.bom import apply_bom_overrides
+
+apply_work_order_overrides()
+apply_bom_overrides()

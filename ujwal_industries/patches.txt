@@ -5,3 +5,4 @@
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 ujwal_industries.ujwal_industries.patches.create_subcontracting_supplier_fields
+ujwal_industries.ujwal_industries.patches.custom_fields.manufacturing_settings

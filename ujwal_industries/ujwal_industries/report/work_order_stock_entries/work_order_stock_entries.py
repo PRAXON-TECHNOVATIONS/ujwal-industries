@@ -221,18 +221,54 @@ def get_data(filters):
         }
         data.append(parent_row)
 
-        # Child rows - Stock Entries with their items
+        # Child rows - Stock Entries (indent=1) with their items (indent=2)
         for se in wo_stock_entries:
             se_items = se.get("items", [])
 
+            # Calculate totals for this Stock Entry
+            se_total_qty = sum(flt(item.qty) for item in se_items)
+            se_scrap_qty = sum(flt(item.qty) for item in se_items if item.is_scrap_item)
+            se_consumed_qty = sum(
+                flt(item.qty)
+                for item in se_items
+                if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item
+            )
+            se_transferred_qty = sum(
+                flt(item.qty) for item in se_items if se.purpose == "Material Transfer for Manufacture"
+            )
+
+            # Stock Entry header row (indent=1)
+            se_header_row = {
+                "indent": 1,
+                "work_order": wo.work_order,
+                "stock_entry": se.stock_entry,
+                "purpose": se.purpose,
+                "status": None,
+                "production_item": None,
+                "item_code": None,
+                "item_name": None,
+                "is_scrap": 1 if se_scrap_qty > 0 else 0,  # Mark if SE contains scrap
+                "qty_to_produce": None,
+                "produced_qty": None,
+                "required_qty": None,
+                "transferred_qty": se_transferred_qty if se_transferred_qty > 0 else None,
+                "consumed_qty": se_consumed_qty if se_consumed_qty > 0 else None,
+                "scrap_qty": se_scrap_qty if se_scrap_qty > 0 else None,
+                "uom": None,
+                "posting_date": se.posting_date,
+                "source_warehouse": None,
+                "target_warehouse": None,
+            }
+            data.append(se_header_row)
+
+            # Stock Entry items (indent=2)
             if se_items:
-                # Show each item as a separate child row
                 for item in se_items:
-                    child_row = {
-                        "indent": 1,
+                    item_row = {
+                        "indent": 2,
                         "work_order": wo.work_order,
                         "stock_entry": se.stock_entry,
-                        "purpose": se.purpose,
+                        "purpose": None,  # Already shown in SE header
                         "status": None,
                         "production_item": None,
                         "item_code": item.item_code,
@@ -247,38 +283,18 @@ def get_data(filters):
                                 ),
                         "required_qty": None,
                         "transferred_qty": flt(item.qty) if se.purpose == "Material Transfer for Manufacture" else None,
-                        "consumed_qty": flt(item.qty) if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item else None,
+                        "consumed_qty": (
+                            flt(item.qty)
+                            if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item
+                            else None
+                        ),
                         "scrap_qty": flt(item.qty) if item.is_scrap_item else None,
                         "uom": item.uom,
-                        "posting_date": se.posting_date,
+                        "posting_date": None,  # Already shown in SE header
                         "source_warehouse": item.s_warehouse,
                         "target_warehouse": item.t_warehouse,
                     }
-                    data.append(child_row)
-            else:
-                # If no items (shouldn't happen), show stock entry header
-                child_row = {
-                    "indent": 1,
-                    "work_order": wo.work_order,
-                    "stock_entry": se.stock_entry,
-                    "purpose": se.purpose,
-                    "status": None,
-                    "production_item": None,
-                    "item_code": None,
-                    "item_name": None,
-                    "is_scrap": 0,
-                    "qty_to_produce": None,
-                    "produced_qty": None,
-                    "required_qty": None,
-                    "transferred_qty": None,
-                    "consumed_qty": None,
-                    "scrap_qty": None,
-                    "uom": None,
-                    "posting_date": se.posting_date,
-                    "source_warehouse": None,
-                    "target_warehouse": None,
-                }
-                data.append(child_row)
+                    data.append(item_row)
 
     return data
 

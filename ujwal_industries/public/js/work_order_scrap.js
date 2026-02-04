@@ -360,8 +360,22 @@ frappe.ui.form.on("Work Order", {
 }
 });
 
+// ============================================================================
+// Total Process Time Calculation
+// ============================================================================
 frappe.ui.form.on('Work Order', {
+    onload(frm) {
+        if (!frm.is_new()) {
+            calculate_and_show_process_time(frm);
+        }
+    },
+
     refresh(frm) {
+        if (!frm.is_new()) {
+            calculate_and_show_process_time(frm);
+        }
+
+        // Original scrap tracking code
         if (frm.fields_dict.custom_scrap_tracking) {
             frm.fields_dict.custom_scrap_tracking.$wrapper.empty();
         }
@@ -453,4 +467,109 @@ function render_scrap_table(frm, data) {
     `;
 
     frm.fields_dict.custom_scrap_tracking.$wrapper.html(html);
+}
+
+// ============================================================================
+// Custom Batch Size Override
+// ============================================================================
+/**
+ * Override Work Order functions to use custom_batchsize instead of batch_size.
+ * This ensures ujwal_industries custom field works throughout manufacturing.
+ */
+
+frappe.ui.form.on('Work Order Operation', {
+	custom_batchsize: function(frm, cdt, cdn) {
+		// When custom_batchsize changes, sync to batch_size for compatibility
+		let row = locals[cdt][cdn];
+		if (row.custom_batchsize && 'batch_size' in row) {
+			frappe.model.set_value(cdt, cdn, 'batch_size', row.custom_batchsize);
+		}
+	},
+
+	batch_size: function(frm, cdt, cdn) {
+		// When batch_size changes (from BOM copy), sync to custom_batchsize
+		let row = locals[cdt][cdn];
+		if (row.batch_size && !row.custom_batchsize) {
+			frappe.model.set_value(cdt, cdn, 'custom_batchsize', row.batch_size);
+		}
+	}
+});
+
+// ============================================================================
+// Total Process Time Calculation
+// ============================================================================
+/**
+ * Calculate and display total process time for Work Order
+ * Time calculated from Work Order creation to final Manufacture completion
+ * Includes: Material Transfer time, Job Card execution time, Manufacture time
+ */
+function calculate_and_show_process_time(frm) {
+	frappe.call({
+		method: "ujwal_industries.api.work_order_process_time.get_process_time",
+		args: {
+			work_order: frm.doc.name
+		},
+		callback(r) {
+			if (!r.message) return;
+
+			const data = r.message;
+
+			// Add indicator for total process time
+			if (data.total_time_hours) {
+				frm.dashboard.add_indicator(
+					__("Total Process Time: {0}", [data.total_time_formatted]),
+					data.status_color
+				);
+			}
+
+			// Add detailed timeline if available
+			if (data.timeline && data.timeline.length > 0) {
+				show_process_timeline(frm, data);
+			}
+		}
+	});
+}
+
+function show_process_timeline(frm, data) {
+	const timeline_html = `
+		<div class="process-timeline" style="margin: 15px 0; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+			<h5 style="margin-bottom: 10px; color: #5e64ff;">
+				<i class="fa fa-clock-o"></i> Process Timeline
+			</h5>
+			<table class="table table-bordered table-sm" style="background: white;">
+				<thead>
+					<tr>
+						<th style="width: 30%">Stage</th>
+						<th style="width: 25%">Start Time</th>
+						<th style="width: 25%">End Time</th>
+						<th style="width: 20%; text-align: right;">Duration</th>
+					</tr>
+				</thead>
+				<tbody>
+					${data.timeline.map(item => `
+						<tr>
+							<td><strong>${item.stage}</strong></td>
+							<td>${item.start_time || '-'}</td>
+							<td>${item.end_time || '-'}</td>
+							<td style="text-align: right;">${item.duration || '-'}</td>
+						</tr>
+					`).join('')}
+				</tbody>
+				<tfoot>
+					<tr style="background: #e9ecef; font-weight: bold;">
+						<td colspan="3">Total Process Time</td>
+						<td style="text-align: right;">${data.total_time_formatted}</td>
+					</tr>
+				</tfoot>
+			</table>
+		</div>
+	`;
+
+	// Add to form sidebar or create a custom section
+	if (!frm.fields_dict.custom_process_timeline) {
+		// If custom field doesn't exist, add to page
+		frm.dashboard.$wrapper.append(timeline_html);
+	} else {
+		frm.fields_dict.custom_process_timeline.$wrapper.html(timeline_html);
+	}
 }

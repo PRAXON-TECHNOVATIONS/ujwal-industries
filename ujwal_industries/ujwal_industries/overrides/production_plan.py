@@ -9,8 +9,121 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import frappe
+from frappe import _
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
+
+
+def _get_allow_backdated_setting() -> bool:
+    """
+    Get the allow_backdated_planned_start_date setting from Manufacturing Settings.
+
+    Returns:
+        True if backdated dates are allowed (default), False otherwise.
+    """
+    allow_backdated = frappe.db.get_single_value(
+        "Manufacturing Settings", "allow_backdated_planned_start_date"
+    )
+    # Default to True if field doesn't exist yet
+    return bool(allow_backdated) if allow_backdated is not None else True
+
+
+def _adjust_date_if_backdated(date_value: datetime | None) -> datetime | None:
+    """
+    Adjust the date to today if backdated dates are not allowed and the date is in the past.
+
+    Args:
+        date_value: The calculated date (datetime or None)
+
+    Returns:
+        The original date if backdated dates are allowed or date is not in past,
+        otherwise returns now_datetime() (today's datetime).
+    """
+    if date_value is None:
+        return None
+
+    if _get_allow_backdated_setting():
+        return date_value
+
+    today = getdate()
+    date_only = getdate(date_value)
+
+    if date_only < today:
+        return now_datetime()
+
+    return date_value
+
+
+def validate_planned_start_dates(doc: Document, method: str | None = None) -> None:
+    """
+    Validate and auto-adjust dates if backdated dates are not allowed.
+
+    Validates all date fields across:
+    - po_items (FG): planned_start_date
+    - sub_assembly_items (SFG): schedule_date
+    - mr_items: custom_start_date
+
+    Checks Manufacturing Settings.allow_backdated_planned_start_date field.
+    If unchecked (0):
+    - In House items: Auto-adjust backdated dates to today (smart behavior)
+    - Subcontract/other items: Throw validation error for backdated dates
+
+    Args:
+        doc: Production Plan document
+        method: Hook method name (unused)
+    """
+    del method  # Unused but required for hook signature
+
+    # During import: persist flag so future saves also skip date logic
+    if frappe.flags.in_import:
+        doc.custom_skip_date_calculation = 1
+        return
+
+    # If user dates were preserved (e.g. from import), skip all date logic
+    if doc.get("custom_skip_date_calculation"):
+        return
+
+    # If backdated dates are allowed (default), skip validation
+    if _get_allow_backdated_setting():
+        return
+
+    today = getdate()
+    today_datetime = now_datetime()
+
+    # 1. Validate po_items (FG) - planned_start_date
+    for row in doc.get("po_items") or []:
+        if row.planned_start_date:
+            planned_date = getdate(row.planned_start_date)
+
+            if planned_date < today:
+                manufacturing_type = row.get("custom_manufacturing_type") or ""
+
+                if manufacturing_type == "In House":
+                    # In House: handled by master_set_fg_dates_by_type with proper calculation
+                    pass
+                else:
+                    # Subcontract/Other: Throw validation error
+                    frappe.throw(
+                        msg=_(
+                            "FG Row #{0} ({1}): Planned Start Date ({2}) cannot be a past date. "
+                            "Please select a date on or after today ({3})."
+                        ).format(
+                            row.idx,
+                            row.item_code,
+                            frappe.format(planned_date, "Date"),
+                            frappe.format(today, "Date")
+                        ),
+                        title=_("Invalid Planned Start Date - FG Item")
+                    )
+
+    # 2. Validate sub_assembly_items (SFG) - schedule_date
+    # SFG items are handled by set_subcontracting_suppliers with smart adjustment
+    # No error thrown here - before_save will auto-adjust dates
+
+    # 3. Validate mr_items - custom_start_date
+    # MR items are handled by before_save with smart adjustment
+    # No error thrown here - before_save will auto-adjust dates
+
 
 def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> None:
     """
@@ -28,6 +141,10 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
        - Date = Delivery Date - BOM Production Time.
     """
     
+    # Skip all date logic during import or when user dates were manually preserved
+    if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
+        return
+
     if not doc.get("po_items"):
         return
 
@@ -86,37 +203,86 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
             # === SUBCONTRACT LOGIC ===
             if mfg_type == "Subcontract":
                 available_suppliers = item_supplier_data.get(row.item_code, [])
-                
+
                 target_supplier_row = None
-                
+
                 if row.custom_supplier:
                     target_supplier_row = next((s for s in available_suppliers if s.supplier == row.custom_supplier), None)
-    
+
                 if not target_supplier_row:
                     target_supplier_row = next((s for s in available_suppliers if s.is_default), None)
-                    
+
                     if target_supplier_row:
                         row.custom_supplier = target_supplier_row.supplier
-                
+
                 lead_time = int(target_supplier_row.lead_time_days) if target_supplier_row else 0
-                
+
                 new_date = add_days(getdate(delivery_dt_obj), -lead_time)
-                row.planned_start_date = _to_datetime(new_date)
+                row.planned_start_date = _adjust_date_if_backdated(_to_datetime(new_date))
 
             # === IN HOUSE LOGIC ===
             elif mfg_type == "In House":
                 row.custom_supplier = None # Clear Supplier
-                
+
                 prod_minutes = _calculate_production_minutes(
                     row.bom_no, row.planned_qty, bom_time_cache
                 )
-                
+
                 if prod_minutes > 0:
-                    row.planned_start_date = _subtract_minutes_from_datetime(
+                    calculated_date = _subtract_minutes_from_datetime(
                         delivery_dt_obj, prod_minutes
                     )
+
+                    # Check if backdated and show informative message
+                    if not _get_allow_backdated_setting():
+                        today = getdate()
+                        calculated_date_only = getdate(calculated_date)
+
+                        if calculated_date_only < today:
+                            # Calculate production days needed
+                            prod_days = prod_minutes / (60 * 24)
+
+                            # Extended delivery = today + production_time
+                            extended_delivery = add_days(today, math.ceil(prod_days))
+
+                            # planned_start_date = extended_delivery - production_time
+                            # This equals today at 00:00:00
+                            new_planned_start = _subtract_minutes_from_datetime(
+                                _to_datetime(extended_delivery), prod_minutes
+                            )
+
+                            # Days delivery needs to be extended
+                            current_delivery = getdate(delivery_dt_obj)
+                            extension_days = (getdate(extended_delivery) - current_delivery).days
+
+                            frappe.msgprint(
+                                msg=_(
+                                    "Row #{0} ({1}):<br>"
+                                    "• Production time required: <b>{2:.1f} days</b> ({3:,.0f} minutes)<br>"
+                                    "• Original delivery date: <b>{4}</b><br>"
+                                    "• Extended delivery date: <b>{5}</b> (+{6} days)<br><br>"
+                                    "📅 Planned Start Date set to: <b>{7}</b>"
+                                ).format(
+                                    row.idx,
+                                    row.item_code,
+                                    prod_days,
+                                    prod_minutes,
+                                    frappe.format(current_delivery, "Date"),
+                                    frappe.format(extended_delivery, "Date"),
+                                    extension_days if extension_days > 0 else 0,
+                                    frappe.format(getdate(new_planned_start), "Date")
+                                ),
+                                title=_("Production Schedule Alert"),
+                                indicator="orange"
+                            )
+
+                            row.planned_start_date = new_planned_start
+                        else:
+                            row.planned_start_date = calculated_date
+                    else:
+                        row.planned_start_date = calculated_date
                 else:
-                    row.planned_start_date = delivery_dt_obj
+                    row.planned_start_date = _adjust_date_if_backdated(delivery_dt_obj)
 
         except Exception as e:
             frappe.log_error(f"Master Date Logic Error: {str(e)}")
@@ -185,7 +351,7 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
     Store original sub-assembly schedule_dates and MR item dates in __onload for comparison.
     This allows detecting user changes and calculating deltas for SFG/FG date updates.
     """
-    _ = method  # Unused but required for hook signature
+    del method  # Unused but required for hook signature
 
     # Store original sub-assembly schedule dates
     if doc.get("sub_assembly_items"):
@@ -325,13 +491,22 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
         doc: Production Plan document
         method: Event method name (unused, required for hook signature)
     """
-    _ = method  # Unused but required for hook signature
+    del method  # Unused but required for hook signature
+
+    # Skip all date logic during import or when user dates were manually preserved
+    if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
+        return
 
     # Only process Sales Order-based plans
     if doc.get("get_items_from") != "Sales Order":
         return
 
     if not doc.get("po_items"):
+        return
+
+    # If sub_assembly_items exist, FG dates are driven by SFG dates
+    # Don't recalculate FG dates here - they're set via "Update FG from Sub-Assembly"
+    if doc.get("sub_assembly_items"):
         return
 
     combine_items = bool(doc.get("combine_items"))
@@ -373,7 +548,7 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
             )
 
             if should_set_date and calculated_datetime:
-                po_item.planned_start_date = calculated_datetime
+                po_item.planned_start_date = _adjust_date_if_backdated(calculated_datetime)
             elif not po_item.planned_start_date:
                 # Fallback if no calculated date and no existing date
                 po_item.planned_start_date = now_datetime()
@@ -481,6 +656,9 @@ def calculate_planned_start_dates_client(production_plan: str) -> dict[str, Any]
                     planned_datetime = delivery_datetime
             else:
                 planned_datetime = now_datetime()
+
+            # Adjust date if backdated dates are not allowed
+            planned_datetime = _adjust_date_if_backdated(planned_datetime)
 
             # Store result by item name AND item_code for flexibility
             results[po_item.name] = {
@@ -786,14 +964,35 @@ def calculate_inhouse_schedule_dates(
                 bom_time_cache
             )
 
-            # Set custom_schedule_end_date as when parent needs it
-            custom_schedule_end_date = base_date
-
-            # Calculate schedule_date by subtracting production time
             if production_minutes > 0:
-                schedule_date = _subtract_minutes_from_datetime(base_date, production_minutes)
+                calculated_schedule_date = _subtract_minutes_from_datetime(base_date, production_minutes)
+
+                # Check if backdated and handle smart adjustment
+                if not _get_allow_backdated_setting():
+                    today = getdate()
+                    calculated_date_only = getdate(calculated_schedule_date)
+
+                    if calculated_date_only < today:
+                        # Calculate production days needed
+                        prod_days = production_minutes / (60 * 24)
+
+                        # Extended end date = today + production_time
+                        extended_end_date = add_days(today, math.ceil(prod_days))
+
+                        # schedule_date = extended_end_date - production_time
+                        schedule_date = _subtract_minutes_from_datetime(
+                            _to_datetime(extended_end_date), production_minutes
+                        )
+                        custom_schedule_end_date = _to_datetime(extended_end_date)
+                    else:
+                        schedule_date = calculated_schedule_date
+                        custom_schedule_end_date = base_date
+                else:
+                    schedule_date = calculated_schedule_date
+                    custom_schedule_end_date = base_date
             else:
                 schedule_date = base_date
+                custom_schedule_end_date = base_date
 
             # Store result (only for In House items)
             results[item_info["name"]] = {
@@ -1158,7 +1357,11 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
         doc: Production Plan document
         method: Hook method name (unused)
     """
-    _ = method  # Unused but required for hook signature
+    del method  # Unused but required for hook signature
+
+    # Skip all date logic during import or when user dates were manually preserved
+    if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
+        return
 
     if not doc.get("sub_assembly_items"):
         return
@@ -1238,82 +1441,507 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
     # Batch fetch BOM operations for ALL sub-assembly items (both In House and Subcontract)
     bom_time_cache = _batch_fetch_subassembly_bom_operations(doc)
 
-    # Track schedule_date for each production_item as we process
-    # This allows child items to reference their parent's schedule_date
-    schedule_date_map: dict[str, Any] = {}
+    # ========== CASCADING WITH BACKWARD PROPAGATION ==========
+    # Multi-pass approach:
+    # 1. Calculate initial dates
+    # 2. Adjust backdated items
+    # 3. Propagate constraints backward: if child extends, parent must wait
 
-    # Process items in order (they're ordered by BOM traversal: parent before children)
+    allow_backdated = _get_allow_backdated_setting()
+    today = getdate()
+    today_datetime = _to_datetime(today)
+
+    # Store row metadata with parent/child relationships
+    row_data_list: list[dict[str, Any]] = []
+    production_item_to_data: dict[str, dict[str, Any]] = {}
+
+    # PASS 1: Collect metadata and calculate initial dates
     for row in doc.sub_assembly_items:
-        # Auto-populate fg_warehouse from Item Default if not already set
+        # Auto-populate fg_warehouse
         if not row.fg_warehouse and row.production_item in warehouse_map:
             row.fg_warehouse = warehouse_map[row.production_item]
 
-        # Determine the base date for this item
-        # parent_item_code tells us which item this is a component of
-        parent_item = row.parent_item_code
-
-        # Get base date: either from FG (if parent is FG) or from parent's schedule_date
-        if parent_item in fg_dates:
-            # Direct child of FG item
-            base_date = fg_dates[parent_item]
-        elif parent_item in schedule_date_map:
-            # Child of another sub-assembly item
-            base_date = schedule_date_map[parent_item]
-        else:
-            # Fallback: use current schedule_date or now
-            base_date = row.schedule_date or now_datetime()
-
+        # Get time value based on type
         if row.type_of_manufacturing == "Subcontract":
             supplier_info = supplier_map.get(row.production_item)
-
-            # Auto-populate supplier if not already set
             if not row.supplier and supplier_info:
                 row.supplier = supplier_info.supplier
 
-            # Calculate lead time for this item
             lead_time = 0
             if supplier_info:
                 lead_time = int(supplier_info.lead_time_days or 0)
             elif row.supplier:
-                # If supplier was manually set, try to get lead time for that supplier
-                lead_time = _get_supplier_lead_time(
-                    row.production_item, row.supplier, doc.company
-                )
+                lead_time = _get_supplier_lead_time(row.production_item, row.supplier, doc.company)
 
-            # Calculate dates:
-            # - schedule_date: When to send to supplier (base_date - lead_time)
-            # - custom_schedule_end_date: When item must be ready (= base_date, i.e., when parent needs it)
-            if lead_time > 0:
-                schedule_date = add_days(getdate(base_date), -lead_time)
-                row.schedule_date = _to_datetime(schedule_date)
-                row.custom_schedule_end_date = get_datetime(base_date)
-            else:
-                row.schedule_date = get_datetime(base_date)
-                row.custom_schedule_end_date = get_datetime(base_date)
-
-            # Store this item's schedule_date for its children to reference
-            schedule_date_map[row.production_item] = row.schedule_date
+            time_value = lead_time
+            time_type = "lead_time"
         else:
-            # In-house items: Calculate based on BOM operations time
-            production_minutes = _calculate_production_minutes(
-                row.bom_no,
-                row.qty,
-                bom_time_cache
-            )
+            time_value = _calculate_production_minutes(row.bom_no, row.qty, bom_time_cache)
+            time_type = "production_minutes"
 
-            # Set custom_schedule_end_date as when parent needs it
-            row.custom_schedule_end_date = get_datetime(base_date)
+        data = {
+            "row": row,
+            "parent_item": row.parent_item_code,
+            "production_item": row.production_item,
+            "time_value": time_value,
+            "time_type": time_type,
+            "schedule_date": None,
+            "end_date": None,
+            "was_adjusted": False
+        }
+        row_data_list.append(data)
+        production_item_to_data[row.production_item] = data
 
-            # Calculate schedule_date by subtracting production time
-            if production_minutes > 0:
-                row.schedule_date = _subtract_minutes_from_datetime(
-                    base_date, production_minutes
-                )
+    # PASS 2: Calculate dates with forward cascade
+    for data in row_data_list:
+        parent_item = data["parent_item"]
+
+        # Get base_date (when parent needs this item)
+        if parent_item in fg_dates:
+            base_date = get_datetime(fg_dates[parent_item])
+        elif parent_item in production_item_to_data:
+            base_date = production_item_to_data[parent_item]["schedule_date"]
+        else:
+            base_date = get_datetime(data["row"].schedule_date) if data["row"].schedule_date else now_datetime()
+
+        # Calculate schedule_date
+        if data["time_type"] == "lead_time":
+            if data["time_value"] > 0:
+                calculated_schedule = add_days(getdate(base_date), -data["time_value"])
             else:
-                row.schedule_date = get_datetime(base_date)
+                calculated_schedule = getdate(base_date)
+        else:
+            if data["time_value"] > 0:
+                calculated_schedule = getdate(_subtract_minutes_from_datetime(base_date, data["time_value"]))
+            else:
+                calculated_schedule = getdate(base_date)
 
-            # Store this item's schedule_date for its children to reference
-            schedule_date_map[row.production_item] = row.schedule_date
+        # Check if backdated and adjust
+        if not allow_backdated and calculated_schedule < today:
+            data["schedule_date"] = today_datetime
+
+            if data["time_type"] == "lead_time":
+                data["end_date"] = _to_datetime(add_days(today, data["time_value"]))
+            else:
+                prod_days = data["time_value"] / (60 * 24)
+                data["end_date"] = _to_datetime(add_days(today, math.ceil(prod_days)))
+
+            data["was_adjusted"] = True
+        else:
+            if data["time_type"] == "lead_time":
+                data["schedule_date"] = _to_datetime(calculated_schedule)
+            else:
+                data["schedule_date"] = _subtract_minutes_from_datetime(base_date, data["time_value"])
+            data["end_date"] = base_date
+
+    # PASS 3: Backward propagation (if child extends, parent waits)
+    max_iterations = 10
+    for iteration in range(max_iterations):
+        changes_made = False
+
+        for data in row_data_list:
+            parent_item = data["parent_item"]
+
+            # Skip if parent is FG
+            if parent_item in fg_dates:
+                continue
+
+            # Check if parent exists
+            if parent_item not in production_item_to_data:
+                continue
+
+            parent_data = production_item_to_data[parent_item]
+
+            # If child's end_date > parent's schedule_date, parent must wait
+            if getdate(data["end_date"]) > getdate(parent_data["schedule_date"]):
+                parent_data["schedule_date"] = data["end_date"]
+
+                # Recalculate parent's end_date
+                if parent_data["time_type"] == "lead_time":
+                    parent_data["end_date"] = _to_datetime(add_days(getdate(data["end_date"]), parent_data["time_value"]))
+                else:
+                    prod_days = parent_data["time_value"] / (60 * 24)
+                    parent_data["end_date"] = _to_datetime(add_days(getdate(data["end_date"]), math.ceil(prod_days)))
+
+                parent_data["was_adjusted"] = True
+                changes_made = True
+
+        if not changes_made:
+            break
+
+    # PASS 4: Apply final dates and collect adjustments
+    adjustments_made: list[dict[str, Any]] = []
+
+    for data in row_data_list:
+        data["row"].schedule_date = data["schedule_date"]
+        data["row"].custom_schedule_end_date = data["end_date"]
+
+        if data["was_adjusted"]:
+            if data["time_type"] == "lead_time":
+                time_str = f"{data['time_value']} days"
+            else:
+                prod_days = data["time_value"] / (60 * 24)
+                time_str = f"{prod_days:.1f} days"
+
+            adjustments_made.append({
+                "idx": data["row"].idx,
+                "item": data["production_item"],
+                "type": data["row"].type_of_manufacturing,
+                "time": time_str,
+                "schedule": getdate(data["schedule_date"]),
+                "end": getdate(data["end_date"])
+            })
+
+    # Show consolidated message
+    if adjustments_made:
+        max_end_date = max(adj["end"] for adj in adjustments_made)
+
+        details = "<br>".join([
+            f"Row #{adj['idx']} ({adj['item']}): {adj['type']}, {adj['time']}, Schedule={frappe.format(adj['schedule'], 'Date')}, End={frappe.format(adj['end'], 'Date')}"
+            for adj in adjustments_made
+        ])
+
+        frappe.msgprint(
+            msg=_(
+                "Sub Assembly items adjusted due to backdating constraints:<br><br>"
+                "{0}<br><br>"
+                "⚠️ Latest item ready by <b>{1}</b>."
+            ).format(details, frappe.format(max_end_date, "Date")),
+            title=_("Sub Assembly Schedule Adjusted"),
+            indicator="orange"
+        )
+
+
+def adjust_mr_items_and_propagate(doc: Document, method: str | None = None) -> None:
+    """
+    Smart backdating adjustment for mr_items + upstream propagation.
+
+    1. If custom_start_date < today: shift to today, schedule_date = today + lead_time
+    2. Propagate RM delays up the chain:
+       - Multi-level BOM (SFGs exist): RM → SFG → FG
+       - Single-level BOM (no SFGs):   RM → FG
+    """
+    del method  # Unused but required for hook signature
+
+    # Skip all date logic during import or when user dates were manually preserved
+    if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
+        return
+
+    if _get_allow_backdated_setting():
+        return
+
+    today = getdate()
+    mr_adjustments: list[dict[str, Any]] = []
+
+    # --- Step 1: Adjust backdated mr_items ---
+    for row in doc.get("mr_items") or []:
+        if not row.get("custom_start_date"):
+            continue
+
+        start_date = getdate(row.custom_start_date)
+        if start_date >= today:
+            continue
+
+        # Fetch lead_time from Item Subcontracting Supplier
+        lead_time = 0
+        if row.get("custom_supplier"):
+            lead_time_result = frappe.db.get_value(
+                "Item Subcontracting Supplier",
+                {"parent": row.item_code, "supplier": row.custom_supplier, "company": doc.company},
+                "lead_time_days"
+            )
+            lead_time = int(lead_time_result or 0)
+
+        original_schedule_date = getdate(row.schedule_date) if row.get("schedule_date") else today
+        new_schedule_date = add_days(today, lead_time)
+
+        row.custom_start_date = _to_datetime(today)
+        row.schedule_date = _to_datetime(new_schedule_date)
+
+        mr_adjustments.append({
+            "idx": row.idx,
+            "item_code": row.item_code,
+            "lead_time": lead_time,
+            "original_start": start_date,
+            "original_schedule": original_schedule_date,
+            "new_start": today,
+            "new_schedule": new_schedule_date,
+        })
+
+    # --- Step 2: Show consolidated MR adjustment message (only if adjustments made this save) ---
+    if mr_adjustments:
+        max_mr_schedule = max(a["new_schedule"] for a in mr_adjustments)
+        details = "<br>".join([
+            "Row #{0} <b>{1}</b> — Start: <b>{2}</b> → <b>{3}</b> | Schedule: <b>{4}</b> → <b>{5}</b> (lead time: {6}d)".format(
+                a["idx"],
+                a["item_code"],
+                frappe.format(a["original_start"], "Date"),
+                frappe.format(a["new_start"], "Date"),
+                frappe.format(a["original_schedule"], "Date"),
+                frappe.format(a["new_schedule"], "Date"),
+                a["lead_time"],
+            )
+            for a in mr_adjustments
+        ])
+
+        frappe.msgprint(
+            msg=_(
+                "Material Request items adjusted due to backdating constraints:<br><br>"
+                "{0}<br><br>"
+                "⚠️ Latest material needed by <b>{1}</b>."
+            ).format(details, frappe.format(max_mr_schedule, "Date")),
+            title=_("Material Request Schedule Adjusted"),
+            indicator="orange"
+        )
+
+    # --- Step 3: Propagate RM delays using current schedule_dates ---
+    # (Catches both fresh adjustments and previously adjusted but not yet propagated dates)
+    if doc.get("mr_items"):
+        all_rm_schedules: dict[str, Any] = {
+            row.item_code: getdate(row.schedule_date)
+            for row in doc.mr_items
+            if row.get("schedule_date")
+        }
+        if doc.get("sub_assembly_items"):
+            _propagate_rm_delays_to_sfg_and_fg(doc, all_rm_schedules)
+        else:
+            _propagate_rm_delays_to_fg(doc, all_rm_schedules)
+
+    # --- Step 4: Enforce FG planned_start >= all top-level SFG end dates ---
+    # Runs always when SFGs exist — catches both RM propagation and manual SFG changes
+    if doc.get("sub_assembly_items"):
+        _enforce_fg_waits_for_sfg(doc)
+
+
+def _propagate_rm_delays_to_sfg_and_fg(doc: Document, adjusted_rm_schedules: dict[str, Any]) -> None:
+    """
+    Multi-level BOM: RM schedule_date delay → push SFG dates → push FG planned_start_date.
+
+    Uses duration (end - schedule) already set on SFG rows to preserve production/lead times.
+    Backward propagation among SFGs: if child end > parent schedule, parent waits.
+    """
+    # Collect all SFG bom_nos
+    sfg_bom_nos = list(set(row.bom_no for row in doc.sub_assembly_items if row.bom_no))
+    if not sfg_bom_nos:
+        return
+
+    # Query: which SFG BOMs contain the adjusted raw materials
+    bom_item_links = frappe.db.sql(
+        """
+        SELECT parent as bom_no, item_code
+        FROM `tabBOM Item`
+        WHERE parent IN %(bom_nos)s
+          AND item_code IN %(items)s
+        """,
+        {"bom_nos": sfg_bom_nos, "items": list(adjusted_rm_schedules.keys())},
+        as_dict=True,
+    )
+
+    if not bom_item_links:
+        return
+
+    # bom_no → max delayed RM schedule_date
+    bom_to_max_rm_schedule: dict[str, Any] = {}
+    for link in bom_item_links:
+        rm_sched = adjusted_rm_schedules[link.item_code]
+        if link.bom_no not in bom_to_max_rm_schedule or rm_sched > bom_to_max_rm_schedule[link.bom_no]:
+            bom_to_max_rm_schedule[link.bom_no] = rm_sched
+
+    if not bom_to_max_rm_schedule:
+        return
+
+    # Build SFG map: production_item → working data
+    sfg_map: dict[str, dict[str, Any]] = {}
+    for row in doc.sub_assembly_items:
+        if not row.schedule_date or not row.custom_schedule_end_date:
+            continue
+        schedule = getdate(row.schedule_date)
+        end = getdate(row.custom_schedule_end_date)
+        sfg_map[row.production_item] = {
+            "row": row,
+            "schedule_date": schedule,
+            "end_date": end,
+            "duration_days": max((end - schedule).days, 0),
+            "parent_item_code": row.parent_item_code,
+            "bom_no": row.bom_no,
+            "original_schedule": schedule,
+            "original_end": end,
+        }
+
+    # Step A: Push SFG schedule forward where RM is delayed
+    sfg_changed = False
+    for item, data in sfg_map.items():
+        if data["bom_no"] not in bom_to_max_rm_schedule:
+            continue
+        rm_max = bom_to_max_rm_schedule[data["bom_no"]]
+        if rm_max > data["schedule_date"]:
+            data["schedule_date"] = rm_max
+            data["end_date"] = add_days(rm_max, data["duration_days"])
+            sfg_changed = True
+
+    if not sfg_changed:
+        return
+
+    # Step B: Backward propagation — if child end > parent schedule, parent waits
+    for _iter in range(10):
+        changes_made = False
+        for item, data in sfg_map.items():
+            parent = data["parent_item_code"]
+            if parent not in sfg_map:
+                continue
+            parent_data = sfg_map[parent]
+            if data["end_date"] > parent_data["schedule_date"]:
+                parent_data["schedule_date"] = data["end_date"]
+                parent_data["end_date"] = add_days(data["end_date"], parent_data["duration_days"])
+                changes_made = True
+        if not changes_made:
+            break
+
+    # Step C: Apply updated dates to SFG rows + collect changes
+    sfg_adjustments: list[dict[str, Any]] = []
+    for item, data in sfg_map.items():
+        if data["schedule_date"] != data["original_schedule"] or data["end_date"] != data["original_end"]:
+            data["row"].schedule_date = _to_datetime(data["schedule_date"])
+            data["row"].custom_schedule_end_date = _to_datetime(data["end_date"])
+            sfg_adjustments.append({
+                "production_item": item,
+                "original_schedule": data["original_schedule"],
+                "new_schedule": data["schedule_date"],
+                "original_end": data["original_end"],
+                "new_end": data["end_date"],
+            })
+
+    # Show SFG propagation message (FG update handled by _enforce_fg_waits_for_sfg)
+    if sfg_adjustments:
+        sfg_details = "<br>".join([
+            "<b>{0}</b> — Schedule: {1} → <b>{2}</b> | End: {3} → <b>{4}</b>".format(
+                a["production_item"],
+                frappe.format(a["original_schedule"], "Date"),
+                frappe.format(a["new_schedule"], "Date"),
+                frappe.format(a["original_end"], "Date"),
+                frappe.format(a["new_end"], "Date"),
+            )
+            for a in sfg_adjustments
+        ])
+
+        frappe.msgprint(
+            msg=_("Sub Assembly items rescheduled due to raw material delay:<br><br>{0}").format(sfg_details),
+            title=_("Sub Assembly Schedule Adjusted"),
+            indicator="orange"
+        )
+
+
+def _propagate_rm_delays_to_fg(doc: Document, adjusted_rm_schedules: dict[str, Any]) -> None:
+    """
+    Single-level BOM: RM schedule_date delay → push FG planned_start_date directly.
+    """
+    fg_bom_nos = list(set(row.bom_no for row in doc.po_items if row.get("bom_no")))
+    if not fg_bom_nos:
+        return
+
+    # Query: which FG BOMs contain the adjusted raw materials
+    bom_item_links = frappe.db.sql(
+        """
+        SELECT parent as bom_no, item_code
+        FROM `tabBOM Item`
+        WHERE parent IN %(bom_nos)s
+          AND item_code IN %(items)s
+        """,
+        {"bom_nos": fg_bom_nos, "items": list(adjusted_rm_schedules.keys())},
+        as_dict=True,
+    )
+
+    if not bom_item_links:
+        return
+
+    # bom_no → max delayed RM schedule_date
+    bom_to_max_rm_schedule: dict[str, Any] = {}
+    for link in bom_item_links:
+        rm_sched = adjusted_rm_schedules[link.item_code]
+        if link.bom_no not in bom_to_max_rm_schedule or rm_sched > bom_to_max_rm_schedule[link.bom_no]:
+            bom_to_max_rm_schedule[link.bom_no] = rm_sched
+
+    # Update FG planned_start_date where RM delay exceeds it
+    fg_adjustments: list[dict[str, Any]] = []
+    for po_item in doc.po_items:
+        if not po_item.get("bom_no") or po_item.bom_no not in bom_to_max_rm_schedule:
+            continue
+        max_rm = bom_to_max_rm_schedule[po_item.bom_no]
+        if max_rm > getdate(po_item.planned_start_date):
+            fg_adjustments.append({
+                "item_code": po_item.item_code,
+                "original": getdate(po_item.planned_start_date),
+                "new": max_rm,
+            })
+            po_item.planned_start_date = _to_datetime(max_rm)
+
+    if fg_adjustments:
+        fg_details = "<br>".join([
+            "<b>{0}</b> — Planned Start: {1} → <b>{2}</b>".format(
+                a["item_code"],
+                frappe.format(a["original"], "Date"),
+                frappe.format(a["new"], "Date"),
+            )
+            for a in fg_adjustments
+        ])
+        frappe.msgprint(
+            msg=_(
+                "FG items rescheduled due to raw material delay:<br><br>{0}"
+            ).format(fg_details),
+            title=_("FG Schedule Adjusted"),
+            indicator="orange"
+        )
+
+
+def _enforce_fg_waits_for_sfg(doc: Document) -> None:
+    """
+    Constraint: FG planned_start_date must be >= all top-level SFG custom_schedule_end_dates.
+
+    Runs after SFG dates are finalized (whether by set_subcontracting_suppliers,
+    RM propagation, or manual user change). If any top-level SFG ends after FG starts,
+    push FG forward to that SFG's end date.
+    """
+    fg_item_codes = {row.item_code for row in (doc.get("po_items") or [])}
+    fg_adjustments: list[dict[str, Any]] = []
+
+    # Find max end_date per FG from its direct SFG children
+    fg_max_end: dict[str, Any] = {}
+    for row in doc.sub_assembly_items:
+        if row.parent_item_code not in fg_item_codes or not row.custom_schedule_end_date:
+            continue
+        sfg_end = getdate(row.custom_schedule_end_date)
+        if row.parent_item_code not in fg_max_end or sfg_end > fg_max_end[row.parent_item_code]:
+            fg_max_end[row.parent_item_code] = sfg_end
+
+    # Push FG where needed
+    for po_item in doc.po_items:
+        if po_item.item_code not in fg_max_end:
+            continue
+        max_sfg_end = fg_max_end[po_item.item_code]
+        if max_sfg_end > getdate(po_item.planned_start_date):
+            fg_adjustments.append({
+                "item_code": po_item.item_code,
+                "original": getdate(po_item.planned_start_date),
+                "new": max_sfg_end,
+            })
+            po_item.planned_start_date = _to_datetime(max_sfg_end)
+
+    if fg_adjustments:
+        fg_details = "<br>".join([
+            "<b>{0}</b> — Planned Start: {1} → <b>{2}</b>".format(
+                a["item_code"],
+                frappe.format(a["original"], "Date"),
+                frappe.format(a["new"], "Date"),
+            )
+            for a in fg_adjustments
+        ])
+        frappe.msgprint(
+            msg=_(
+                "FG planned start date updated — waiting for Sub Assembly:<br><br>{0}"
+            ).format(fg_details),
+            title=_("FG Schedule Adjusted"),
+            indicator="orange"
+        )
 
 
 def _batch_fetch_subassembly_bom_operations(doc: Document) -> dict[str, list[dict[str, Any]]]:
@@ -1996,9 +2624,11 @@ def cascade_sfg_date_change(
                 production_mins = prod_time_result.get("production_minutes", 0)
 
                 # Calculate new parent date
+                # Parent can START when child ENDS (not child_end + production_mins!)
+                # Parent ENDS after its own production time
                 child_end = get_datetime(new_end_date if new_end_date else new_schedule_date)
-                new_parent_start = add_to_date(child_end, minutes=production_mins)
-                new_parent_end = add_to_date(new_parent_start, minutes=production_mins)
+                new_parent_start = child_end
+                new_parent_end = add_to_date(child_end, minutes=production_mins)
 
                 parent_sfg_updates.append({
                     "row_name": parent_row.name,
@@ -2280,6 +2910,20 @@ def calculate_sfg_fg_dates_from_mr_items(
                         # Only update if the new date is different
                         time_diff = abs((get_datetime(new_sfg_datetime) - get_datetime(current_sfg_date)).total_seconds())
                         if time_diff > 60:
+                            # Calculate end_date for this SFG
+                            if mfg_type == "Subcontract":
+                                # Use lead time
+                                lead_time_days = int(supplier_map.get(item_code).lead_time_days or 0) if supplier_map.get(item_code) else 0
+                                new_sfg_end_date = add_days(getdate(new_sfg_datetime), lead_time_days)
+                                new_sfg_end_datetime = _to_datetime(new_sfg_end_date)
+                            elif mfg_type == "In House":
+                                # Calculate production time
+                                prod_time_result = calculate_production_time_from_bom(sfg_info["bom_no"])
+                                production_mins = prod_time_result.get("production_minutes", 0)
+                                new_sfg_end_datetime = add_to_date(get_datetime(new_sfg_datetime), minutes=production_mins)
+                            else:
+                                new_sfg_end_datetime = new_sfg_datetime
+
                             sfg_updates.append({
                                 "row_name": sfg_info["row_name"],
                                 "production_item": sfg_item,
@@ -2288,16 +2932,17 @@ def calculate_sfg_fg_dates_from_mr_items(
                                 "new_date": str(new_sfg_datetime),
                                 "affected_by_material": item_code,
                                 "bom_no": sfg_info["bom_no"],
-                                "type_of_manufacturing": mfg_type
+                                "type_of_manufacturing": mfg_type,
+                                "custom_schedule_end_date": str(new_sfg_end_datetime)
                             })
 
-                            # Track for cascade propagation
+                            # Track END date for cascade propagation (parent starts when child ends!)
                             if sfg_item not in affected_sfgs:
-                                affected_sfgs[sfg_item] = new_sfg_datetime
+                                affected_sfgs[sfg_item] = new_sfg_end_datetime
                             else:
                                 # Use the latest date if multiple materials affect same SFG
-                                if new_sfg_datetime > affected_sfgs[sfg_item]:
-                                    affected_sfgs[sfg_item] = new_sfg_datetime
+                                if new_sfg_end_datetime > affected_sfgs[sfg_item]:
+                                    affected_sfgs[sfg_item] = new_sfg_end_datetime
 
     # Now cascade through parent SFGs recursively
     # Keep looping until no more parent SFGs are found
@@ -2329,50 +2974,62 @@ def calculate_sfg_fg_dates_from_mr_items(
                     # This SFG is a child of parent_sfg_item
                     # Calculate parent's new schedule_date based on child's new date + production time
 
-                    # Get the BOM and planned qty for parent
-                    parent_bom_data = frappe.db.get_value(
-                        "BOM",
-                        parent_bom,
-                        ["quantity"],
-                        as_dict=True
-                    )
-
-                    if not parent_bom_data:
-                        continue
-
-                    parent_qty = float(parent_bom_data.get("quantity") or 1.0)
-
-                    # Get production time for parent SFG
-                    parent_operations = frappe.db.sql(
-                        """
-                        SELECT time_in_mins, custom_batchsize
-                        FROM `tabBOM Operation`
-                        WHERE parent = %s
-                        ORDER BY idx
-                    """,
-                        (parent_bom,),
-                        as_dict=True,
-                    )
-
-                    # Calculate production time in minutes
-                    production_minutes = 0.0
-                    for op in parent_operations:
-                        time_in_mins = float(op.get("time_in_mins") or 0)
-                        custom_batchsize = float(op.get("custom_batchsize") or 1)
-
-                        if custom_batchsize <= 0:
-                            custom_batchsize = 1
-
-                        time_per_unit = time_in_mins / custom_batchsize
-                        operation_time = time_per_unit * parent_qty
-                        production_minutes += operation_time
-
-                    # Calculate new parent schedule_date = child schedule_date + production_time
+                    # Calculate new parent dates based on manufacturing type
                     child_date = get_datetime(affected_sfg_date)
-                    new_parent_date = add_to_date(child_date, minutes=production_minutes)
+                    new_parent_date = child_date  # Parent starts when child ends
 
-                    # Also calculate custom_schedule_end_date (same as schedule_date + production time)
-                    new_parent_end_date = add_to_date(new_parent_date, minutes=production_minutes)
+                    parent_mfg_type = parent_sfg_info.get("type_of_manufacturing")
+
+                    if parent_mfg_type == "Subcontract":
+                        # For Subcontract: use lead time days
+                        # Get parent item code from parent_sfg_item (production_item)
+                        parent_lead_time_days = get_subcontract_lead_time(
+                            parent_sfg_item,
+                            None,  # supplier will be fetched from default
+                            doc.company
+                        )
+                        new_parent_end_date = add_days(getdate(child_date), parent_lead_time_days)
+                        new_parent_end_date = _to_datetime(new_parent_end_date)
+                    else:
+                        # For In House: use production time from BOM operations
+                        parent_bom_data = frappe.db.get_value(
+                            "BOM",
+                            parent_bom,
+                            ["quantity"],
+                            as_dict=True
+                        )
+
+                        if not parent_bom_data:
+                            continue
+
+                        parent_qty = float(parent_bom_data.get("quantity") or 1.0)
+
+                        # Get production time for parent SFG
+                        parent_operations = frappe.db.sql(
+                            """
+                            SELECT time_in_mins, custom_batchsize
+                            FROM `tabBOM Operation`
+                            WHERE parent = %s
+                            ORDER BY idx
+                        """,
+                            (parent_bom,),
+                            as_dict=True,
+                        )
+
+                        # Calculate production time in minutes
+                        production_minutes = 0.0
+                        for op in parent_operations:
+                            time_in_mins = float(op.get("time_in_mins") or 0)
+                            custom_batchsize = float(op.get("custom_batchsize") or 1)
+
+                            if custom_batchsize <= 0:
+                                custom_batchsize = 1
+
+                            time_per_unit = time_in_mins / custom_batchsize
+                            operation_time = time_per_unit * parent_qty
+                            production_minutes += operation_time
+
+                        new_parent_end_date = add_to_date(child_date, minutes=production_minutes)
 
                     current_parent_date = parent_sfg_info["schedule_date"]
 
@@ -2406,13 +3063,13 @@ def calculate_sfg_fg_dates_from_mr_items(
                                 "bom_no": parent_bom
                             })
 
-                        # Track this parent for next iteration
+                        # Track this parent's END date for next iteration (grandparent starts when parent ends)
                         if parent_sfg_item not in new_affected_sfgs:
-                            new_affected_sfgs[parent_sfg_item] = new_parent_date
+                            new_affected_sfgs[parent_sfg_item] = new_parent_end_date
                         else:
                             # Use the latest date if multiple children affect same parent
-                            if new_parent_date > new_affected_sfgs[parent_sfg_item]:
-                                new_affected_sfgs[parent_sfg_item] = new_parent_date
+                            if new_parent_end_date > new_affected_sfgs[parent_sfg_item]:
+                                new_affected_sfgs[parent_sfg_item] = new_parent_end_date
 
         # Continue with newly affected parent SFGs
         affected_sfgs = new_affected_sfgs
@@ -2420,41 +3077,56 @@ def calculate_sfg_fg_dates_from_mr_items(
     # Calculate custom_schedule_end_date for all affected SFGs
     for sfg_update in sfg_updates:
         if "custom_schedule_end_date" not in sfg_update:
-            # Calculate end date based on production time
-            bom_no = sfg_update["bom_no"]
-
-            # Get BOM quantity
-            bom_data = frappe.db.get_value("BOM", bom_no, ["quantity"], as_dict=True)
-            qty = float(bom_data.get("quantity") or 1.0) if bom_data else 1.0
-
-            # Get operations
-            operations = frappe.db.sql(
-                """
-                SELECT time_in_mins, custom_batchsize
-                FROM `tabBOM Operation`
-                WHERE parent = %s
-                ORDER BY idx
-            """,
-                (bom_no,),
-                as_dict=True,
-            )
-
-            # Calculate production time
-            production_minutes = 0.0
-            for op in operations:
-                time_in_mins = float(op.get("time_in_mins") or 0)
-                custom_batchsize = float(op.get("custom_batchsize") or 1)
-
-                if custom_batchsize <= 0:
-                    custom_batchsize = 1
-
-                time_per_unit = time_in_mins / custom_batchsize
-                operation_time = time_per_unit * qty
-                production_minutes += operation_time
-
-            # Calculate end date
+            # Calculate end date based on manufacturing type
+            mfg_type = sfg_update.get("type_of_manufacturing")
             start_date = get_datetime(sfg_update["new_date"])
-            end_date = add_to_date(start_date, minutes=production_minutes)
+
+            if mfg_type == "Subcontract":
+                # For Subcontract: use lead time days
+                production_item = sfg_update.get("production_item")
+                lead_time_days = get_subcontract_lead_time(
+                    production_item,
+                    None,  # supplier will be fetched from default
+                    doc.company
+                )
+                end_date = add_days(getdate(start_date), lead_time_days)
+                end_date = _to_datetime(end_date)
+            else:
+                # For In House: use production time from BOM operations
+                bom_no = sfg_update["bom_no"]
+
+                # Get BOM quantity
+                bom_data = frappe.db.get_value("BOM", bom_no, ["quantity"], as_dict=True)
+                qty = float(bom_data.get("quantity") or 1.0) if bom_data else 1.0
+
+                # Get operations
+                operations = frappe.db.sql(
+                    """
+                    SELECT time_in_mins, custom_batchsize
+                    FROM `tabBOM Operation`
+                    WHERE parent = %s
+                    ORDER BY idx
+                """,
+                    (bom_no,),
+                    as_dict=True,
+                )
+
+                # Calculate production time
+                production_minutes = 0.0
+                for op in operations:
+                    time_in_mins = float(op.get("time_in_mins") or 0)
+                    custom_batchsize = float(op.get("custom_batchsize") or 1)
+
+                    if custom_batchsize <= 0:
+                        custom_batchsize = 1
+
+                    time_per_unit = time_in_mins / custom_batchsize
+                    operation_time = time_per_unit * qty
+                    production_minutes += operation_time
+
+                # Calculate end date
+                end_date = add_to_date(start_date, minutes=production_minutes)
+
             sfg_update["custom_schedule_end_date"] = str(end_date)
 
     # Now propagate SFG changes to FG items
