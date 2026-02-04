@@ -168,10 +168,7 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
-<<<<<<< HEAD
-=======
 			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate"
->>>>>>> f5424f9 (feat(MFG-0001): so tracking, backdated logic, custom batchsize logic)
 		]
 	},
 	"Supplier": {
