@@ -1,0 +1,257 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-02-04 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "production_item",
+  "item_name",
+  "fg_warehouse",
+  "parent_item_code",
+  "schedule_date",
+  "custom_schedule_end_date",
+  "column_break_1",
+  "qty",
+  "bom_no",
+  "bom_level",
+  "type_of_manufacturing",
+  "supplier",
+  "work_order_details_section",
+  "wo_produced_qty",
+  "purchase_order",
+  "production_plan_item",
+  "sales_order",
+  "fg_item_code",
+  "column_break_7",
+  "ordered_qty",
+  "received_qty",
+  "indent",
+  "section_break_19",
+  "uom",
+  "stock_uom",
+  "column_break_22",
+  "description",
+  "section_break_4rxf",
+  "actual_qty",
+  "column_break_xfhm",
+  "projected_qty"
+ ],
+ "fields": [
+  {
+   "fieldname": "production_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sub Assembly Item Code",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "production_item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "fg_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "parent_item_code",
+   "fieldtype": "Link",
+   "label": "Finished Good",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "schedule_date",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Schedule Date"
+  },
+  {
+   "fieldname": "custom_schedule_end_date",
+   "fieldtype": "Datetime",
+   "label": "Schedule End Date"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Required Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bom_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bom No",
+   "options": "BOM"
+  },
+  {
+   "columns": 1,
+   "fieldname": "bom_level",
+   "fieldtype": "Int",
+   "label": "Level (BOM)",
+   "read_only": 1
+  },
+  {
+   "default": "In House",
+   "fieldname": "type_of_manufacturing",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Manufacturing Type",
+   "options": "In House\nSubcontract\nMaterial Request"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "mandatory_depends_on": "eval:doc.type_of_manufacturing == 'Subcontract'",
+   "options": "Supplier"
+  },
+  {
+   "depends_on": "eval:doc.type_of_manufacturing == \"In House\"",
+   "fieldname": "work_order_details_section",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "fieldname": "wo_produced_qty",
+   "fieldtype": "Float",
+   "label": "Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Purchase Order",
+   "options": "Purchase Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "production_plan_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Production Plan Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fg_item_code",
+   "fieldtype": "Link",
+   "label": "FG Item Code",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_7",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ordered_qty",
+   "fieldtype": "Float",
+   "label": "Ordered Qty",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "label": "Received Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "indent",
+   "fieldtype": "Int",
+   "label": "Indent"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_19",
+   "fieldtype": "Section Break",
+   "label": "Item Details"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "production_item.stock_uom",
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "Stock UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_22",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "production_item.description",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_4rxf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "actual_qty",
+   "fieldtype": "Float",
+   "label": "Actual Qty",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_xfhm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "projected_qty",
+   "fieldtype": "Float",
+   "label": "Projected Qty",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-04 18:40:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Bulk PP Sub Assembly Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
