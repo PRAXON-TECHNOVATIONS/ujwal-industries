@@ -166,7 +166,7 @@ doc_events = {
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 		]
 	},
 	"Supplier": {
@@ -177,7 +177,8 @@ doc_events = {
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
-		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+        "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
 	},
 	"Downtime Entry": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
@@ -212,7 +213,6 @@ override_whitelisted_methods = {
     "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
         "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
 }
-
 
 #
 # each overriding function accepts a `data` argument;

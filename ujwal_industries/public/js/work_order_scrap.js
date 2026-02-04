@@ -1,11 +1,22 @@
-// frappe.ui.form.on("Work Order", {
-// 	refresh(frm) {
-// 		if (frm.doc.docstatus !== 1) return;
-        
-// 		render_work_order_progress(frm);
-
-// 	}
-// });
+function set_wip_from_production_item(frm) {
+    if (!frm.doc.production_item) {
+        return;
+    }
+    frappe.call({
+        method: "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_from_production_item",
+        args: {
+            production_item: frm.doc.production_item
+        },
+        callback: function (r) {
+            if (r.message) {
+                setTimeout(() => {
+                    frm.set_value("wip_warehouse", r.message);
+                    frm.refresh_field("wip_warehouse");
+                }, 300);
+            }
+        }
+    });
+}
 
 function render_work_order_progress(frm) {
 	const total = flt(frm.doc.qty || 0);
@@ -31,7 +42,6 @@ function render_work_order_progress(frm) {
 			firstProgress.after(line);
 		}
 	}
-
 	setTimeout(() => {
 		const bars = document.querySelectorAll(".form-dashboard .progress-bar");
 
@@ -138,9 +148,109 @@ function render_work_order_progress(frm) {
 			);
 		}
 	});
+    frappe.call({
+		method: "ujwal_industries.api.work_order_progress.get_operation_progress",
+		args: { work_order: frm.doc.name },
+		callback(r) {
+			if (!r.message) return;
+			update_operations_progress_bar(r.message);
+		}
+	});
+}
+
+function update_operations_progress_bar(operation_data) {
+	const texts = document.querySelectorAll(".form-dashboard .text-muted");
+	let target = null;
+
+	texts.forEach(el => {
+		if (el.innerText.startsWith("Pending Operations") || el.innerText.startsWith("Operations")) {
+			target = el;
+		}
+	});
+
+	if (!target) return;
+
+	let parts = [];
+
+	if (operation_data.completed.length) {
+		parts.push(
+			`Completed: ${operation_data.completed
+				.map(o => `${o[0]} (${o[1].toFixed(0)}%)`)
+				.join(", ")}`
+		);
+	}
+
+	if (operation_data.in_progress.length) {
+		parts.push(
+			`In Progress: ${operation_data.in_progress
+				.map(o => `${o[0]} (${o[1].toFixed(0)}%)`)
+				.join(", ")}`
+		);
+	}
+
+	if (operation_data.on_hold.length) {
+		parts.push(
+			`On Hold: ${operation_data.on_hold
+				.map(o => `${o[0]} (${o[1].toFixed(0)}%)`)
+				.join(", ")}`
+		);
+	}
+	if (operation_data.not_started.length) {
+		parts.push(
+			`Not Started: ${operation_data.not_started
+				.map(o => `${o[0]} (${o[1].toFixed(0)}%)`)
+				.join(", ")}`
+		);
+	}
+	target.innerHTML = `<b>Operations:</b> ${parts.join(", ")}`;
+
+    setTimeout(() => {
+		const progressBars = document.querySelectorAll(
+			".form-dashboard .progress"
+		);
+
+		//  2nd progress bar = Operations Bar
+		const operationProgress = progressBars[1];
+
+		const bars = operationProgress.querySelectorAll(".progress-bar");
+		if (!bars.length) return;
+
+		const tooltips = [];
+
+		operation_data.completed.forEach(o => {
+			tooltips.push(`Completed: ${o[0]} (${o[1].toFixed(0)}%)`);
+		});
+
+		operation_data.in_progress.forEach(o => {
+			tooltips.push(`In Progress: ${o[0]} (${o[1].toFixed(0)}%)`);
+		});
+
+		operation_data.on_hold.forEach(o => {
+			tooltips.push(`On Hold: ${o[0]} (${o[1].toFixed(0)}%)`);
+		});
+
+		operation_data.not_started.forEach(o => {
+			tooltips.push(`Not Started: ${o[0]} (${o[1].toFixed(0)}%)`);
+		});
+
+		bars.forEach((bar, index) => {
+			if (!tooltips[index]) return;
+
+			bar.setAttribute("title", tooltips[index]);
+			bar.setAttribute("data-bs-toggle", "tooltip");
+
+			if (window.bootstrap && !bootstrap.Tooltip.getInstance(bar)) {
+				new bootstrap.Tooltip(bar);
+			}
+		});
+	}, 400);
 }
 
 frappe.ui.form.on("Work Order", {
+	production_item(frm) {
+        set_wip_from_production_item(frm);
+    },
+
     refresh(frm) {
     if (frm.doc.docstatus !== 1) return;
 	render_work_order_progress(frm);

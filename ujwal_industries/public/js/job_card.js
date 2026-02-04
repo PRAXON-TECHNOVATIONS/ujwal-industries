@@ -3,9 +3,10 @@
 
 frappe.ui.form.on("Job Card", {
 	refresh: function(frm) {
+		// Set Qty To Manufacture as Read Only
+		frm.set_df_property("for_quantity", "read_only", 1);
 		// Display downtime alerts if any exist
 		show_downtime_alerts(frm);
-
 		// Subscribe to real-time workstation status updates
 		setup_realtime_workstation_status(frm);
 	},
@@ -19,6 +20,18 @@ frappe.ui.form.on("Job Card", {
 		// Call the original prepare_timer_buttons first
 		// This is a workaround since we can't call super() in Frappe
 		_original_prepare_timer_buttons(frm);
+
+		//  CHECK DOWNTIME
+		const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
+
+		if (has_active_downtime) {
+			// Remove Start Job Button
+			frm.page.remove_inner_button(__("Start Job"));
+			// Remove Resume Job Button
+			frm.page.remove_inner_button(__("Resume Job"));
+			// Remove Stopwatch
+			hide_job_card_timer(frm);
+		}
 
 		// Now override the Pause Job button behavior
 		if (frm.doc.started_time || frm.doc.current_time) {
@@ -34,6 +47,22 @@ frappe.ui.form.on("Job Card", {
 		}
 	}
 });
+
+function hide_job_card_timer(frm) {
+    // Hide stopwatch shown in page header
+    $(frm.page.wrapper)
+        .find(".page-actions .custom-actions .stopwatch")
+        .closest(".custom-actions")
+        .hide();
+}
+
+function hide_job_card_timer(frm) {
+    // Hide stopwatch shown in page header
+    $(frm.page.wrapper)
+        .find(".page-actions .custom-actions .stopwatch")
+        .closest(".custom-actions")
+        .hide();
+}
 
 /**
  * Show dialog to capture pause reason

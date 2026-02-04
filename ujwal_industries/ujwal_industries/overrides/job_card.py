@@ -9,8 +9,6 @@ import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import flt
 
-#######################################
-
 # reference to original function
 from erpnext.manufacturing.doctype.job_card.job_card import make_time_log as _original_make_time_log
 
@@ -48,7 +46,6 @@ def make_time_log_with_material_check(args):
     # check when Start / Resume
     if status in ("Work In Progress", "Resume Job"):
         jc = frappe.get_doc("Job Card", job_card_id)
-
         if jc.work_order:
             # Total Transferred against WO
             transferred_qty = (
@@ -103,8 +100,39 @@ def make_time_log_with_material_check(args):
 
     return _original_make_time_log(args)
 
+def _has_active_workstation_downtime(workstation: str) -> bool:
+    if not workstation:
+        return False
+    
+    from frappe.utils import now_datetime
+    
+    current_time = now_datetime()
 
-#######################################
+    return bool(
+        frappe.db.exists(
+            "Downtime Entry",
+            {
+                "workstation": workstation,
+                "from_time": ("<=", current_time),
+                "to_time": (">=", current_time),
+            },
+        )
+    )
+
+def restrict_job_card_edit_during_downtime(doc: Document, method=None):
+    if not doc.workstation:
+        return
+    if doc.docstatus != 0:
+        return  # Allow submitted docs to remain untouched
+
+    if _has_active_workstation_downtime(doc.workstation):
+        frappe.throw(
+            title="Workstation Under Downtime",
+            msg=f"""
+            Job Card cannot be modified while workstation <b>{doc.workstation}</b>
+            is under active downtime.
+            """
+        )
 
 def _get_item_tolerance(production_item: str) -> float:
     """Get tolerance percentage from Item master's custom_tolerance_ field."""
