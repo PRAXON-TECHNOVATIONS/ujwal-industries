@@ -187,6 +187,9 @@ doc_events = {
 		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
 		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
 	},
+	"Purchase Receipt": {
+        "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit"
+    }
 }
 
 # Scheduled Tasks
