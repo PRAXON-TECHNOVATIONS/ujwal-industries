@@ -189,7 +189,10 @@ doc_events = {
 	},
 	"Purchase Receipt": {
         "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit"
-    }
+    },
+	"Data Import": {
+		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
+	},
 }
 
 # Scheduled Tasks
