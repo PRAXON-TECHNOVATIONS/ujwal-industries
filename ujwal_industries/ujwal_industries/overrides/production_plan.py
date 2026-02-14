@@ -12,8 +12,13 @@ import frappe
 from frappe import _
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
-
-
+# Avi
+def _skip_during_data_import():
+    return (
+        frappe.flags.get("in_import")
+        or frappe.flags.get("importing_doctype") == "Production Plan"
+    )
+# Avi 
 def _get_allow_backdated_setting() -> bool:
     """
     Get the allow_backdated_planned_start_date setting from Manufacturing Settings.
@@ -73,12 +78,15 @@ def validate_planned_start_dates(doc: Document, method: str | None = None) -> No
         method: Hook method name (unused)
     """
     del method  # Unused but required for hook signature
-
+    # AVI
+    if _skip_during_data_import():
+        return
+    # AVI
     # During import: persist flag so future saves also skip date logic
     if frappe.flags.in_import:
         doc.custom_skip_date_calculation = 1
         return
-
+    
     # If user dates were preserved (e.g. from import), skip all date logic
     if doc.get("custom_skip_date_calculation"):
         return
@@ -140,7 +148,10 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
        - Clear Supplier field.
        - Date = Delivery Date - BOM Production Time.
     """
-    
+    # AVI
+    if _skip_during_data_import():
+        return
+    # AVI
     # Skip all date logic during import or when user dates were manually preserved
     if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
         return
@@ -492,7 +503,10 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
         method: Event method name (unused, required for hook signature)
     """
     del method  # Unused but required for hook signature
-
+    # AVI
+    if _skip_during_data_import():
+        return
+    # AVI
     # Skip all date logic during import or when user dates were manually preserved
     if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
         return
@@ -1358,7 +1372,10 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
         method: Hook method name (unused)
     """
     del method  # Unused but required for hook signature
-
+    # AVI
+    if _skip_during_data_import():
+        return
+    # AVI
     # Skip all date logic during import or when user dates were manually preserved
     if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
         return
@@ -1622,7 +1639,10 @@ def adjust_mr_items_and_propagate(doc: Document, method: str | None = None) -> N
        - Single-level BOM (no SFGs):   RM → FG
     """
     del method  # Unused but required for hook signature
-
+    # AVI
+    if _skip_during_data_import():
+        return
+    # AVI
     # Skip all date logic during import or when user dates were manually preserved
     if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
         return

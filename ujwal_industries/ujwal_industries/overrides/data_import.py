@@ -56,7 +56,10 @@ def validate_production_plan_import(doc: Document, method: str | None = None) ->
         method: Hook method name (unused)
     """
     del method  # Unused but required for hook signature
-
+    # AVI
+    if doc.reference_doctype == "Production Plan":
+        frappe.flags.importing_doctype = "Production Plan"
+    # AVI
     # Only process Production Plan imports
     if doc.reference_doctype != "Production Plan":
         return
