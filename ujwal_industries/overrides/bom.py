@@ -46,7 +46,10 @@ def update_bom_update_cost(self, update_parent=True, from_child_bom=False, updat
 		self.total_scrap_cost = sum(flt(d.amount) for d in self.scrap_items)
 
 	# Update total cost
-	self.calculate_total()
+	# Avi
+	# self.calculate_total()
+	self.calculate_cost()
+	# Avi
 
 	# Update parent BOM if needed
 	if save:
