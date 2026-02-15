@@ -7,7 +7,8 @@ from typing import Any
 
 import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
-from frappe.utils import flt
+from frappe.utils import flt , now_datetime
+
 
 from erpnext.manufacturing.doctype.job_card.job_card import (
     make_time_log as _original_make_time_log,
@@ -58,7 +59,11 @@ def make_time_log_with_material_check(args):
 
     job_card_id = args.get("job_card_id")
     status = args.get("status")
-
+    
+    if status == "Resume Job":
+        jc = frappe.get_doc("Job Card", job_card_id)
+        _close_job_card_downtime(jc)
+        
     if status in ("Work In Progress", "Resume Job"):
         jc = frappe.get_doc("Job Card", job_card_id)
 
@@ -149,7 +154,67 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
         )
 
 def job_card_validate(doc: Document, method=None):
-    validate_job_card_qty_fg_based(doc, method)
+    validate_job_card_qty_fg_based(doc, method)\
+        
+def _create_job_card_downtime(job_card, pause_reason):
+    if pause_reason != "Downtime":
+        return
+
+    # avoid duplicate open downtime
+    exists = frappe.db.exists(
+        "Downtime Entry",
+        {
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        }
+    )
+    if exists:
+        return
+
+    # 🔑 get operator from time log where pause_reason = Downtime
+    operator = None
+    for tl in reversed(job_card.time_logs or []):
+        if tl.custom_pause_reason == "Downtime":
+            operator = tl.employee
+            break
+
+    if not operator:
+        frappe.throw("Unable to determine operator for downtime entry")
+
+    d = frappe.new_doc("Downtime Entry")
+    d.workstation = job_card.workstation
+    d.from_time = now_datetime()
+    d.stop_reason = "Other"
+    d.remarks = f"Job Card Downtime: {job_card.name}"
+    d.custom_job_card = job_card.name
+    d.operator = operator
+
+    # 🔥 MOST IMPORTANT LINE
+    d.flags.ignore_mandatory = True
+
+    d.insert(ignore_permissions=True)
+
+
+def _close_job_card_downtime(job_card):
+    open_dt = frappe.get_all(
+        "Downtime Entry",
+        filters={
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        },
+        limit=1,
+    )
+
+    if not open_dt:
+        return
+
+    frappe.db.set_value(
+        "Downtime Entry",
+        open_dt[0].name,
+        "to_time",
+        now_datetime(),
+    )
+
 
 def _has_active_workstation_downtime(workstation: str) -> bool:
     if not workstation:
@@ -158,17 +223,30 @@ def _has_active_workstation_downtime(workstation: str) -> bool:
     from frappe.utils import now_datetime
     
     current_time = now_datetime()
-
+    # AVI
+    # return bool(
+    #     frappe.db.exists(
+    #         "Downtime Entry",
+    #         {
+    #             "workstation": workstation,
+    #             "from_time": ("<=", current_time),
+    #             "to_time": (">=", current_time),
+    #         },
+    #     )
+    # )
     return bool(
         frappe.db.exists(
             "Downtime Entry",
             {
                 "workstation": workstation,
+                "custom_job_card": ["is", "not set"],
                 "from_time": ("<=", current_time),
                 "to_time": (">=", current_time),
             },
         )
     )
+    # AVI
+
 
 def restrict_job_card_edit_during_downtime(doc: Document, method=None):
     if not doc.workstation:
@@ -355,7 +433,9 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
 
     # Save the job card to persist the pause reason in time log
     job_card.save(ignore_permissions=True)
-
+    # AVI
+    _create_job_card_downtime(job_card, pause_reason)
+    # AVI
     frappe.db.commit()
 
 
@@ -398,6 +478,7 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
             downtime
         FROM `tabDowntime Entry`
         WHERE workstation = %(workstation)s
+        AND custom_job_card IS NULL
         AND from_time <= %(end_range)s
         AND to_time >= %(start_range)s
         ORDER BY from_time ASC
@@ -406,23 +487,37 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
         as_dict=True,
     )
 
+    # AVI 
+    
     if downtime_entries:
         # Check each entry and mark if it's currently active
+        # has_active_downtime = False
+        # for entry in downtime_entries:
+        #     from_time = get_datetime(entry.from_time)
+        #     to_time = get_datetime(entry.to_time)
+
+        #     # Check if current time is within the downtime period
+        #     if from_time <= current_time <= to_time:
+        #         entry["is_active"] = True
+        #         has_active_downtime = True
+        #     elif current_time < from_time:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = True
+        #     else:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = False
         has_active_downtime = False
         for entry in downtime_entries:
             from_time = get_datetime(entry.from_time)
             to_time = get_datetime(entry.to_time)
 
-            # Check if current time is within the downtime period
+            # ACTIVE workstation downtime
             if from_time <= current_time <= to_time:
                 entry["is_active"] = True
                 has_active_downtime = True
-            elif current_time < from_time:
-                entry["is_active"] = False
-                entry["is_upcoming"] = True
             else:
                 entry["is_active"] = False
-                entry["is_upcoming"] = False
+
 
         # Store downtime information in __onload for client-side access
         doc.set_onload("downtime_entries", downtime_entries)

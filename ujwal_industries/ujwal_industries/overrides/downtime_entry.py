@@ -11,9 +11,18 @@ This module handles:
 """
 
 from __future__ import annotations
-
 import frappe
-from frappe.model.document import Document
+def validate_downtime_entry(doc, method=None):
+    """
+    Make to_time non-mandatory ONLY for job-card linked downtime.
+    """
+    if doc.custom_job_card:
+        # job-card downtime → allow open entry
+        return
+
+    # workstation downtime → to_time REQUIRED
+    if not doc.to_time:
+        frappe.throw("To Time is mandatory for workstation downtime entries")
 
 
 def on_save_downtime_entry(doc: Document, method: str | None = None) -> None:
