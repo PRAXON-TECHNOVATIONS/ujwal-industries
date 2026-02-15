@@ -224,7 +224,16 @@ def get_data(filters):
         # Child rows - Stock Entries (indent=1) with their items (indent=2)
         for se in wo_stock_entries:
             se_items = se.get("items", [])
+            # AVI
+            # Special handling for Material Transfer
+            mt_item_codes = []
+            mt_item_names = []
 
+            if se.purpose == "Material Transfer for Manufacture":
+                mt_item_codes = [i.item_code for i in se_items]
+                mt_item_names = [i.item_name for i in se_items]
+
+            # AVI
             # Calculate totals for this Stock Entry
             se_total_qty = sum(flt(item.qty) for item in se_items)
             se_scrap_qty = sum(flt(item.qty) for item in se_items if item.is_scrap_item)
@@ -245,8 +254,20 @@ def get_data(filters):
                 "purpose": se.purpose,
                 "status": None,
                 "production_item": None,
-                "item_code": None,
-                "item_name": None,
+                # AVI
+                # "item_code": None,
+                # "item_name": None,
+                "item_code": (
+                    join_unique(mt_item_codes)
+                    if se.purpose == "Material Transfer for Manufacture"
+                    else None
+                ),
+                "item_name": (
+                    join_unique(mt_item_names)
+                    if se.purpose == "Material Transfer for Manufacture"
+                    else None
+                ),
+                # AVI
                 "is_scrap": 1 if se_scrap_qty > 0 else 0,  # Mark if SE contains scrap
                 "qty_to_produce": None,
                 "produced_qty": None,
@@ -261,40 +282,80 @@ def get_data(filters):
             }
             data.append(se_header_row)
 
+# AVI
             # Stock Entry items (indent=2)
-            if se_items:
+            # if se_items:
+            #     for item in se_items:
+            #         item_row = {
+            #             "indent": 2,
+            #             "work_order": wo.work_order,
+            #             "stock_entry": se.stock_entry,
+            #             "purpose": None,  # Already shown in SE header
+            #             "status": None,
+            #             "production_item": None,
+            #             "item_code": item.item_code,
+            #             "item_name": item.item_name,
+            #             "is_scrap": item.is_scrap_item,
+            #             "qty_to_produce": None,
+            #             # "produced_qty": None,
+            #             "produced_qty": (
+            #                         flt(item.qty)
+            #                         if se.purpose == "Manufacture" and item.is_finished_item
+            #                         else None
+            #                     ),
+            #             "required_qty": None,
+            #             "transferred_qty": flt(item.qty) if se.purpose == "Material Transfer for Manufacture" else None,
+            #             "consumed_qty": (
+            #                 flt(item.qty)
+            #                 if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item
+            #                 else None
+            #             ),
+            #             "scrap_qty": flt(item.qty) if item.is_scrap_item else None,
+            #             "uom": item.uom,
+            #             "posting_date": None,  # Already shown in SE header
+            #             "source_warehouse": item.s_warehouse,
+            #             "target_warehouse": item.t_warehouse,
+            #         }
+            #         data.append(item_row)
+            # Show item rows ONLY for non Material Transfer entries
+            if se_items and se.purpose != "Material Transfer for Manufacture":
                 for item in se_items:
                     item_row = {
                         "indent": 2,
                         "work_order": wo.work_order,
                         "stock_entry": se.stock_entry,
-                        "purpose": None,  # Already shown in SE header
+                        "purpose": None,
                         "status": None,
                         "production_item": None,
                         "item_code": item.item_code,
                         "item_name": item.item_name,
                         "is_scrap": item.is_scrap_item,
                         "qty_to_produce": None,
-                        # "produced_qty": None,
                         "produced_qty": (
-                                    flt(item.qty)
-                                    if se.purpose == "Manufacture" and item.is_finished_item
-                                    else None
-                                ),
+                            flt(item.qty)
+                            if se.purpose == "Manufacture" and item.is_finished_item
+                            else None
+                        ),
                         "required_qty": None,
-                        "transferred_qty": flt(item.qty) if se.purpose == "Material Transfer for Manufacture" else None,
+                        "transferred_qty": flt(item.qty)
+                        if se.purpose == "Material Transfer for Manufacture"
+                        else None,
                         "consumed_qty": (
                             flt(item.qty)
-                            if se.purpose == "Manufacture" and not item.is_scrap_item and not item.is_finished_item
+                            if se.purpose == "Manufacture"
+                            and not item.is_scrap_item
+                            and not item.is_finished_item
                             else None
                         ),
                         "scrap_qty": flt(item.qty) if item.is_scrap_item else None,
                         "uom": item.uom,
-                        "posting_date": None,  # Already shown in SE header
+                        "posting_date": None,
                         "source_warehouse": item.s_warehouse,
                         "target_warehouse": item.t_warehouse,
                     }
                     data.append(item_row)
+
+# AVI
 
     return data
 
@@ -434,3 +495,9 @@ def get_total_scrap_qty(work_order, stock_entries):
             if item.is_scrap_item:
                 total_scrap += flt(item.qty)
     return total_scrap
+
+
+# AVI
+def join_unique(values):
+    """Join unique non-empty values with comma"""
+    return ", ".join(sorted(set(v for v in values if v)))
