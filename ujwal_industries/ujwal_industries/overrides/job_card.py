@@ -7,66 +7,76 @@ from typing import Any
 
 import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
-from frappe.utils import flt
+from frappe.utils import flt , now_datetime
 
-# reference to original function
-from erpnext.manufacturing.doctype.job_card.job_card import make_time_log as _original_make_time_log
+
+from erpnext.manufacturing.doctype.job_card.job_card import (
+    make_time_log as _original_make_time_log,
+)
+
+# HELPER – FG AVAILABILITY
+def get_fg_availability_internal(work_order: str, exclude_job_card: str | None = None):
+    if not work_order:
+        return 0, 0, 0
+
+    wo = frappe.get_doc("Work Order", work_order)
+
+    transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+
+    manufactured_fg = (
+        frappe.db.sql(
+            """
+            SELECT SUM(total_completed_qty)
+            FROM `tabJob Card`
+            WHERE work_order=%s
+              AND docstatus=1
+              {exclude}
+            """.format(
+                exclude="AND name != %s" if exclude_job_card else ""
+            ),
+            tuple(
+                [work_order, exclude_job_card]
+                if exclude_job_card
+                else [work_order]
+            ),
+        )[0][0]
+        or 0
+    )
+
+    available_fg = transferred_fg - flt(manufactured_fg)
+    if available_fg < 0:
+        available_fg = 0
+
+    return transferred_fg, manufactured_fg, available_fg
+
+# START / RESUME JOB -VALIDATION
 
 @frappe.whitelist()
 def make_time_log_with_material_check(args):
-    """
-        OVERRIDE: Job Card Start Validation - Material Availability Check
-
-        Method to overrides standard `make_time_log` for Job Card
-        to enforce material availability validation
-
-        Purpose:
-        - Prevent starting a Job Card if sufficient material has not been
-        transferred against the related Work Order.
-        - Ensure previously consumed material by earlier Job Cards is deducted.
-        - Allow multiple Job Cards sequentially without double-counting material.
-
-        Scope:
-        - Applies ONLY on "Start Job" / "Resume Job"
-        - Does NOT block Job Card creation, saving, or submission
-        - Does NOT alter ERPNext core manufacturing flow
-
-        Business Logic:
-        Available Qty = Total Material Transferred (WO) - Total Qty Consumed by Completed Job Cards
-
-        If Available Qty < Job Card Qty → Block Start Job.
-    """
     if isinstance(args, str):
         import json
         args = json.loads(args)
 
     job_card_id = args.get("job_card_id")
     status = args.get("status")
-
-    # check when Start / Resume
+    
+    if status == "Resume Job":
+        jc = frappe.get_doc("Job Card", job_card_id)
+        _close_job_card_downtime(jc)
+        
     if status in ("Work In Progress", "Resume Job"):
         jc = frappe.get_doc("Job Card", job_card_id)
-        if jc.work_order:
-            # Total Transferred against WO
-            transferred_qty = (
-                frappe.db.sql(
-                    """
-                    SELECT SUM(fg_completed_qty)
-                    FROM `tabStock Entry`
-                    WHERE work_order=%s
-                      AND purpose='Material Transfer for Manufacture'
-                      AND docstatus=1
-                    """,
-                    jc.work_order,
-                )[0][0]
-                or 0
-            )
 
-            # Already Consumed (from comppleted job cards)
-            consumed_qty = (
+        if jc.work_order:
+            # Transferred FG from Work Order
+            wo = frappe.get_doc("Work Order", jc.work_order)
+            transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+
+            # Produced qty from ALL Job Cards
+            produced_submitted = (
                 frappe.db.sql(
                     """
-                    SELECT SUM(for_quantity)
+                    SELECT SUM(total_completed_qty)
                     FROM `tabJob Card`
                     WHERE work_order=%s
                       AND docstatus=1
@@ -76,29 +86,135 @@ def make_time_log_with_material_check(args):
                 or 0
             )
 
-            available_qty = flt(transferred_qty) - flt(consumed_qty)
-            required_qty = flt(jc.for_quantity)
-            pending_qty = required_qty - available_qty
+            # Produced qty from CURRENT Job Card (DRAFT)
+            produced_current = flt(jc.total_completed_qty or 0)
 
-            if pending_qty > 0:
+            total_produced = flt(produced_submitted) + flt(produced_current)
+
+            available_fg = transferred_fg - total_produced
+            if available_fg < 0:
+                available_fg = 0
+
+            if available_fg <= 0:
                 frappe.throw(
-                    title="Material Transfer Pending",
+                    title="No Quantity Available",
                     msg=f"""
-                    <b>Material not available to start Job</b><br><br>
+                    <b>No production quantity available to continue this Job</b><br><br>
 
-                    <b>Required Qty for Job:</b> {required_qty}<br>
-                    <b>Already Consumed in earlier Jobs:</b> {consumed_qty}<br>
-                    <b>Total Transferred Qty in Work Order:</b> {transferred_qty}<br>
-                    <b>Available Qty for Job:</b> {available_qty}<br><br>
+                    <b>Work Order:</b> {jc.work_order}<br>
+                    <b>Material Transferred (FG):</b> {transferred_fg}<br>
+                    <b>Already Produced:</b> {total_produced}<br>
+                    <b>Available Qty:</b>
+                    <span style="color:red;"><b>0</b></span><br><br>
 
-                    <b style="color:red;">Pending Transfer Required: {pending_qty}</b><br><br>
-
-                    Please transfer at least <b>{pending_qty}</b> quantity
-                    against the Work Order to start this Job.
+                    Please transfer additional material against the Work Order
+                    to resume or start this Job Card.
                     """
                 )
 
     return _original_make_time_log(args)
+
+# JOB CARD SAVE - VALIDATION
+
+def validate_job_card_qty_fg_based(doc: Document, method=None):
+    """
+    Final authority validation.
+    Runs on SAVE + SUBMIT.
+    """
+
+    if not doc.work_order:
+        return
+
+    transferred_fg, manufactured_fg, available_fg = get_fg_availability_internal(
+        doc.work_order, exclude_job_card=doc.name
+    )
+
+    entered_qty = flt(doc.total_completed_qty)
+
+    if entered_qty > available_fg:
+        frappe.throw(
+            title="Quantity Exceeds Material Transfer",
+            msg=f"""
+            <b>Production quantity exceeds transferred material</b><br><br>
+
+            <b>Work Order:</b> {doc.work_order}<br>
+            <b>Material Transferred for Manufacturing (FG):</b>
+            <b>{transferred_fg}</b><br>
+
+            <b>Already Manufactured:</b> {manufactured_fg}<br>
+            <b>Available for this Job Card:</b>
+            <span style="color:green;"><b>{available_fg}</b></span><br><br>
+
+            <b>Entered Completed Qty:</b>
+            <span style="color:red;"><b>{entered_qty}</b></span><br><br>
+
+            Please transfer additional material against the Work Order
+            to increase allowed production quantity.
+            """
+        )
+
+def job_card_validate(doc: Document, method=None):
+    validate_job_card_qty_fg_based(doc, method)\
+        
+def _create_job_card_downtime(job_card, pause_reason):
+    if pause_reason != "Downtime":
+        return
+
+    # avoid duplicate open downtime
+    exists = frappe.db.exists(
+        "Downtime Entry",
+        {
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        }
+    )
+    if exists:
+        return
+
+    # 🔑 get operator from time log where pause_reason = Downtime
+    operator = None
+    for tl in reversed(job_card.time_logs or []):
+        if tl.custom_pause_reason == "Downtime":
+            operator = tl.employee
+            break
+
+    if not operator:
+        frappe.throw("Unable to determine operator for downtime entry")
+
+    d = frappe.new_doc("Downtime Entry")
+    d.workstation = job_card.workstation
+    d.from_time = now_datetime()
+    d.stop_reason = "Other"
+    d.remarks = f"Job Card Downtime: {job_card.name}"
+    d.custom_job_card = job_card.name
+    d.operator = operator
+
+    # 🔥 MOST IMPORTANT LINE
+    d.flags.ignore_mandatory = True
+
+    d.insert(ignore_permissions=True)
+
+
+def _close_job_card_downtime(job_card):
+    open_dt = frappe.get_all(
+        "Downtime Entry",
+        filters={
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        },
+        limit=1,
+    )
+
+    if not open_dt:
+        return
+
+    frappe.db.set_value(
+        "Downtime Entry",
+        open_dt[0].name,
+        "to_time",
+        now_datetime(),
+    )
+
 
 def _has_active_workstation_downtime(workstation: str) -> bool:
     if not workstation:
@@ -107,17 +223,30 @@ def _has_active_workstation_downtime(workstation: str) -> bool:
     from frappe.utils import now_datetime
     
     current_time = now_datetime()
-
+    # AVI
+    # return bool(
+    #     frappe.db.exists(
+    #         "Downtime Entry",
+    #         {
+    #             "workstation": workstation,
+    #             "from_time": ("<=", current_time),
+    #             "to_time": (">=", current_time),
+    #         },
+    #     )
+    # )
     return bool(
         frappe.db.exists(
             "Downtime Entry",
             {
                 "workstation": workstation,
+                "custom_job_card": ["is", "not set"],
                 "from_time": ("<=", current_time),
                 "to_time": (">=", current_time),
             },
         )
     )
+    # AVI
+
 
 def restrict_job_card_edit_during_downtime(doc: Document, method=None):
     if not doc.workstation:
@@ -304,7 +433,9 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
 
     # Save the job card to persist the pause reason in time log
     job_card.save(ignore_permissions=True)
-
+    # AVI
+    _create_job_card_downtime(job_card, pause_reason)
+    # AVI
     frappe.db.commit()
 
 
@@ -347,6 +478,7 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
             downtime
         FROM `tabDowntime Entry`
         WHERE workstation = %(workstation)s
+        AND custom_job_card IS NULL
         AND from_time <= %(end_range)s
         AND to_time >= %(start_range)s
         ORDER BY from_time ASC
@@ -355,23 +487,37 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
         as_dict=True,
     )
 
+    # AVI 
+    
     if downtime_entries:
         # Check each entry and mark if it's currently active
+        # has_active_downtime = False
+        # for entry in downtime_entries:
+        #     from_time = get_datetime(entry.from_time)
+        #     to_time = get_datetime(entry.to_time)
+
+        #     # Check if current time is within the downtime period
+        #     if from_time <= current_time <= to_time:
+        #         entry["is_active"] = True
+        #         has_active_downtime = True
+        #     elif current_time < from_time:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = True
+        #     else:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = False
         has_active_downtime = False
         for entry in downtime_entries:
             from_time = get_datetime(entry.from_time)
             to_time = get_datetime(entry.to_time)
 
-            # Check if current time is within the downtime period
+            # ACTIVE workstation downtime
             if from_time <= current_time <= to_time:
                 entry["is_active"] = True
                 has_active_downtime = True
-            elif current_time < from_time:
-                entry["is_active"] = False
-                entry["is_upcoming"] = True
             else:
                 entry["is_active"] = False
-                entry["is_upcoming"] = False
+
 
         # Store downtime information in __onload for client-side access
         doc.set_onload("downtime_entries", downtime_entries)

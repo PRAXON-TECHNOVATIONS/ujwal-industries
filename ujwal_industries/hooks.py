@@ -181,11 +181,15 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
 		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
         "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
+        "validate": [
+            "ujwal_industries.ujwal_industries.overrides.job_card.job_card_validate"
+        ],
 	},
 	"Downtime Entry": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
 		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
-		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry",
+  		"validate": "ujwal_industries.ujwal_industries.overrides.downtime_entry.validate_downtime_entry",
 	},
 	"Purchase Receipt": {
         "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit"
