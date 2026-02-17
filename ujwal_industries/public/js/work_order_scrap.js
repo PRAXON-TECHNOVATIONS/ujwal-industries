@@ -17,6 +17,27 @@ function set_wip_from_production_item(frm) {
         }
     });
 }
+function set_target_warehouse_from_production_item(frm) {
+    if (!frm.doc.production_item) {
+        return;
+    }
+
+    frappe.call({
+        method: "ujwal_industries.ujwal_industries.overrides.work_order.set_target_warehouse_from_production_item",
+        args: {
+            production_item: frm.doc.production_item
+        },
+        callback: function (r) {
+            if (r.message) {
+                setTimeout(() => {
+                    frm.set_value("fg_warehouse", r.message);
+                    frm.refresh_field("fg_warehouse");
+                }, 300);
+            }
+        }
+    });
+}
+
 
 function render_work_order_progress(frm) {
 	const total = flt(frm.doc.qty || 0);
@@ -249,6 +270,7 @@ function update_operations_progress_bar(operation_data) {
 frappe.ui.form.on("Work Order", {
 	production_item(frm) {
         set_wip_from_production_item(frm);
+		set_target_warehouse_from_production_item(frm);
     },
 
     refresh(frm) {
