@@ -169,7 +169,8 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate"
-		]
+		],
+  		"before_validate": "ujwal_industries.ujwal_industries.overrides.production_plan.mark_import_as_manual_change"
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
@@ -197,6 +198,9 @@ doc_events = {
 	"Data Import": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
 	},
+	"Work Order":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert"
+	}
 }
 
 # Scheduled Tasks

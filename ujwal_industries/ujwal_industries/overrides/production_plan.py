@@ -13,11 +13,21 @@ from frappe import _
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, add_to_date, getdate, get_datetime, now_datetime
 # Avi
-def _skip_during_data_import():
-    return (
-        frappe.flags.get("in_import")
-        or frappe.flags.get("importing_doctype") == "Production Plan"
-    )
+def _skip_auto_calculation():
+    """
+    Skip ONLY blind auto calculations during data import.
+    Delta-based cascade logic must still run.
+    """
+    return frappe.flags.get("in_import") is True
+
+def mark_import_as_manual_change(doc: Document, method=None):
+    """
+    During data import, treat detected changes as manual edits
+    so cascade logic runs.
+    """
+    if frappe.flags.get("in_import"):
+        doc.custom_sfg_dates_manually_changed = 1
+
 # Avi 
 def _get_allow_backdated_setting() -> bool:
     """
@@ -79,7 +89,7 @@ def validate_planned_start_dates(doc: Document, method: str | None = None) -> No
     """
     del method  # Unused but required for hook signature
     # AVI
-    if _skip_during_data_import():
+    if _skip_auto_calculation():
         return
     # AVI
     # During import: persist flag so future saves also skip date logic
@@ -149,8 +159,8 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
        - Date = Delivery Date - BOM Production Time.
     """
     # AVI
-    if _skip_during_data_import():
-        return
+    if _skip_auto_calculation():
+      return
     # AVI
     # Skip all date logic during import or when user dates were manually preserved
     if frappe.flags.in_import or doc.get("custom_skip_date_calculation"):
@@ -504,7 +514,7 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
     """
     del method  # Unused but required for hook signature
     # AVI
-    if _skip_during_data_import():
+    if _skip_auto_calculation():
         return
     # AVI
     # Skip all date logic during import or when user dates were manually preserved
@@ -1373,7 +1383,7 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
     """
     del method  # Unused but required for hook signature
     # AVI
-    if _skip_during_data_import():
+    if _skip_auto_calculation():
         return
     # AVI
     # Skip all date logic during import or when user dates were manually preserved
@@ -1640,7 +1650,7 @@ def adjust_mr_items_and_propagate(doc: Document, method: str | None = None) -> N
     """
     del method  # Unused but required for hook signature
     # AVI
-    if _skip_during_data_import():
+    if _skip_auto_calculation():
         return
     # AVI
     # Skip all date logic during import or when user dates were manually preserved
