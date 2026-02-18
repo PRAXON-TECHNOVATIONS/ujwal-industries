@@ -199,7 +199,10 @@ doc_events = {
 	},
 	"Work Order":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert"
-	}
+	},
+ 	"Quality Inspection": {
+        "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
+    }
 }
 
 # Scheduled Tasks
