@@ -163,7 +163,12 @@ doc_events = {
     },
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
-		"validate": "ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
+		"validate": [
+      				"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
+                      "ujwal_industries.ujwal_industries.overrides.production_plan.update_schedule_date",
+               		],
+  
+  
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",

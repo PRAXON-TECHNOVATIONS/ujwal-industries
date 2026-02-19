@@ -1326,7 +1326,7 @@ function cascade_mr_date_changes(frm) {
 
 	// Get original MR dates from __onload if available
 	const original_mr_dates = (frm.doc.__onload && frm.doc.__onload.original_mr_dates) || {};
-
+	
 	// Call server method to calculate cascade updates
 	frappe.call({
 		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.calculate_sfg_fg_dates_from_mr_items',

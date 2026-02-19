@@ -379,6 +379,7 @@ def onload_production_plan(doc: Document, method: str | None = None) -> None:
                     "custom_start_date": str(row.custom_start_date) if has_custom_start else None,
                     "schedule_date": str(row.schedule_date) if has_schedule else None
                 }
+        print(".......A2..........",original_mr_dates)         
         doc.set_onload("original_mr_dates", original_mr_dates)
 
 
@@ -2217,6 +2218,7 @@ def get_subcontract_lead_time(
     Returns:
         Lead time in days
     """
+    print(item_code, "===", supplier, "====", company)
     if not item_code:
         return 0
 
@@ -2684,6 +2686,9 @@ def calculate_sfg_fg_dates_from_mr_items(
     mr_items_data: list[dict[str, Any]] | str,
     original_mr_dates: dict[str, dict[str, Any]] | str | None = None
 ) -> dict[str, Any]:
+    # print("............production_plan_name.............",production_plan_name)
+    # print("............mr_items_data.............",mr_items_data)
+    # print("..........original_mr_dates...............",original_mr_dates)
     """
     Calculate SFG and FG date changes based on MR item custom_start_date changes.
 
@@ -2761,6 +2766,7 @@ def calculate_sfg_fg_dates_from_mr_items(
         effective_delta = delta_seconds if abs(delta_seconds) > abs(schedule_delta_seconds) else schedule_delta_seconds
 
         # Only consider significant changes (> 60 seconds)
+        print("....>>>>>>>>>>>>>>>",effective_delta)
         if abs(effective_delta) > 60:
             changed_mr_items[item_code] = {
                 "delta_minutes": effective_delta / 60.0,
@@ -2768,7 +2774,9 @@ def calculate_sfg_fg_dates_from_mr_items(
                 "new_schedule_date": get_datetime(current_schedule_date_str) if current_schedule_date_str else None
             }
 
+    print("=========666666==========")
     if not changed_mr_items:
+        print("===================")
         return {"sfg_updates": [], "fg_updates": []}
 
     # Case 1: No SFGs - directly update FG dates based on MR item changes
@@ -3168,3 +3176,162 @@ def calculate_sfg_fg_dates_from_mr_items(
     }
 
 
+def update_schedule_date(doc, method):
+    if doc.is_new():
+        return
+    old_doc = doc.get_doc_before_save()
+
+    old_schedule_start_date = []
+
+    for rec1 in old_doc.sub_assembly_items:
+        old_schedule_start_date.append(rec1.schedule_date)
+
+    print(old_schedule_start_date,"old_schedule_start_date")
+
+    changed_sfg = []
+    for rec1 in doc.sub_assembly_items:
+        if type(rec1.schedule_date) == str:
+            schedule_date = datetime.strptime(rec1.schedule_date, "%Y-%m-%d %H:%M:%S")
+        else:
+            schedule_date = rec1.schedule_date
+        if schedule_date not in old_schedule_start_date:
+            changed_sfg.append(rec1)
+
+
+    
+    final_sfg_list = []
+    for cs in changed_sfg:
+        for rec3 in doc.sub_assembly_items:
+            if rec3.idx <= cs.idx and rec3 not in final_sfg_list:
+                final_sfg_list.append(rec3)
+
+    for k in final_sfg_list:
+        if k.type_of_manufacturing == "Subcontract":
+            subcontract_lead_time = get_subcontract_lead_time(k.production_item, k.supplier, doc.company)
+            if type(k.schedule_date) == str:
+                k_schedule_date = datetime.strptime(k.schedule_date, "%Y-%m-%d %H:%M:%S")
+            else:
+                k_schedule_date = k.schedule_date
+            new_schedule_end_date = k_schedule_date + timedelta(days=subcontract_lead_time)
+        else:
+            subcontract_lead_time = get_production_time(k.bom_no, k.qty)
+          
+            if type(k.schedule_date) == str:
+                k_schedule_date = datetime.strptime(k.schedule_date, "%Y-%m-%d %H:%M:%S")
+            else:
+                k_schedule_date = k.schedule_date
+
+            new_schedule_end_date = k_schedule_date + timedelta(minutes=subcontract_lead_time)
+       
+        
+        data = cascade_sfg_date_change_1(doc, k.production_item, k.bom_no, k.schedule_date, new_schedule_end_date, doc.company, k.idx)
+        for sfg in data.get("parent_sfg_updates"):
+            frappe.db.set_value("Production Plan Sub Assembly Item", sfg.get("row_name"), "schedule_date", sfg.get("new_schedule_date"))
+            frappe.db.set_value("Production Plan Sub Assembly Item", sfg.get("row_name"), "custom_schedule_end_date", sfg.get("new_custom_schedule_end_date"))
+
+        for mr in data.get("mr_item_updates"):
+            frappe.db.set_value("Material Request Plan Item", mr.get("row_name"), "schedule_date", mr.get("new_schedule_date"))
+            frappe.db.set_value("Material Request Plan Item", mr.get("row_name"), "custom_start_date", mr.get("new_custom_start_date"))
+        
+        k.db_set("custom_schedule_end_date", new_schedule_end_date)
+        frappe.db.commit()
+
+
+@frappe.whitelist()
+def cascade_sfg_date_change_1(
+    doc,
+    changed_sfg_item: str,
+    changed_sfg_bom: str,
+    new_schedule_date: str,
+    new_end_date: str | None = None,
+    company: str | None = None,
+    changed_sfg_idx: int | None = None
+) -> dict[str, Any]:
+    
+
+    if not company:
+        company = doc.company
+
+    parent_sfg_updates = []
+    mr_item_updates = []
+
+    # Convert changed_sfg_idx to int if it's a string
+    if changed_sfg_idx is not None:
+        changed_sfg_idx = int(changed_sfg_idx)
+
+    # Cascade UP to parent SFGs
+    if doc.get("sub_assembly_items"):
+        for parent_row in doc.sub_assembly_items:
+            if not parent_row.bom_no or parent_row.production_item == changed_sfg_item:
+                continue
+
+            # Only update rows ABOVE (idx < changed_sfg_idx) the changed row
+            # Rows below should NOT be affected by changes above them
+            if changed_sfg_idx is not None and parent_row.idx >= changed_sfg_idx:
+                continue
+
+            # Check if changed SFG is in this parent's BOM
+            is_child = frappe.db.exists(
+                "BOM Item",
+                {"parent": parent_row.bom_no, "item_code": changed_sfg_item}
+            )
+
+            if is_child:
+                # Get production time for parent
+                prod_time_result = calculate_production_time_from_bom(parent_row.bom_no)
+                production_mins = prod_time_result.get("production_minutes", 0)
+
+                # Calculate new parent date
+                # Parent can START when child ENDS (not child_end + production_mins!)
+                # Parent ENDS after its own production time
+                child_end = get_datetime(new_end_date if new_end_date else new_schedule_date)
+                new_parent_start = child_end
+                new_parent_end = add_to_date(child_end, minutes=production_mins)
+
+                parent_sfg_updates.append({
+                    "row_name": parent_row.name,
+                    "production_item": parent_row.production_item,
+                    "new_schedule_date": str(new_parent_start),
+                    "new_custom_schedule_end_date": str(new_parent_end)
+                })
+
+    # Cascade DOWN to MR items
+    if doc.get("mr_items"):
+        # Get raw materials in changed SFG's BOM
+        raw_materials = frappe.db.sql(
+            """
+            SELECT item_code
+            FROM `tabBOM Item`
+            WHERE parent = %s
+        """,
+            (changed_sfg_bom,),
+            as_dict=True
+        )
+
+        raw_item_codes = [r.item_code for r in raw_materials]
+
+        for mr_row in doc.mr_items:
+            if mr_row.item_code in raw_item_codes and mr_row.custom_supplier:
+                # Get supplier lead time
+                lead_time_result = get_supplier_lead_time(
+                    mr_row.item_code,
+                    mr_row.custom_supplier,
+                    company
+                )
+                lead_time = int(lead_time_result.get("lead_time_days", 0))
+
+                # Calculate new MR dates
+                new_mr_schedule_date = get_datetime(new_schedule_date)
+                new_mr_custom_start_date = add_days(getdate(new_mr_schedule_date), -lead_time)
+
+                mr_item_updates.append({
+                    "row_name": mr_row.name,
+                    "item_code": mr_row.item_code,
+                    "new_schedule_date": str(new_mr_schedule_date),
+                    "new_custom_start_date": str(_to_datetime(new_mr_custom_start_date))
+                })
+
+    return {
+        "parent_sfg_updates": parent_sfg_updates,
+        "mr_item_updates": mr_item_updates
+    }
