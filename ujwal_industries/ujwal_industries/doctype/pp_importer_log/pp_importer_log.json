@@ -1,0 +1,106 @@
+{
+ "actions": [],
+ "autoname": "PPI-LOG-.#####",
+ "creation": "2026-02-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "importer_doc",
+  "pp_name",
+  "col_break1",
+  "table_name",
+  "row_name",
+  "field_name",
+  "old_value",
+  "new_value"
+ ],
+ "fields": [
+  {
+   "fieldname": "importer_doc",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Importer Doc",
+   "options": "Production Plan Importer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pp_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Production Plan",
+   "reqd": 1
+  },
+  {
+   "fieldname": "col_break1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "table_name",
+   "fieldtype": "Select",
+   "label": "Table",
+   "options": "fg\nsfg\nmr\nsettings",
+   "reqd": 1
+  },
+  {
+   "fieldname": "row_name",
+   "fieldtype": "Data",
+   "label": "Row Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "field_name",
+   "fieldtype": "Data",
+   "label": "Field",
+   "reqd": 1
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "label": "Old Value"
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "label": "New Value"
+  }
+ ],
+ "is_submittable": 0,
+ "links": [],
+ "modified": "2026-02-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "PP Importer Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "Manufacturing User",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "name",
+ "sort_order": "ASC",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

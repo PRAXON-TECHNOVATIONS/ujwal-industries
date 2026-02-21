@@ -1,0 +1,233 @@
+/* =============================================================================
+   modal-2xl — "super-large" dialog size
+   Tailwind-aligned breakpoints, wider than Bootstrap's modal-xl.
+   Applied by the frappe.ui.Dialog patch in manage_dates_dialog.js when
+   size === "super-large".
+   ============================================================================= */
+
+/* ── Default (mobile-first) ─────────────────────────────────────────────────
+   Nearly full-width on small screens so the modal never overflows. */
+.modal-dialog.modal-2xl {
+	max-width: 96vw;
+	width: 96vw;
+}
+
+/* ── sm  640 px — still fluid ──────────────────────────────────────────────── */
+@media (min-width: 640px) {
+	.modal-dialog.modal-2xl {
+		max-width: 94vw;
+		width: 94vw;
+	}
+}
+
+/* ── md  768 px — slightly narrower to show page context ─────────────────── */
+@media (min-width: 768px) {
+	.modal-dialog.modal-2xl {
+		max-width: 92vw;
+		width: 92vw;
+	}
+}
+
+/* ── lg  1024 px — fluid, significantly wider than modal-xl (800 px cap) ─── */
+@media (min-width: 1024px) {
+	.modal-dialog.modal-2xl {
+		max-width: 88vw;
+		width: 88vw;
+	}
+}
+
+/* ── xl  1280 px — switch to fixed px so it doesn't grow indefinitely ─────── */
+@media (min-width: 1280px) {
+	.modal-dialog.modal-2xl {
+		max-width: 1200px;
+		width: 1200px;
+	}
+}
+
+/* ── 2xl  1536 px — larger fixed width for wide-monitor desks ──────────────── */
+@media (min-width: 1536px) {
+	.modal-dialog.modal-2xl {
+		max-width: 1440px;
+		width: 1440px;
+	}
+}
+
+/* =============================================================================
+   Palette — modal-2xl only
+   Shell: warm cream  |  Header/Footer: deep indigo  |  Accent: amber + violet
+   ============================================================================= */
+
+/* ── Outer shell — warm cream parchment ──────────────────────────────────── */
+.modal-dialog.modal-2xl .modal-content {
+	background: linear-gradient(
+		160deg,
+		#fefdfb 0%,
+		#fff8f0 55%,
+		#fefbf5 100%
+	) !important;
+	border: 1px solid rgba(139, 90, 43, 0.12) !important;
+	border-radius: 18px !important;
+	box-shadow:
+		0 40px 80px rgba(0, 0, 0, 0.14),
+		0 8px 32px rgba(120, 53, 15, 0.07),
+		inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+	overflow: hidden;
+}
+
+/* ── Header — deep indigo (matches stepper sidebar) ──────────────────────── */
+.cd-modal-header {
+	background: linear-gradient(
+		135deg,
+		#1e1b4b 0%,
+		#2d2878 55%,
+		#3730a3 100%
+	) !important;
+	border-bottom: 1px solid rgba(165, 180, 252, 0.2) !important;
+	padding: 14px 20px !important;
+	position: relative;
+}
+
+/* Amber → violet shimmer line at top */
+.cd-modal-header::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: linear-gradient(90deg,
+		transparent 0%,
+		rgba(251, 191, 36, 0.0) 8%,
+		rgba(251, 191, 36, 0.95) 38%,
+		rgba(167, 139, 250, 0.95) 62%,
+		rgba(251, 191, 36, 0.0) 92%,
+		transparent 100%
+	);
+}
+
+.cd-modal-header .modal-title {
+	color: #fef3c7 !important;
+	font-size: 15px !important;
+	font-weight: 700 !important;
+	letter-spacing: 0.4px;
+	text-shadow: 0 0 10px rgba(251, 191, 36, 0.4);
+}
+
+.cd-modal-header .btn-modal-close,
+.cd-modal-header .btn-modal-minimize {
+	background: #fde68a8c !important;
+	opacity: 1 !important;
+}
+.cd-modal-header .btn-modal-close:hover,
+.cd-modal-header .btn-modal-minimize:hover {
+	color: #fde68a !important;
+	text-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+}
+
+/* ── Body — transparent so cream shell shows through ─────────────────────── */
+.cd-modal-body {
+	background: transparent !important;
+	padding: 0 !important;
+}
+
+/* Inner layout wrapper */
+.cd-modal-body #md-root .md-layout {
+	background: transparent !important;
+	border-color: rgba(139, 90, 43, 0.08) !important;
+	box-shadow: none !important;
+	margin-bottom: 0 !important;
+}
+
+/* Content pane */
+.cd-modal-body .md-content {
+	background: transparent !important;
+}
+
+/* Table rows — subtle warm cream alternating */
+.cd-modal-body table tr {
+	background: rgba(255, 250, 242, 0.7) !important;
+}
+.cd-modal-body table tr:nth-child(even) {
+	background: rgba(255, 245, 230, 0.5) !important;
+}
+
+/* Table text — readable on cream */
+.cd-modal-body table td {
+	color: #1e293b !important;
+	border-bottom-color: rgba(139, 90, 43, 0.07) !important;
+}
+
+/* Table wrap */
+.cd-modal-body .md-table-wrap {
+	border-color: rgba(139, 90, 43, 0.12) !important;
+	box-shadow: 0 2px 12px rgba(120, 53, 15, 0.06) !important;
+}
+
+/* ── Footer — matching header indigo ──────────────────────────────────────── */
+.cd-modal-footer {
+	background: linear-gradient(
+		135deg,
+		#1e1b4b 0%,
+		#3730a3 100%
+	) !important;
+	border-top: 1px solid rgba(165, 180, 252, 0.2) !important;
+	padding: 12px 20px !important;
+}
+
+/* Primary button — amber gold glow */
+.cd-modal-footer .btn-primary {
+	background: linear-gradient(135deg, rgba(251,191,36,0.12) 0%, rgba(245,158,11,0.18) 100%) !important;
+	border: 1px solid rgba(251, 191, 36, 0.65) !important;
+	box-shadow: 0 0 16px rgba(251, 191, 36, 0.35), 0 0 4px rgba(251, 191, 36, 0.15) !important;
+	color: #fef3c7 !important;
+	font-weight: 700 !important;
+	letter-spacing: 0.5px;
+	text-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+	transition: box-shadow 0.2s, transform 0.1s !important;
+}
+.cd-modal-footer .btn-primary:hover {
+	box-shadow: 0 0 28px rgba(251, 191, 36, 0.6), 0 0 8px rgba(251, 191, 36, 0.3) !important;
+	transform: translateY(-1px);
+}
+
+/* Secondary button — soft violet ghost */
+.cd-modal-footer .btn-secondary {
+	background: rgba(124, 58, 237, 0.08) !important;
+	border: 1px solid rgba(167, 139, 250, 0.4) !important;
+	color: rgba(196, 181, 253, 0.9) !important;
+	font-weight: 600 !important;
+}
+.cd-modal-footer .btn-secondary:hover {
+	background: rgba(124, 58, 237, 0.16) !important;
+	border-color: rgba(196, 181, 253, 0.65) !important;
+	color: #c4b5fd !important;
+}
+
+/* =============================================================================
+   Stepper sidebar — stretch to full height of the content pane
+   md-stepper-wrap is a flex-child of md-layout (row). Make it a flex container
+   so md-sidebar fills it top-to-bottom.
+   ============================================================================= */
+#md-root #md-stepper-wrap {
+	display: flex;
+	align-self: stretch;
+}
+#md-root .md-sidebar {
+	flex: 1;
+}
+
+/* =============================================================================
+   SFG row ripple — triggered from JS when FG date change propagates to Step 2
+   Applied via JS background transitions (avoids inline-style specificity war).
+   JS classes below provide the date-input flash; row bg is set inline by JS.
+   ============================================================================= */
+
+/* Date/time input cells — flash violet border then fade back */
+@keyframes sfg-input-flash {
+	0%   { border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124,58,237,0.28); background: #ede9fe; }
+	50%  { border-color: #a78bfa; box-shadow: 0 0 0 1px rgba(124,58,237,0.12); background: #f5f3ff; }
+	100% { border-color: #c7d2fe; box-shadow: none;                            background: #fafafe; }
+}
+.sfg-input-flashing {
+	animation: sfg-input-flash 2.8s ease-out forwards !important;
+}

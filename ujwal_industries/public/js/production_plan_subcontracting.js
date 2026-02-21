@@ -13,37 +13,19 @@ function mark_programmatic_update() {
 	last_programmatic_update = Date.now();
 }
 
-/**
- * Validate if a date is in the past (backdate)
- * Returns true if date is valid (today or future), false if backdate
- */
-function validate_backdate(date_value, field_label) {
-	if (!date_value) {
-		return true;
-	}
+// open_manage_dates_dialog is defined in manage_dates_dialog.js (loaded via app_include_js)
 
-	const selected_date = frappe.datetime.str_to_obj(date_value);
-	const today = frappe.datetime.get_today();
-	const today_obj = frappe.datetime.str_to_obj(today);
-
-	// Set time to start of day for both dates for accurate comparison
-	selected_date.setHours(0, 0, 0, 0);
-	today_obj.setHours(0, 0, 0, 0);
-
-	if (selected_date < today_obj) {
-		frappe.msgprint({
-			title: __('Backdate Warning'),
-			indicator: 'orange',
-			message: __(`${field_label} is set to a past date (${frappe.datetime.str_to_user(date_value)}). Please verify this is intentional.`)
-		});
-		return false;
-	}
-
-	return true;
-}
 
 frappe.ui.form.on('Production Plan', {
 	refresh: function(frm) {
+		// Only draft and po_items is available can edit the dates
+		if (frm.doc.docstatus === 0 && frm.doc.po_items) {
+			frm.add_custom_button(
+				__("Manage dates"),
+				() => open_manage_dates_dialog(frm),
+				__("Actions")
+			);
+		}
 		// Always Draft and not display want to submit popup box
 		if (frm.doc.docstatus === 1) {
 			frm.remove_custom_button(__("Material Request"), __("Create"));
@@ -94,14 +76,10 @@ frappe.ui.form.on('Production Plan', {
 			}
 		}
 
-		// Date propagation (RM → SFG → FG) is now handled automatically in before_save hooks
 	},
 
 	// Hook into "Get Sub Assembly Items" button
 	get_sub_assembly_items: function(frm) {
-		// Reset the flag since we're regenerating all items
-		frm.doc.custom_sfg_dates_manually_changed = 0;
-
 		// Wait for items to be added, then populate suppliers and schedule_dates
 		setTimeout(() => {
 			populate_subcontracting_data(frm);
@@ -161,9 +139,6 @@ frappe.ui.form.on('Production Plan Item', {
 		// When user changes FG planned_start_date, update sub_assembly_items
 		const row = locals[cdt][cdn];
 		if (row.item_code && row.planned_start_date) {
-			// VALIDATION: Check for backdate
-			validate_backdate(row.planned_start_date, 'FG Planned Start Date');
-
 			update_subassembly_dates_for_fg(frm, row.item_code, row.planned_start_date);
 		}
 	}
@@ -220,13 +195,6 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 			return;
 		}
 
-		// VALIDATION: Check for backdate
-		validate_backdate(row.schedule_date, 'SFG Schedule Date');
-
-		// Set flag to indicate SFG dates were manually changed
-		// This tells the before_save hook to skip recalculating SFG dates
-		frm.doc.custom_sfg_dates_manually_changed = 1;
-
 		// Update custom_schedule_end_date based on manufacturing type
 		// CASCADE AFTER end_date is updated (in callback) to avoid race condition
 		if (row.type_of_manufacturing === 'Subcontract') {
@@ -257,13 +225,7 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 			return;
 		}
 
-		// VALIDATION: Check for backdate
-		validate_backdate(row.custom_schedule_end_date, 'SFG End Date');
-
-		// Set flag to indicate SFG dates were manually changed
-		frm.doc.custom_sfg_dates_manually_changed = 1;
-
-		// VALIDATION: Recalculate schedule_date backward to maintain production/lead time relationship
+		// Recalculate schedule_date backward to maintain production/lead time relationship
 		if (row.type_of_manufacturing === 'Subcontract') {
 			// For Subcontract: schedule_date = end_date - lead_time_days
 			if (row.production_item) {
@@ -338,9 +300,6 @@ frappe.ui.form.on('Material Request Plan Item', {
 			return;
 		}
 
-		// VALIDATION: Check for backdate
-		validate_backdate(row.custom_start_date, 'Material Request Start Date');
-
 		// Get supplier lead time using a custom server method
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_supplier_lead_time',
@@ -381,10 +340,7 @@ frappe.ui.form.on('Material Request Plan Item', {
 			return;
 		}
 
-		// VALIDATION: Check for backdate
-		validate_backdate(row.schedule_date, 'Material Request Required By Date');
-
-		// VALIDATION: Recalculate custom_start_date backward to maintain lead time relationship
+		// Recalculate custom_start_date backward to maintain lead time relationship
 		// custom_start_date = schedule_date - lead_time_days
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_supplier_lead_time',
@@ -860,10 +816,6 @@ function recalculate_fg_dates_from_subassembly(frm) {
 					function() {
 						// User confirmed - update FG planned_start_dates
 						mark_programmatic_update();
-
-						// Set flag to indicate SFG dates were manually changed
-						// This tells the before_save hook to skip recalculating SFG dates
-						frm.doc.custom_sfg_dates_manually_changed = 1;
 
 						impacts.forEach(impact => {
 							frm.doc.po_items.forEach(po_item => {

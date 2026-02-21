@@ -24,6 +24,22 @@ def create_fields():
             "default": "1",
             "insert_after": "production_plan_section",
         },
+        {
+            "fieldname": "enable_shift_wise_scheduling",
+            "fieldtype": "Check",
+            "label": "Enable Shift-wise Scheduling",
+            "description": "If checked, production dates will be calculated shiftwise based on settings.",
+            "default": "1",
+            "insert_after": "allow_backdated_planned_start_date",
+        },
+        {
+            "fieldname": "default_shift_type",
+            "fieldtype": "Link",
+            "label": "Default Shift Type",
+            "options": "Shift Type",
+            "description": "Select the default shift type for production scheduling.",
+            "insert_after": "enable_shift_wise_scheduling",
+        },
     ]
 
     for df in fields_to_create:
