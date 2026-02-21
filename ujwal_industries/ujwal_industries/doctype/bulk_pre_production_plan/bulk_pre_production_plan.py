@@ -12,7 +12,7 @@ import math
 # from erpnext.manufacturing.doctype.production_plan.production_plan import get_sales_orders
 
 # Import helper functions from production_plan overrides
-from ujwal_industries.ujwal_industries.overrides.production_plan import (
+from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_get_allow_backdated_setting,
 	_calculate_production_minutes,
 	_to_datetime,

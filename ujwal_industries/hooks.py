@@ -30,8 +30,11 @@ from ujwal_industries.overrides import work_order_override
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
-# app_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
+app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
+app_include_js = [
+	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
+	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
+]
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # web_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
@@ -55,7 +58,8 @@ doctype_js = {
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
  	"Work Order": "public/js/work_order_scrap.js",
-  	"Stock Entry": "public/js/stock_entry.js"
+  	"Stock Entry": "public/js/stock_entry.js",
+	"Production Plan Importer": "public/js/production_plan_importer.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -164,11 +168,8 @@ doc_events = {
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"validate": [
-      				"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
-                      "ujwal_industries.ujwal_industries.overrides.production_plan.update_schedule_date",
-               		],
-  
-  
+			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
+		],
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
