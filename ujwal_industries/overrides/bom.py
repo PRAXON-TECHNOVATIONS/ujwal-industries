@@ -11,6 +11,8 @@ This ensures operation costing calculations use the custom batch size field.
 import frappe
 from frappe import _
 from frappe.utils import flt
+from frappe.utils import cint
+import json
 
 
 def update_bom_update_cost(self, update_parent=True, from_child_bom=False, update_hour_rate=True, save=True):
@@ -128,3 +130,29 @@ def apply_bom_overrides():
 
 	except ImportError:
 		frappe.log_error("Failed to import BOM for monkey patching", "BOM Override Error")
+
+
+def on_update_validate_default_tool(doc, method):
+    operation_default_map = {}
+
+    for row in doc.custom_tool_details:
+        if row.is_default:
+            if row.operation in operation_default_map:
+                frappe.throw(
+                    _("For Operation <b>{0}</b>, only one Tool can be marked as Default.")
+                    .format(row.operation)
+                )
+            operation_default_map[row.operation] = row.tool
+            
+            
+def validate_default_tool(doc, method):
+    operation_default_map = {}
+
+    for row in doc.custom_tool_details:
+        if row.is_default:
+            if row.operation in operation_default_map:
+                frappe.throw(
+                    _("For Operation <b>{0}</b>, only one Tool can be marked as Default.")
+                    .format(row.operation)
+                )
+            operation_default_map[row.operation] = row.tool
