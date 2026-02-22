@@ -78,6 +78,41 @@ frappe.ui.form.on('Production Plan', {
 
 	},
 
+	before_submit: function(frm) {
+        if (frm.ignore_tool_confirm) {
+            return;
+        }
+
+        frappe.call({
+            method: "ujwal_industries.ujwal_industries.overrides.production_plan.validate_tool_limit",
+            args: {
+                docname: frm.doc.name
+            },
+            callback: function(r) {
+
+                if (r.message && r.message.length > 0) {
+
+                    frappe.validated = false;
+
+                    let msg = "<b>Tool Load Limit Exceeded!</b><br><br>" + r.message.join("");
+
+                    frappe.confirm(
+                        msg,
+                        function() {
+                            frm.ignore_tool_confirm = true;
+                            frm.save('Submit');
+                        },
+                        function() {
+                            frappe.msgprint("Submission Cancelled");
+                        }
+                    );
+
+                }
+            }
+        });
+    },
+
+
 	// Hook into "Get Sub Assembly Items" button
 	get_sub_assembly_items: function(frm) {
 		// Wait for items to be added, then populate suppliers and schedule_dates
