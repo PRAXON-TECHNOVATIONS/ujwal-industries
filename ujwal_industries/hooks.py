@@ -34,6 +34,7 @@ app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
+	"/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
@@ -169,6 +170,7 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"validate": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
+			"ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
 		],
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
@@ -208,7 +210,12 @@ doc_events = {
 	},
  	"Quality Inspection": {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
-    }
+    },
+  
+	"BOM":{
+  		"on_update_after_submit": "ujwal_industries.overrides.bom.on_update_validate_default_tool",
+  		"validate": "ujwal_industries.overrides.bom.validate_default_tool",
+	}
 }
 
 # Scheduled Tasks

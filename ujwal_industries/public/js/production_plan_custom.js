@@ -6,7 +6,7 @@ frappe.ui.form.on('Production Plan', {
 			// Check if this Production Plan is linked to a Bulk Pre Production Plan
 			check_and_render_bulk_pp_reference(frm);
 		}
-	}
+	},
 });
 
 
