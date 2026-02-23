@@ -3,25 +3,18 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 from frappe.utils import get_datetime
-from frappe.utils import getdate, nowdate
+from frappe.utils import getdate, nowdate,formatdate
 
 @frappe.whitelist()
 def validate_tool_limit(docname):
     
     doc = frappe.get_doc("Production Plan", docname)
-
     messages = []
-
     for row in doc.po_items:
-
         if not row.bom_no:
             continue
 
-        tool_details = frappe.get_all(
-            "Tool Child Table",
-            filters={"parent": row.bom_no},
-            fields=["tool", "tool_load_quantity"]
-        )
+        tool_details = frappe.get_all("Tool Child Table", filters={"parent": row.bom_no}, fields=["tool", "tool_load_quantity"])
 
         for tool in tool_details:
 
@@ -29,7 +22,7 @@ def validate_tool_limit(docname):
                 SELECT SUM(ai.planned_qty)
                 FROM `tabProduction Plan` pp
                 JOIN `tabProduction Plan Item` ai ON ai.parent = pp.name
-                WHERE pp.docstatus = 1
+                WHERE pp.status != 'Completed'
                 AND ai.bom_no = %s
                 AND pp.name != %s
             """, (row.bom_no, doc.name))[0][0] or 0
@@ -39,11 +32,11 @@ def validate_tool_limit(docname):
             if total_usage > flt(tool.tool_load_quantity):
 
                 messages.append(f"""
-                    <b>Tool:</b> {tool.tool}<br>
-                    Allowed: {tool.tool_load_quantity}<br>
-                    Already Used: {previous_qty}<br>
-                    Current Qty: {row.planned_qty}<br>
-                    <b>Total:</b> {total_usage}<br>
+                    <b>Tool :</b> {tool.tool}<br>
+                    Allowed : {tool.tool_load_quantity}<br>
+                    Already Used : {previous_qty}<br>
+                    Current Qty : {row.planned_qty}<br>
+                    <b>Total :</b> {total_usage}<br>
                 """)
     return messages
 
@@ -151,9 +144,20 @@ def validate_tool_maintenance(doc, method):
 
                 if start <= today <= end:
                     frappe.throw(
-                        _("Row {0}: Tool <b>{1}</b> is under maintenance "
-                          "from {2} to {3}.")
-                        .format(row.idx,row.custom_tool, start,end))
+                        _(
+                            "Tool {0} is currently under maintenance "
+                            "from {1} to {2}.<br><br>"
+                            "Item : {3}<br>"
+                            "BOM : {4}"
+                        ).format(
+                            frappe.bold(row.custom_tool),
+                            formatdate(start),
+                            formatdate(end),
+                            frappe.bold(row.production_item),
+                            frappe.bold(row.bom_no)
+                        ),
+                        title=_("Tool Under Maintenance")
+                    )
 
 
 @frappe.whitelist()                
@@ -275,28 +279,4 @@ def tool_conflict(name, bom, row_name, from_doctype):
                     ), as_dict=True)
                         
                 
-    return conflict
-                
-                
-@frappe.whitelist()
-def get_bom_tools(doctype, txt, searchfield, start, page_len, filters):
-    if not filters.get("bom"):
-        return []
-
-    tools = frappe.get_all("Tool Child Table",filters={"parent": filters.get("bom")}, pluck="tool")
-    if not tools:
-        return []
-
-    x =  frappe.db.sql("""
-        SELECT name
-        FROM `tabAsset`
-        WHERE name IN %(tools)s
-        AND name LIKE %(txt)s
-        LIMIT %(start)s, %(page_len)s
-    """, {
-        "tools": tuple(tools),
-        "txt": f"%{txt}%",
-        "start": start,
-        "page_len": page_len
-    })  
-    return x              
+    return conflict             

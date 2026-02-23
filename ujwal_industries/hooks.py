@@ -171,7 +171,7 @@ doc_events = {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
 		"validate": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
-			"ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
+			# "ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
 			"ujwal_industries.ujwal_industries.overrides.tool_limit.fetched_default_bom",
 			"ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_maintenance",
 		],

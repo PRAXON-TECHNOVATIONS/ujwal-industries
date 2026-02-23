@@ -94,7 +94,7 @@ frappe.ui.form.on('Production Plan', {
 
                     frappe.validated = false;
 
-                    let msg = "<b>Tool Load Limit Exceeded!</b><br><br>" + r.message.join("");
+                    let msg = "<b>Tool Load Limit Exceeded !</b><br>" + r.message.join("");
 
                     frappe.confirm(
                         msg,
@@ -111,24 +111,7 @@ frappe.ui.form.on('Production Plan', {
             }
         });
     },
-
-	setup: function(frm) {
-        frm.set_query("custom_tool", "sub_assembly_items", function(doc, cdt, cdn) {
-            let row = locals[cdt][cdn];
-
-            if (!row.bom_no) {
-                return {};
-            }
-
-            return {
-                query: "ujwal_industries.ujwal_industries.overrides.tool_limit.get_bom_tools",
-                filters: {
-                    bom: row.bom_no
-                }
-            };
-        });
-    },
-
+	
 	// Hook into "Get Sub Assembly Items" button
 	get_sub_assembly_items: function(frm) {
 		// Wait for items to be added, then populate suppliers and schedule_dates
