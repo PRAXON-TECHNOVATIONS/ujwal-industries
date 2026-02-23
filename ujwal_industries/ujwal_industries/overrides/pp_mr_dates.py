@@ -171,7 +171,8 @@ def _propagate_rm_delays_to_sfg_and_fg(doc: Document, adjusted_rm_schedules: dic
       - In House SFGs:    shift_aware_forward_schedule using BOM operation minutes
     """
     _shift_cfg     = _get_effective_shift_config()
-    shift_start_td = _as_timedelta(_shift_cfg.get("start_time")) or timedelta(hours=10)
+    _shift_start_raw = _as_timedelta(_shift_cfg.get("start_time"))
+    shift_start_td = _shift_start_raw if _shift_start_raw is not None else timedelta(hours=0)
     holiday_list   = _shift_cfg.get("holiday_list")
     holidays       = _get_holiday_set(holiday_list)
     sfg_bom_cache  = _batch_fetch_subassembly_bom_operations(doc)

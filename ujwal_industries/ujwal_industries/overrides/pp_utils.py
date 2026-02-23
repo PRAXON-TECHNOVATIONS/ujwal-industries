@@ -417,7 +417,7 @@ def _fetch_shift_config() -> dict[str, Any] | None:
         as_dict=True,
     )
 
-    if not shift_data or not shift_data.start_time or not shift_data.end_time:
+    if not shift_data or shift_data.start_time is None or shift_data.end_time is None:
         return None
 
     config: dict[str, Any] = dict(shift_data)
@@ -442,14 +442,14 @@ def _fetch_shift_config() -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Default 510-min/day shift (used when Manufacturing Settings has no shift configured)
-# 10:00 – 19:00 with 30-min lunch (13:00–13:30) = 540 – 30 = 510 net min/day
+# Default 24-hr/day shift (used when Manufacturing Settings has no shift configured)
+# 00:00 – 24:00, no lunch break, no holidays = 1440 net min/day
 # ---------------------------------------------------------------------------
 _DEFAULT_SHIFT_CONFIG: dict[str, Any] = {
-    "start_time": timedelta(hours=10),
-    "end_time": timedelta(hours=19),
-    "custom_lunch_start_time": timedelta(hours=13),
-    "custom_lunch_end_time": timedelta(hours=13, minutes=30),
+    "start_time": timedelta(hours=0),
+    "end_time": timedelta(hours=24),
+    "custom_lunch_start_time": None,
+    "custom_lunch_end_time": None,
     "holiday_list": None,
 }
 
@@ -459,8 +459,8 @@ def _get_effective_shift_config() -> dict[str, Any]:
     Always returns a valid shift config dict.
 
     Tries the configured Shift Type from Manufacturing Settings first.
-    Falls back to _DEFAULT_SHIFT_CONFIG (510 net min/day, 10:00–19:00 with
-    30-min lunch) when shift-wise scheduling is disabled or not configured.
+    Falls back to _DEFAULT_SHIFT_CONFIG (1440 net min/day, 00:00–24:00,
+    no lunch, no holidays) when shift-wise scheduling is disabled or not configured.
 
     Use this instead of _fetch_shift_config() everywhere so that scheduling
     is always shift-aware regardless of Manufacturing Settings.
@@ -484,13 +484,18 @@ def _td_minutes(td: timedelta) -> float:
 def _as_timedelta(t: Any) -> timedelta | None:
     """
     Coerce a Frappe Time field value (already a timedelta, or an "HH:MM:SS" string)
-    to `datetime.timedelta`. Returns None if falsy.
+    to `datetime.timedelta`. Returns None only when the value is absent (None / "").
+
+    NOTE: timedelta(0) (midnight, 00:00:00) is a valid shift start and is returned
+    as-is.  Do NOT use truthiness checks on the return value — use `is None` instead.
     """
-    if not t:
+    if t is None:
         return None
     if isinstance(t, timedelta):
         return t
     if isinstance(t, str):
+        if not t.strip():
+            return None
         parts = t.split(":")
         h, m = int(parts[0]), int(parts[1])
         s = int(parts[2]) if len(parts) > 2 else 0
@@ -716,7 +721,7 @@ def _backward_schedule(
     lunch_start = _as_timedelta(shift_config.get("custom_lunch_start_time"))
     lunch_end   = _as_timedelta(shift_config.get("custom_lunch_end_time"))
 
-    if not shift_start or not shift_end:
+    if shift_start is None or shift_end is None:
         # Incomplete config — fall back to simple subtraction
         return _to_datetime(deadline_date) - timedelta(minutes=production_minutes)
 
@@ -774,7 +779,7 @@ def _current_shift_datetime(shift_config: dict[str, Any]) -> datetime:
     lunch_end   = _as_timedelta(shift_config.get("custom_lunch_end_time"))
     holiday_list = shift_config.get("holiday_list")
 
-    if not shift_start or not shift_end:
+    if shift_start is None or shift_end is None:
         return now_datetime()
 
     holidays = _get_holiday_set(holiday_list)
@@ -935,7 +940,7 @@ def shift_aware_forward_schedule(
     lunch_start = _as_timedelta(shift_config.get("custom_lunch_start_time"))
     lunch_end   = _as_timedelta(shift_config.get("custom_lunch_end_time"))
 
-    if not shift_start or not shift_end:
+    if shift_start is None or shift_end is None:
         return start_date + timedelta(minutes=production_minutes)
 
     holidays = _get_holiday_set(shift_config.get("holiday_list"))
