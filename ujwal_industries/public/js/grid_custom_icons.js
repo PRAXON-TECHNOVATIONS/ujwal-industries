@@ -22,6 +22,10 @@ ujwal_industries.grid_custom_icons = {
 			return;
 		}
 
+		if (!frm.fields_dict.po_items || !frm.fields_dict.po_items.grid) {
+			return;
+		}
+
 		// Override grid row rendering for applicable child tables
 		const grid_custom = this;
 
@@ -40,6 +44,16 @@ ujwal_industries.grid_custom_icons = {
 		});
 
 		frm.fields_dict.sub_assembly_items.grid.wrapper.find('.grid-body').on('DOMNodeInserted', function(e) {
+			
+			if ($(e.target).hasClass('grid-row')) {
+				// Add slight delay to ensure row is fully rendered
+				setTimeout(() => {
+					grid_custom.add_custom_icons(frm, $(e.target));
+				}, 50);
+			}
+		});
+
+		frm.fields_dict.po_items.grid.wrapper.find('.grid-body').on('DOMNodeInserted', function(e) {
 			
 			if ($(e.target).hasClass('grid-row')) {
 				// Add slight delay to ensure row is fully rendered
@@ -69,6 +83,11 @@ ujwal_industries.grid_custom_icons = {
 			gridBodyObserver.observe(gridBody, { childList: true, subtree: false });
 		}
 
+		const gridBody1 = frm.fields_dict.po_items.grid.wrapper.find('.grid-body .rows')[0];
+		if (gridBody1) {
+			gridBodyObserver.observe(gridBody1, { childList: true, subtree: false });
+		}
+
 		// Watch for grid header changes and re-add header icon if needed
 		const observer = new MutationObserver(function(mutations) {
 			mutations.forEach(function(mutation) {
@@ -82,16 +101,38 @@ ujwal_industries.grid_custom_icons = {
 			});
 		});
 
+		const observer1 = new MutationObserver(function(mutations) {
+			mutations.forEach(function(mutation) {
+				if (mutation.type === 'childList') {
+					// Check if header icon was removed
+					const headerExists = frm.fields_dict.po_items.grid.wrapper.find('.grid-header-gear-icon').length > 0;
+					if (!headerExists) {
+						grid_custom.add_grid_header_icon(frm);
+					}
+				}
+			});
+		});
+
 		// Observe the grid heading row for changes
 		const gridHeading = frm.fields_dict.sub_assembly_items.grid.wrapper.find('.grid-heading-row')[0];
 		if (gridHeading) {
 			observer.observe(gridHeading, { childList: true, subtree: true });
 		}
 
+		const gridHeading1 = frm.fields_dict.po_items.grid.wrapper.find('.grid-heading-row')[0];
+		if (gridHeading1) {
+			observer.observe(gridHeading1, { childList: true, subtree: true });
+		}
+
 		// Also add icons to existing rows
 		frm.fields_dict.sub_assembly_items.grid.grid_rows.forEach(grid_row => {
 			grid_custom.add_custom_icons(frm, $(grid_row.wrapper));
 		});
+
+		frm.fields_dict.po_items.grid.grid_rows.forEach(grid_row => {
+			grid_custom.add_custom_icons(frm, $(grid_row.wrapper));
+		});
+
 	},
 
 	add_grid_header_icon: function(frm) {
@@ -130,6 +171,42 @@ ujwal_industries.grid_custom_icons = {
 		} else {
 			// Fallback: append to the end of the header row
 			$grid_heading_row.append($header_gear);
+		}
+
+
+
+		if (frm.fields_dict.po_items.grid.wrapper.find('.grid-header-gear-icon').length > 0) {
+			return;
+		}
+
+		const $grid_heading_row1 = frm.fields_dict.po_items.grid.wrapper.find('.grid-heading-row .data-row');
+
+		if ($grid_heading_row1.length === 0) {
+			return;
+		}
+
+		// Find the existing gear icon column in the header (the one that shows "gear" icon)
+		const $existing_gear_col1 = $grid_heading_row1.find('.col.grid-static-col.d-flex.justify-content-center');
+
+		const $header_gear1 = $(`
+			<div class="col grid-static-col d-flex justify-content-center grid-header-gear-icon" style="cursor: pointer;">
+				<a>
+					${frappe.utils.icon("solid-info", "sm", "", "filter: opacity(0.5)")}
+				</a>
+			</div>
+		`);
+
+		// Add click handler
+		$header_gear1.on('click', function(e) {
+			e.stopPropagation();
+		});
+
+		// Insert after the existing gear column (or after the last column if not found)
+		if ($existing_gear_col1.length > 0) {
+			$header_gear1.insertAfter($existing_gear_col1);
+		} else {
+			// Fallback: append to the end of the header row
+			$grid_heading_row.append($header_gear1);
 		}
 	},
 
@@ -193,12 +270,22 @@ ujwal_industries.grid_custom_icons = {
 				grid_custom.update_wrench_icon(frm, row_name, $custom_col);
 			}
 		});
+
+		frappe.model.on('po_items', 'item_code', function(frm, cdt, cdn) {
+			if (cdn === row_name) {
+				grid_custom.update_wrench_icon(frm, row_name, $custom_col);
+			}
+		});
 	},
 
 	update_wrench_icon: function(frm, row_name, $custom_col) {
 		// Get the row
 		const row = frappe.get_doc(frm.fields_dict.sub_assembly_items.grid.doctype, row_name);
 		$custom_col.find('.wrench-icon').show();
+
+		const row1 = frappe.get_doc(frm.fields_dict.po_items.grid.doctype, row_name);
+		$custom_col.find('.wrench-icon').show();
+
 		// if (!row || !row.item_code) {
 		// 	$custom_col.find('.wrench-icon').hide();
 		// 	return;
@@ -218,42 +305,88 @@ ujwal_industries.grid_custom_icons = {
 
 	handle_gear_click: function(frm, row_name) {
 		const row = frappe.get_doc(frm.fields_dict.sub_assembly_items.grid.doctype, row_name);
-
 		// 1. Check if item_code is selected
-		if (!row.production_item) {
-			frappe.msgprint({
-				title: __('Item Required'),
-				message: __('Please select an Production first'),
-				indicator: 'red'
+		if(row != undefined){
+		
+			if (!row.production_item) {
+				frappe.msgprint({
+					title: __('Item Required'),
+					message: __('Please select an Production first'),
+					indicator: 'red'
+				});
+				return;
+			}
+
+			// 2. Fetch item details and check if it's already a non-standard item
+			frappe.call({
+				method: 'frappe.client.get',
+				args: {
+					doctype: 'Item',
+					name: row.production_item,
+					fields: ['*']  // Fetch all fields including custom fields
+				},
+				callback: function(r) {
+					if (r.message) {
+						const item = r.message;
+
+						ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row, item,'sub_assembly_items');
+						// Check if item is already non-standard
+						// if (item.is_non_standard === 1 || item.is_non_standard === '1') {
+						// 	// This is a non-standard item, fetch its configuration and show discount dialog
+						// 	ujwal_industries.grid_custom_icons.show_existing_non_standard_item(frm, row, item);
+						// 	return;
+						// }
+
+						// // 3. If not non-standard, create stepper dialog
+						// ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row, item);
+					}
+				}
 			});
-			return;
 		}
 
-		// 2. Fetch item details and check if it's already a non-standard item
-		frappe.call({
-			method: 'frappe.client.get',
-			args: {
-				doctype: 'Item',
-				name: row.production_item,
-				fields: ['*']  // Fetch all fields including custom fields
-			},
-			callback: function(r) {
-				if (r.message) {
-					const item = r.message;
 
-					ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row, item);
-					// Check if item is already non-standard
-					// if (item.is_non_standard === 1 || item.is_non_standard === '1') {
-					// 	// This is a non-standard item, fetch its configuration and show discount dialog
-					// 	ujwal_industries.grid_custom_icons.show_existing_non_standard_item(frm, row, item);
-					// 	return;
-					// }
 
-					// // 3. If not non-standard, create stepper dialog
-					// ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row, item);
-				}
+
+		const row1 = frappe.get_doc(frm.fields_dict.po_items.grid.doctype, row_name);
+
+		// 1. Check if item_code is selected
+		if(row1 != undefined){
+
+			if (!row1.item_code) {
+				frappe.msgprint({
+					title: __('Item Required'),
+					message: __('Please select an Production first'),
+					indicator: 'red'
+				});
+				return;
 			}
-		});
+
+			// 2. Fetch item details and check if it's already a non-standard item
+			frappe.call({
+				method: 'frappe.client.get',
+				args: {
+					doctype: 'Item',
+					name: row1.item_code,
+					fields: ['*']  // Fetch all fields including custom fields
+				},
+				callback: function(r) {
+					if (r.message) {
+						const item = r.message;
+
+						ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row1, item, 'po_items');
+						// Check if item is already non-standard
+						// if (item.is_non_standard === 1 || item.is_non_standard === '1') {
+						// 	// This is a non-standard item, fetch its configuration and show discount dialog
+						// 	ujwal_industries.grid_custom_icons.show_existing_non_standard_item(frm, row, item);
+						// 	return;
+						// }
+
+						// // 3. If not non-standard, create stepper dialog
+						// ujwal_industries.grid_custom_icons.show_non_standard_dialog(frm, row, item);
+					}
+				}
+			});
+	}
 	},
 
 	show_existing_non_standard_item: function(frm, row, item) {
@@ -493,6 +626,9 @@ ujwal_industries.grid_custom_icons = {
 					// Refresh the grid to show the new values
 					frm.fields_dict.sub_assembly_items.grid.refresh();
 					frm.refresh_field('sub_assembly_items');
+
+					frm.fields_dict.po_items.grid.refresh();
+					frm.refresh_field('po_items');
 				}, 500);
 			});
 
@@ -549,6 +685,9 @@ ujwal_industries.grid_custom_icons = {
 								// Refresh the grid to show the new values
 								frm.fields_dict.sub_assembly_items.grid.refresh();
 								frm.refresh_field('sub_assembly_items');
+
+								frm.fields_dict.po_items.grid.refresh();
+								frm.refresh_field('po_items');
 							}, 500);
 						});
 					}
@@ -562,7 +701,7 @@ ujwal_industries.grid_custom_icons = {
 		});
 	},
 
-	show_non_standard_dialog: function(frm, row, item) {
+	show_non_standard_dialog: function(frm, row, item, from_doctype) {
 		const grid_custom = this;
 
 		// Create stepper dialog with custom size - SINGLE HTML FIELD
@@ -619,7 +758,7 @@ ujwal_industries.grid_custom_icons = {
 		dialog.$wrapper.find('.btn-modal-secondary').hide();
 
 		// Show Step 1 - Item Details
-		grid_custom.show_step_1(dialog, frm.doc.name, item, row.bom_no, row.name);
+		grid_custom.show_step_1(dialog, frm.doc.name, item, row.bom_no, row.name,from_doctype);
 
 		dialog.show();
 	},
@@ -648,7 +787,7 @@ ujwal_industries.grid_custom_icons = {
 		`;
 	},
 
-	show_step_1: function(dialog, doc_name, item, bom_no,row_name) {
+	show_step_1: function(dialog, doc_name, item, bom_no,row_name, from_doctype) {
 		// Update step to 1
 		dialog.current_step = 1;
 
@@ -672,7 +811,8 @@ ujwal_industries.grid_custom_icons = {
 			args: {
 				'name' : doc_name,
 				'bom': bom_no,
-				'row_name': row_name
+				'row_name': row_name,
+				'from_doctype': from_doctype
 			},
 			callback: function(r) {
 				if(r.message.length==0){
@@ -1259,6 +1399,10 @@ ujwal_industries.grid_custom_icons = {
 					// Refresh the grid to show the new values
 					frm.fields_dict.sub_assembly_items.grid.refresh();
 					frm.refresh_field('sub_assembly_items');
+
+
+					frm.fields_dict.po_items.grid.refresh();
+					frm.refresh_field('po_items');
 				}, 500);
 			});
 
@@ -1573,6 +1717,10 @@ ujwal_industries.grid_custom_icons = {
 								// Refresh the grid to show the new values
 								frm.fields_dict.sub_assembly_items.grid.refresh();
 								frm.refresh_field('sub_assembly_items');
+								
+								
+								frm.fields_dict.po_items.grid.refresh();
+								frm.refresh_field('po_items');
 							}, 500);
 						});
 					}
@@ -2126,6 +2274,9 @@ ujwal_industries.grid_custom_icons = {
 								// Refresh the grid to show the new values
 								frm.fields_dict.sub_assembly_items.grid.refresh();
 								frm.refresh_field('sub_assembly_items');
+								
+								frm.fields_dict.po_items.grid.refresh();
+								frm.refresh_field('po_items');
 							}, 500);
 						});
 					}
@@ -2174,7 +2325,7 @@ ujwal_industries.grid_custom_icons = {
 
 	handle_wrench_click: function(frm, row_name) {
 		const row = frappe.get_doc(frm.fields_dict.sub_assembly_items.grid.doctype, row_name);
-
+		
 		// Fetch Non Standard Item Creation record for this item
 		frappe.call({
 			method: 'frappe.client.get_list',
@@ -2195,6 +2346,33 @@ ujwal_industries.grid_custom_icons = {
 					frappe.msgprint({
 						title: __('Not Found'),
 						message: __('No Non-Standard Item Creation record found for: {0}', [row.item_code]),
+						indicator: 'red'
+					});
+				}
+			}
+		});
+		
+		const row1 = frappe.get_doc(frm.fields_dict.sub_assembly_items.grid.doctype, row_name);
+
+		frappe.call({
+			method: 'frappe.client.get_list',
+			args: {
+				doctype: 'Non Standard Item Creation',
+				filters: {
+					new_item_code: row1.item_code,
+					docstatus: 1
+				},
+				fields: ['name'],
+				limit: 1
+			},
+			callback: function(r) {
+				if (r.message && r.message.length > 0) {
+					const ns_item_name = r.message[0].name;
+					ujwal_industries.grid_custom_icons.show_non_standard_details_dialog(ns_item_name, frm, row1);
+				} else {
+					frappe.msgprint({
+						title: __('Not Found'),
+						message: __('No Non-Standard Item Creation record found for: {0}', [row1.item_code]),
 						indicator: 'red'
 					});
 				}

@@ -107,66 +107,167 @@ def validate_tool_conflict(doc, method):
                     f"<b>{conflict[0].name}</b> "
                 ))
                 
- 
 
-@frappe.whitelist()                
-def tool_conflict(name, bom, row_name):
-    doc = frappe.get_doc("Production Plan", name)
+def fetched_default_bom(doc, method):
     if not doc.sub_assembly_items:
         return
 
-    conflict = []
     for row in doc.sub_assembly_items:
-        if row.name== row_name and row.type_of_manufacturing == 'In House':
+        if not row.bom_no:
+            continue
 
-            if not row.schedule_date or not row.custom_schedule_end_date or not bom:
-                continue
-
-            new_start = get_datetime(row.schedule_date)
-            new_end = get_datetime(row.custom_schedule_end_date)
-
-            tools = frappe.get_all(
-                "Tool Child Table",
-                filters={"parent": bom},
-                pluck="tool"
-            )
-
-            if not tools:
-                continue
-
-            for tool in tools:
-
-                conflict = frappe.db.sql("""
-                    SELECT
-                        pp.name,
-                        sai.schedule_date,
-                        sai.custom_schedule_end_date,
-                        sai.bom_no,
-                        btd.tool,
-                        btd.operation
+        default_tool = frappe.get_all("Tool Child Table",
+            filters={
+                "parent": row.bom_no,
+                "is_default": 1
+            }, fields=["tool"],limit=1)
+        
+        if default_tool:
+            row.custom_tool = default_tool[0].tool
                         
-                    FROM
-                        `tabProduction Plan` pp
-                    INNER JOIN
-                        `tabProduction Plan Sub Assembly Item` sai 
-                            ON sai.parent = pp.name
-                    INNER JOIN
-                        `tabTool Child Table` btd 
-                            ON btd.parent = sai.bom_no
-                    WHERE
-                        pp.docstatus = 1
-                        AND pp.name != %s
-                        AND sai.bom_no = %s       
-                        AND btd.tool = %s
-                        AND sai.schedule_date <= %s
-                        AND sai.custom_schedule_end_date >= %s
-                """, (
-                    doc.name,
-                    bom,  
-                    tool,
-                    new_end,
-                    new_start
-                ), as_dict=True)
+
+
+@frappe.whitelist()                
+def tool_conflict(name, bom, row_name, from_doctype):
+    conflict = []
+    doc = frappe.get_doc("Production Plan", name)
+    
+    if from_doctype == 'sub_assembly_items':
+        if not doc.sub_assembly_items:
+            return
+
+        for row in doc.sub_assembly_items:
+            if row.name== row_name and row.type_of_manufacturing == 'In House':
+
+                if not row.schedule_date or not row.custom_schedule_end_date or not bom:
+                    continue
+
+                new_start = get_datetime(row.schedule_date)
+                new_end = get_datetime(row.custom_schedule_end_date)
+
+                tools = frappe.get_all(
+                    "Tool Child Table",
+                    filters={"parent": bom},
+                    pluck="tool"
+                )
+
+                if not tools:
+                    continue
+
+                for tool in tools:
+
+                    conflict = frappe.db.sql("""
+                        SELECT
+                            pp.name,
+                            sai.schedule_date,
+                            sai.custom_schedule_end_date,
+                            sai.bom_no,
+                            btd.tool,
+                            btd.operation
+                            
+                        FROM
+                            `tabProduction Plan` pp
+                        INNER JOIN
+                            `tabProduction Plan Sub Assembly Item` sai 
+                                ON sai.parent = pp.name
+                        INNER JOIN
+                            `tabTool Child Table` btd 
+                                ON btd.parent = sai.bom_no
+                        WHERE
+                            pp.docstatus = 1
+                            AND pp.name != %s
+                            AND sai.bom_no = %s       
+                            AND btd.tool = %s
+                            AND sai.schedule_date <= %s
+                            AND sai.custom_schedule_end_date >= %s
+                    """, (
+                        doc.name,
+                        bom,  
+                        tool,
+                        new_end,
+                        new_start
+                    ), as_dict=True)
+                    
+                    
+    else:
+        if not doc.po_items:
+            return
+
+        for row in doc.po_items:
+            if row.name== row_name and row.custom_manufacturing_type == 'In House':
+
+                if not row.planned_start_date or not row.custom_planned_end_date or not bom:
+                    continue
+
+                new_start = get_datetime(row.planned_start_date)
+                new_end = get_datetime(row.custom_planned_end_date)
+
+                tools = frappe.get_all(
+                    "Tool Child Table",
+                    filters={"parent": bom},
+                    pluck="tool"
+                )
+
+                if not tools:
+                    continue
+
+                for tool in tools:
+
+                    conflict = frappe.db.sql("""
+                        SELECT
+                            pp.name,
+                            sai.planned_start_date,
+                            sai.custom_planned_end_date,
+                            sai.bom_no,
+                            btd.tool,
+                            btd.operation
+                            
+                        FROM
+                            `tabProduction Plan` pp
+                        INNER JOIN
+                            `tabProduction Plan Item` sai 
+                                ON sai.parent = pp.name
+                        INNER JOIN
+                            `tabTool Child Table` btd 
+                                ON btd.parent = sai.bom_no
+                        WHERE
+                            pp.docstatus = 1
+                            AND pp.name != %s
+                            AND sai.bom_no = %s       
+                            AND btd.tool = %s
+                            AND sai.planned_start_date <= %s
+                            AND sai.custom_planned_end_date >= %s
+                    """, (
+                        doc.name,
+                        bom,  
+                        tool,
+                        new_end,
+                        new_start
+                    ), as_dict=True)
+                        
                 
     return conflict
                 
+                
+@frappe.whitelist()
+def get_bom_tools(doctype, txt, searchfield, start, page_len, filters):
+    if not filters.get("bom"):
+        return []
+
+    tools = frappe.get_all("Tool Child Table",filters={"parent": filters.get("bom")}, pluck="tool")
+    if not tools:
+        return []
+
+    x =  frappe.db.sql("""
+        SELECT name
+        FROM `tabAsset`
+        WHERE name IN %(tools)s
+        AND name LIKE %(txt)s
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        "tools": tuple(tools),
+        "txt": f"%{txt}%",
+        "start": start,
+        "page_len": page_len
+    })  
+    return x              

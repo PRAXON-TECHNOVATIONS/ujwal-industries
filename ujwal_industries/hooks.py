@@ -61,6 +61,7 @@ doctype_js = {
  	"Work Order": "public/js/work_order_scrap.js",
   	"Stock Entry": "public/js/stock_entry.js",
 	"Production Plan Importer": "public/js/production_plan_importer.js",
+	"BOM": "public/js/bom.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -171,6 +172,7 @@ doc_events = {
 		"validate": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
+			"ujwal_industries.ujwal_industries.overrides.tool_limit.fetched_default_bom",
 		],
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
