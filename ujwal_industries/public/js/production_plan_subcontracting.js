@@ -112,6 +112,22 @@ frappe.ui.form.on('Production Plan', {
         });
     },
 
+	setup: function(frm) {
+        frm.set_query("custom_tool", "sub_assembly_items", function(doc, cdt, cdn) {
+            let row = locals[cdt][cdn];
+
+            if (!row.bom_no) {
+                return {};
+            }
+
+            return {
+                query: "ujwal_industries.ujwal_industries.overrides.tool_limit.get_bom_tools",
+                filters: {
+                    bom: row.bom_no
+                }
+            };
+        });
+    },
 
 	// Hook into "Get Sub Assembly Items" button
 	get_sub_assembly_items: function(frm) {
