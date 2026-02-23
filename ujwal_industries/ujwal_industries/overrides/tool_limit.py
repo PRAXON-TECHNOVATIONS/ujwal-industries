@@ -3,6 +3,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 from frappe.utils import get_datetime
+from frappe.utils import getdate, nowdate
 
 @frappe.whitelist()
 def validate_tool_limit(docname):
@@ -125,6 +126,34 @@ def fetched_default_bom(doc, method):
         if default_tool:
             row.custom_tool = default_tool[0].tool
                         
+
+
+
+def validate_tool_maintenance(doc, method):
+    if not doc.sub_assembly_items:
+        return
+
+    today = getdate(nowdate())
+    for row in doc.sub_assembly_items:
+        if not row.custom_tool:
+            continue
+
+        maintenances = frappe.get_all("Asset Maintenance",filters={"asset_name": row.custom_tool,}, pluck="name")
+        for maint_name in maintenances:
+            maint_doc = frappe.get_doc("Asset Maintenance", maint_name)
+
+            for task in maint_doc.asset_maintenance_tasks:
+                if not task.start_date or not task.end_date:
+                    continue
+
+                start = getdate(task.start_date)
+                end = getdate(task.end_date)
+
+                if start <= today <= end:
+                    frappe.throw(
+                        _("Row {0}: Tool <b>{1}</b> is under maintenance "
+                          "from {2} to {3}.")
+                        .format(row.idx,row.custom_tool, start,end))
 
 
 @frappe.whitelist()                
