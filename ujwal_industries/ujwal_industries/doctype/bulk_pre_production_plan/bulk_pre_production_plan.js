@@ -345,6 +345,21 @@ function setup_production_tabs(frm) {
 }
 
 
+function _duration_label(start_str, end_str) {
+	/* Returns a human-readable duration string like "~1.8 days" or "4h 20m" */
+	if (!start_str || !end_str) return '';
+	const s = new Date(start_str);
+	const e = new Date(end_str);
+	const diff_min = Math.round((e - s) / 60000);
+	if (isNaN(diff_min) || diff_min <= 0) return '';
+	if (diff_min >= 1440) {
+		return '~' + (diff_min / 1440).toFixed(1) + ' days';
+	}
+	const h = Math.floor(diff_min / 60);
+	const m = diff_min % 60;
+	return h ? h + 'h ' + m + 'm' : m + 'm';
+}
+
 function render_fg_table(items) {
 	if (!items || items.length === 0) {
 		return '<p class="text-muted">No finished goods items</p>';
@@ -356,8 +371,10 @@ function render_fg_table(items) {
 				<tr>
 					<th>Item Code</th>
 					<th>Planned Qty</th>
-					<th>Manufacturing Type</th>
+					<th>Mfg Type</th>
 					<th>Planned Start Date</th>
+					<th>Planned End Date</th>
+					<th>Duration / Logic</th>
 					<th>BOM</th>
 					<th>Warehouse</th>
 				</tr>
@@ -366,6 +383,13 @@ function render_fg_table(items) {
 	`;
 
 	items.forEach(function(item) {
+		const dur = _duration_label(item.planned_start_date, item.custom_planned_end_date);
+		const logic_html = `
+			<small class="text-muted">
+				Backward from delivery date<br>
+				via BOM production mins
+				${dur ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur + '</span>' : ''}
+			</small>`;
 		html += `
 			<tr>
 				<td><strong>${item.item_code}</strong></td>
@@ -376,6 +400,8 @@ function render_fg_table(items) {
 					</span>
 				</td>
 				<td>${frappe.format(item.planned_start_date, {fieldtype: 'Datetime'})}</td>
+				<td>${item.custom_planned_end_date ? frappe.format(item.custom_planned_end_date, {fieldtype: 'Datetime'}) : '<span class="text-muted">—</span>'}</td>
+				<td>${logic_html}</td>
 				<td><small>${item.bom_no || ''}</small></td>
 				<td><small>${item.warehouse || ''}</small></td>
 			</tr>
@@ -400,8 +426,9 @@ function render_sfg_table(items) {
 					<th>Parent Item</th>
 					<th>Qty</th>
 					<th>Type</th>
-					<th>Schedule Date</th>
+					<th>Schedule Date (Start)</th>
 					<th>End Date</th>
+					<th>Duration / Logic</th>
 					<th>Supplier</th>
 					<th>BOM</th>
 				</tr>
@@ -410,18 +437,33 @@ function render_sfg_table(items) {
 	`;
 
 	items.forEach(function(item) {
+		const dur = _duration_label(item.schedule_date, item.custom_schedule_end_date);
+		const is_inhouse = (item.type_of_manufacturing || 'In House') === 'In House';
+		const parent_note = item.parent_item_code
+			? '← from <strong>' + item.parent_item_code + '</strong> start'
+			: '← from FG start';
+		const logic_note = is_inhouse
+			? 'Backward via BOM prod mins'
+			: 'Backward via lead time + GRN days';
+		const logic_html = `
+			<small class="text-muted">
+				${parent_note}<br>
+				${logic_note}
+				${dur ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur + '</span>' : ''}
+			</small>`;
 		html += `
 			<tr>
 				<td><strong>${item.production_item}</strong></td>
-				<td><small>${item.parent_item_code || ''}</small></td>
+				<td><small>${item.parent_item_code || '<span class="text-muted">—</span>'}</small></td>
 				<td>${frappe.format(item.qty, {fieldtype: 'Float'})}</td>
 				<td>
-					<span class="badge ${item.type_of_manufacturing === 'In House' ? 'badge-success' : 'badge-warning'}">
+					<span class="badge ${is_inhouse ? 'badge-success' : 'badge-warning'}">
 						${item.type_of_manufacturing || 'In House'}
 					</span>
 				</td>
 				<td>${frappe.format(item.schedule_date, {fieldtype: 'Datetime'})}</td>
 				<td>${frappe.format(item.custom_schedule_end_date, {fieldtype: 'Datetime'})}</td>
+				<td>${logic_html}</td>
 				<td><small>${item.supplier || '-'}</small></td>
 				<td><small>${item.bom_no || ''}</small></td>
 			</tr>
@@ -446,8 +488,9 @@ function render_rm_table(items) {
 					<th>Quantity</th>
 					<th>UOM</th>
 					<th>Warehouse</th>
-					<th>Start Date</th>
-					<th>Schedule Date</th>
+					<th>Order By (Start)</th>
+					<th>Receive By (Schedule)</th>
+					<th>Lead Time Logic</th>
 					<th>Supplier</th>
 				</tr>
 			</thead>
@@ -455,6 +498,22 @@ function render_rm_table(items) {
 	`;
 
 	items.forEach(function(item) {
+		// Compute lead time gap between order date and receive date in calendar days
+		let lead_note = '';
+		if (item.custom_start_date && item.schedule_date) {
+			const s = new Date(item.custom_start_date);
+			const e = new Date(item.schedule_date);
+			const diff_days = Math.round((e - s) / 86400000);
+			if (diff_days > 0) {
+				lead_note = diff_days + ' cal. days (lead + GRN)';
+			}
+		}
+		const logic_html = `
+			<small class="text-muted">
+				Order: SFG start − lead − GRN days<br>
+				Receive: order + lead + GRN days
+				${lead_note ? '<br><span class="badge badge-light" style="font-size:11px;">' + lead_note + '</span>' : ''}
+			</small>`;
 		const warehouse_display = item.warehouse || '-';
 		html += `
 			<tr>
@@ -464,6 +523,7 @@ function render_rm_table(items) {
 				<td><span class="badge badge-secondary">${warehouse_display}</span></td>
 				<td>${frappe.format(item.custom_start_date, {fieldtype: 'Date'})}</td>
 				<td>${frappe.format(item.schedule_date, {fieldtype: 'Date'})}</td>
+				<td>${logic_html}</td>
 				<td><small>${item.custom_supplier || '-'}</small></td>
 			</tr>
 		`;

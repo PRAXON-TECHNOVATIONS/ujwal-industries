@@ -14,6 +14,7 @@
   "stock_uom",
   "warehouse",
   "planned_start_date",
+  "custom_planned_end_date",
   "custom_schedule_end_date",
   "manufacturing_type",
   "section_break_9",
@@ -96,6 +97,11 @@
    "in_list_view": 1,
    "label": "Planned Start Date",
    "reqd": 1
+  },
+  {
+   "fieldname": "custom_planned_end_date",
+   "fieldtype": "Datetime",
+   "label": "Planned End Date"
   },
   {
    "fieldname": "custom_schedule_end_date",
