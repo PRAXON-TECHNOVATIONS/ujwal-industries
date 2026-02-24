@@ -12,7 +12,87 @@ frappe.ui.form.on("Job Card", {
 		if (!frm.is_new()) {
 			render_tool_summary(frm);
 		}
-	}
+	},
+
+	setup: function(frm){
+        get_filtered_tools(frm);
+    },
+ 
+    operation: function(frm) {
+        frm.set_value("tool", null);
+    },
+ 
+    bom_no: function(frm) {
+        frm.set_value("tool", null);
+    },
+
+	custom_tool_name: function(frm) {
+        if (frm.doc.custom_tool_name) {
+            frappe.call({
+                method: "ujwal_industries.ujwal_industries.overrides.job_card.check_tool_maintenance",
+                args: {
+                    tool: frm.doc.custom_tool_name
+                },
+                callback: function(r) {
+                    if (r.message) {
+                        frappe.msgprint(r.message);
+                        frm.set_value("custom_tool_name", null);
+                    }
+					else{
+						frappe.run_serially([
+							() => {
+
+									frm.set_value("custom_reason_for_tool_change", '');
+									let old_tool = frm.doc.custom_previous_tool;
+									let d = new frappe.ui.Dialog({
+										title: "Reason for Tool Change",
+										fields: [
+											{
+												label: "Reason",
+												fieldname: "reason",
+												fieldtype: "Small Text",
+												reqd: 1
+											}
+										],
+										primary_action_label: "Submit",
+										primary_action(values) {
+											frm.set_value("custom_reason_for_tool_change", values.reason);
+
+											frappe.call({
+											method: "ujwal_industries.ujwal_industries.overrides.job_card.create_tool_maintenance",
+											args: {
+												tool: old_tool,
+												reason: values.reason
+											},
+											callback: function(res) {
+												if (!res.exc) {
+													frappe.msgprint({
+													title: "Success",
+													message: "<b>Tool Maintenance Created Successfully</b>",
+													indicator: "green"
+													});
+												}
+											},
+										});
+
+											d.hide();
+										}
+									});
+									d.show();
+							},
+
+
+							() => {
+								frm.refresh()
+
+							}
+						])
+						
+					}
+                }
+            });
+        }
+    },
 });
 
 function render_tool_summary(frm) {
@@ -74,6 +154,7 @@ frappe.ui.form.on("Job Card", {
 		show_downtime_alerts(frm);
 		// Subscribe to real-time workstation status updates
 		setup_realtime_workstation_status(frm);
+		hide_button(frm);
 	},
 
 	onload: function(frm) {
@@ -89,7 +170,7 @@ frappe.ui.form.on("Job Card", {
 		//  CHECK DOWNTIME
 		const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
 
-		if (has_active_downtime) {
+		if (has_active_downtime){
 			// Remove Start Job Button
 			frm.page.remove_inner_button(__("Start Job"));
 			// Remove Resume Job Button
@@ -110,8 +191,16 @@ frappe.ui.form.on("Job Card", {
 				});
 			}
 		}
-	}
+	},
 });
+
+function hide_button(frm){
+	if(!frm.doc.custom_tool_name){
+		frm.page.remove_inner_button(__("Start Job"));
+		frm.page.remove_inner_button(__("Resume Job"));
+		hide_job_card_timer(frm);
+	}
+}
 
 function hide_job_card_timer(frm) {
     // Hide stopwatch shown in page header
@@ -413,4 +502,20 @@ function show_workstation_problem_alert(frm, workstation) {
 		message: __("Workstation {0} is now DOWN", [workstation]),
 		indicator: "red"
 	}, 10);
+}
+
+function get_filtered_tools(frm){
+    frm.set_query("custom_tool_name", function(doc) {
+        if (!doc.bom_no) {
+            return {};
+        }
+ 
+        return {
+            query: "ujwal_industries.ujwal_industries.overrides.job_card.get_filtered_tools",
+            filters: {
+                bom: doc.bom_no,
+                operation: doc.operation || " "
+            }
+        };
+    });
 }

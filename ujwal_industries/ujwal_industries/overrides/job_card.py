@@ -7,7 +7,8 @@ from typing import Any
 
 import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
-from frappe.utils import flt , now_datetime
+from frappe.utils import flt , now_datetime, add_days
+from frappe.utils import getdate, nowdate,formatdate
 
 
 from erpnext.manufacturing.doctype.job_card.job_card import (
@@ -219,6 +220,7 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
 def job_card_validate(doc: Document, method=None):
     validate_job_card_qty_fg_based(doc, method)
     build_tool_summary_html(doc)
+    set_previous_tool(doc)
         
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
@@ -656,3 +658,102 @@ def override_job_card_qty_validation(doc: Document, method: str | None = None) -
                 frappe.bold(max_acceptable)
             )
         )
+
+
+
+def set_previous_tool(doc):
+    if doc.custom_tool_name:
+        doc.custom_previous_tool = doc.custom_tool_name
+       
+        
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def get_filtered_tools(doctype, txt, searchfield, start, page_len, filters):
+
+    bom = filters.get("bom")
+    operation = filters.get("operation")
+    if not bom:
+        return []
+
+    conditions = " "
+    values = {
+        "bom": bom,
+        "txt": f"%{txt}%"
+    }
+
+    if operation:
+        conditions += " AND operation = %(operation)s"
+        values["operation"] = operation
+
+    return frappe.db.sql(f"""
+        SELECT DISTINCT tool
+        FROM `tabTool Child Table`
+        WHERE parent = %(bom)s
+        {conditions}
+        AND tool LIKE %(txt)s
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        **values,
+        "start": start,
+        "page_len": page_len
+    })
+
+    
+@frappe.whitelist()
+def check_tool_maintenance(tool):
+    today = getdate(nowdate())
+
+    result = frappe.db.sql("""
+        SELECT mt.start_date, mt.end_date
+        FROM `tabAsset Maintenance` am
+        JOIN `tabAsset Maintenance Task` mt
+            ON mt.parent = am.name
+        WHERE am.asset_name = %s
+          AND mt.start_date <= %s
+          AND mt.end_date >= %s
+        LIMIT 1
+    """, (tool, today, today), as_dict=True)
+
+    if result:
+        start_date = formatdate(result[0].start_date, "dd-MM-yyyy")
+        end_date = formatdate(result[0].end_date, "dd-MM-yyyy")
+        return """{0} is under maintenance <br>From {1} TO {2}""".format(
+                       frappe.bold(tool),
+                       frappe.bold(start_date),
+                       frappe.bold(end_date),)  
+        
+
+@frappe.whitelist()
+def create_tool_maintenance(tool, reason):
+
+    first_team = frappe.get_all("Asset Maintenance Team", fields=["name"], order_by="creation asc", limit=1)
+    first_team_name = ''
+    user = ''
+    
+    if first_team:
+        first_team_name = first_team[0].name
+        
+    first_member = frappe.get_all("Maintenance Team Member", filters={"parent": first_team_name}, fields=["team_member"],order_by="idx asc", limit=1)
+    if first_member:
+        user = first_member[0].team_member
+        
+    maintenance = frappe.new_doc("Asset Maintenance")
+    maintenance.asset_name = tool
+    maintenance.maintenance_team = first_team_name or " "
+    maintenance.company = frappe.defaults.get_user_default("Company")
+
+    maintenance.append("asset_maintenance_tasks", {
+        "description": f"Tool replaced. Reason: {reason}",
+        "start_date": nowdate(),
+        "end_date": add_days(nowdate(), 1),
+        "maintenance_task": 'General Mainteance',
+        "maintenance_type": 'Preventive Maintenance',
+        "maintenance_status": 'Planned',
+        "periodicity": 'Daily',
+        "assign_to": user,
+        
+    })
+
+    maintenance.insert(ignore_permissions=True)
+
+    return maintenance.name        
