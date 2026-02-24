@@ -53,10 +53,40 @@ def get_columns(filters=None):
 	]
     
 def get_data(filters=None):
-    data = []    
-    data.append({
-		'item_name': 'A',
-	})
+    if not filters:
+        filters = {}
+        
+    data = []  
+    
+    conditions = " "
+    query_filters = {}
+    
+    if filters.get("tool"):
+        conditions += " AND tct.tool = %(tool)s"
+        query_filters["tool"] = filters.get("tool")
+        
+    bom = frappe.db.sql(f"""
+        SELECT 
+            tb.item,
+            tct.tool,
+            tct.tool_load_quantity
+        FROM `tabBOM` tb
+        LEFT JOIN `tabTool Child Table` tct ON tct.parent = tb.name
+        WHERE tb.is_default = 1 {conditions}
+    """, query_filters, as_dict=True)
+
+    for i in bom:
+        data.append({
+            'indent': 0,
+            'item_name': i.item,
+        })
+        
+        data.append({
+            'indent': 1,
+            'tool': i.tool,
+            'tool_load_capacity_qty': i.tool_load_quantity,
+        })
+   
     
     return data
         

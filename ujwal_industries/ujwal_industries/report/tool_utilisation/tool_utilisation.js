@@ -19,5 +19,19 @@ frappe.query_reports["Tool Utilisation"] = {
             label: __("To Date"),
             fieldtype: "Date",
         },
-	]	
+	],
+
+    tree: true,
+    initial_depth: 0,
+    
+    formatter(value, row, column, data, default_formatter) {
+        value = default_formatter(value, row, column, data);
+        if (!data) return value;
+
+        if (data.indent === 0) {
+            value = `<b>${value}</b>`;
+        }
+
+        return value;
+    },
 };
