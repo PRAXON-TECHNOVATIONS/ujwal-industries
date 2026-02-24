@@ -14,6 +14,52 @@ from erpnext.manufacturing.doctype.job_card.job_card import (
     make_time_log as _original_make_time_log,
 )
 
+def build_tool_summary_html(doc):
+    """
+    Build tool-wise produced quantity summary
+    from Job Card Time Logs and render HTML table.
+    """
+    tool_qty_map = {}
+
+    for tl in doc.time_logs or []:
+        if not tl.custom_tool:
+            continue
+
+        qty = flt(tl.completed_qty or 0)
+        tool_qty_map.setdefault(tl.custom_tool, 0)
+        tool_qty_map[tl.custom_tool] += qty
+
+    if not tool_qty_map:
+        doc.custom_tool_summary = ""
+        return
+
+    # Build HTML
+    html = """
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th style="width:70%">Tool</th>
+                <th style="width:30%; text-align:right">Produced Qty</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+
+    for tool, qty in tool_qty_map.items():
+        html += f"""
+            <tr>
+                <td>{tool}</td>
+                <td style="text-align:right">{qty}</td>
+            </tr>
+        """
+
+    html += """
+        </tbody>
+    </table>
+    """
+
+    doc.custom_tool_summary = html
+
 # HELPER – FG AVAILABILITY
 def get_fg_availability_internal(work_order: str, exclude_job_card: str | None = None):
     if not work_order:
@@ -66,7 +112,10 @@ def make_time_log_with_material_check(args):
         
     if status in ("Work In Progress", "Resume Job"):
         jc = frappe.get_doc("Job Card", job_card_id)
-
+        
+        if jc.custom_tool_name:
+            args["custom_tool"] = jc.custom_tool_name
+            
         if jc.work_order:
             # Transferred FG from Work Order
             wo = frappe.get_doc("Work Order", jc.work_order)
@@ -111,9 +160,23 @@ def make_time_log_with_material_check(args):
                     to resume or start this Job Card.
                     """
                 )
+    result = _original_make_time_log(args)
+    jc = frappe.get_doc("Job Card", job_card_id)
 
-    return _original_make_time_log(args)
+    if jc.time_logs:
+        last_row = jc.time_logs[-1]
 
+        if jc.custom_tool_name and not last_row.custom_tool:
+            frappe.db.set_value(
+                "Job Card Time Log",
+                last_row.name,
+                "custom_tool",
+                jc.custom_tool_name,
+                update_modified=False
+            )
+
+    return result
+    
 # JOB CARD SAVE - VALIDATION
 
 def validate_job_card_qty_fg_based(doc: Document, method=None):
@@ -154,7 +217,8 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
         )
 
 def job_card_validate(doc: Document, method=None):
-    validate_job_card_qty_fg_based(doc, method)\
+    validate_job_card_qty_fg_based(doc, method)
+    build_tool_summary_html(doc)
         
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
@@ -171,7 +235,7 @@ def _create_job_card_downtime(job_card, pause_reason):
     if exists:
         return
 
-    # 🔑 get operator from time log where pause_reason = Downtime
+    #  get operator from time log where pause_reason = Downtime
     operator = None
     for tl in reversed(job_card.time_logs or []):
         if tl.custom_pause_reason == "Downtime":
@@ -189,7 +253,7 @@ def _create_job_card_downtime(job_card, pause_reason):
     d.custom_job_card = job_card.name
     d.operator = operator
 
-    # 🔥 MOST IMPORTANT LINE
+    #  MOST IMPORTANT LINE
     d.flags.ignore_mandatory = True
 
     d.insert(ignore_permissions=True)
