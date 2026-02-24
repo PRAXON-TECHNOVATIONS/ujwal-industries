@@ -2,6 +2,71 @@
 // Custom overrides for Job Card
 
 frappe.ui.form.on("Job Card", {
+	onload(frm) {
+		if (!frm.is_new()) {
+			render_tool_summary(frm);
+		}
+	},
+
+	refresh(frm) {
+		if (!frm.is_new()) {
+			render_tool_summary(frm);
+		}
+	}
+});
+
+function render_tool_summary(frm) {
+	if (!frm.fields_dict.custom_tool_summary) return;
+
+	const toolMap = {};
+
+	(frm.doc.time_logs || []).forEach(row => {
+		if (!row.custom_tool) return;
+
+		const qty = flt(row.completed_qty || 0);
+		toolMap[row.custom_tool] = (toolMap[row.custom_tool] || 0) + qty;
+	});
+
+	// No data
+	if (!Object.keys(toolMap).length) {
+		frm.fields_dict.custom_tool_summary.$wrapper.html(`
+			<div class="text-muted" style="padding: 10px;">
+				Tool summary not available yet.
+			</div>
+		`);
+		return;
+	}
+
+	let html = `
+		<div style="margin-bottom: 10px;">
+			<h4>Tool-wise Production Summary</h4>
+		</div>
+		<table class="table table-bordered table-sm">
+			<thead style="background-color: #f8f9fa;">
+				<tr>
+					<th style="width: 70%">Tool</th>
+					<th style="width: 30%; text-align: right;">Produced Qty</th>
+				</tr>
+			</thead>
+			<tbody>
+	`;
+	Object.entries(toolMap).forEach(([tool, qty]) => {
+		html += `
+			<tr>
+				<td>${tool}</td>
+				<td style="text-align: right;">${qty}</td>
+			</tr>
+		`;
+	});
+
+	html += `
+			</tbody>
+		</table>
+	`;
+	frm.fields_dict.custom_tool_summary.$wrapper.html(html);
+}
+
+frappe.ui.form.on("Job Card", {
 	refresh: function(frm) {
 		// Set Qty To Manufacture as Read Only
 		frm.set_df_property("for_quantity", "read_only", 1);

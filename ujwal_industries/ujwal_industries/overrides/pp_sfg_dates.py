@@ -366,7 +366,8 @@ def recalculate_sfg_chain_dates(
     shift_config  = _get_effective_shift_config()
     holiday_list  = shift_config.get("holiday_list")
     holidays_set  = _get_holiday_set(holiday_list)
-    shift_start_td = _as_timedelta(shift_config.get("start_time")) or timedelta(hours=10)
+    _shift_start_raw = _as_timedelta(shift_config.get("start_time"))
+    shift_start_td = _shift_start_raw if _shift_start_raw is not None else timedelta(hours=0)
     allow_backdated = _get_allow_backdated_setting()
 
     # FG item code — needed as the seed key in item_start_map
@@ -726,7 +727,8 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
     # shift_start_td is used to place Subcontract dates at the correct shift time
     # instead of midnight (00:00:00). Subcontract events (order placed / goods received)
     # happen at the start of the working day.
-    shift_start_td = _as_timedelta(shift_config.get("start_time")) or timedelta(hours=10)
+    _shift_start_raw = _as_timedelta(shift_config.get("start_time"))
+    shift_start_td = _shift_start_raw if _shift_start_raw is not None else timedelta(hours=0)
 
     allow_backdated = _get_allow_backdated_setting()
 
@@ -1168,7 +1170,8 @@ def recalculate_sfg_row_dates(
     shift_config    = _get_effective_shift_config()
     holiday_list    = shift_config.get("holiday_list")
     holidays_set    = _get_holiday_set(holiday_list)
-    shift_start_td  = _as_timedelta(shift_config.get("start_time")) or timedelta(hours=10)
+    _shift_start_raw = _as_timedelta(shift_config.get("start_time"))
+    shift_start_td  = _shift_start_raw if _shift_start_raw is not None else timedelta(hours=0)
     allow_backdated = _get_allow_backdated_setting()
 
     if effective_mfg_type == "Subcontract":
