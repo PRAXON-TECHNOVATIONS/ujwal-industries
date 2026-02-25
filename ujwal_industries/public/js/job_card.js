@@ -41,11 +41,13 @@ frappe.ui.form.on("Job Card", {
                         frm.set_value("custom_tool_name", null);
                     }
 					else{
+						
 						frappe.run_serially([
 							() => {
 
 									frm.set_value("custom_reason_for_tool_change", '');
 									let old_tool = frm.doc.custom_previous_tool;
+
 									let d = new frappe.ui.Dialog({
 										title: "Reason for Tool Change",
 										fields: [
@@ -67,7 +69,7 @@ frappe.ui.form.on("Job Card", {
 												reason: values.reason
 											},
 											callback: function(res) {
-												if (!res.exc) {
+												if (res && res.message) {
 													frappe.msgprint({
 													title: "Success",
 													message: "<b>Tool Maintenance Created Successfully</b>",
@@ -106,10 +108,9 @@ function render_tool_summary(frm) {
 		if (!row.custom_tool) return;
 
 		const qty = flt(row.completed_qty || 0);
-		toolMap[row.custom_tool] = (toolMap[row.custom_tool] || 0) + qty;
+		toolMap[row.custom_tool] = [(toolMap[row.custom_tool] || 0) + qty, (row.custom_tool_reason || "")];
 	});
 
-	console.log("..........",toolMap)
 	// No data
 	if (!Object.keys(toolMap).length) {
 		frm.fields_dict.custom_tool_summary.$wrapper.html(`
@@ -138,7 +139,8 @@ function render_tool_summary(frm) {
 		html += `
 			<tr>
 				<td>${tool}</td>
-				<td style="text-align: right;">${qty}</td>
+				<td style="text-align: right;">${qty[0]}</td>
+				<td style="text-align: right;">${qty[1]}</td>
 			</tr>
 		`;
 	});
