@@ -34,7 +34,7 @@ app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
-	"/assets/ujwal_industries/js/grid_custom_icons.js",
+	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
@@ -173,7 +173,7 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
 			# "ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
 			"ujwal_industries.ujwal_industries.overrides.tool_limit.fetched_default_bom",
-			"ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_maintenance",
+			# "ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_maintenance",
 		],
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",

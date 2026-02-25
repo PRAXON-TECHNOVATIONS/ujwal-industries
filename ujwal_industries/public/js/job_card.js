@@ -27,7 +27,9 @@ frappe.ui.form.on("Job Card", {
     },
 
 	custom_tool_name: function(frm) {
+
         if (frm.doc.custom_tool_name) {
+
             frappe.call({
                 method: "ujwal_industries.ujwal_industries.overrides.job_card.check_tool_maintenance",
                 args: {
@@ -107,6 +109,7 @@ function render_tool_summary(frm) {
 		toolMap[row.custom_tool] = (toolMap[row.custom_tool] || 0) + qty;
 	});
 
+	console.log("..........",toolMap)
 	// No data
 	if (!Object.keys(toolMap).length) {
 		frm.fields_dict.custom_tool_summary.$wrapper.html(`
@@ -124,8 +127,9 @@ function render_tool_summary(frm) {
 		<table class="table table-bordered table-sm">
 			<thead style="background-color: #f8f9fa;">
 				<tr>
-					<th style="width: 70%">Tool</th>
-					<th style="width: 30%; text-align: right;">Produced Qty</th>
+					<th style="width: 30%">Tool</th>
+					<th style="width: 20%; text-align: right;">Produced Qty</th>
+					<th style="width: 50%; text-align: right;">Reason for Tool Change</th>
 				</tr>
 			</thead>
 			<tbody>
