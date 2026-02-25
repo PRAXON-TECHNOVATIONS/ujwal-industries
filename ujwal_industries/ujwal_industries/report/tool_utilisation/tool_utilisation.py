@@ -1,8 +1,7 @@
-# Copyright (c) 2026, Ujjwal Aggrawal and contributors
-# For license information, please see license.txt
 
 import frappe
 from frappe import _
+from frappe.utils import nowdate
 
 def execute(filters=None):
     columns = get_columns()
@@ -17,7 +16,7 @@ def get_columns(filters=None):
             "fieldname": "item_name",
             "fieldtype": "Link",
             "options": "Item",
-            "width": 100,
+            "width": 130,
         },
         {
             "label": _("Tool"),
@@ -116,9 +115,19 @@ def get_data(filters=None):
 
             status = ''
             if tool_row.tool:
-                status = 'Open'
                 
-                maintenance_exists = frappe.db.exists("Asset Maintenance", {"asset_name": tool_row.tool,})
+                today = nowdate()
+                status = 'Open'
+                maintenance_exists = False
+                
+                maintenance_exists = frappe.db.sql("""
+                    SELECT 1
+                    FROM `tabAsset Maintenance` am
+                    INNER JOIN `tabAsset Maintenance Task` mt ON mt.parent = am.name
+                    WHERE am.asset_name = %s AND %s BETWEEN mt.start_date AND mt.end_date
+                    LIMIT 1
+                """, (tool_row.tool, today))
+
                 if maintenance_exists:
                     status = "Maintenance"
                 
@@ -156,7 +165,10 @@ def get_data(filters=None):
                                             Left join `tabProduction Plan` tpp on tpp.name = tppi.parent 
                                             WHERE tppi.bom_no = '{0}' and tpp.status in ('Not Started') """.format(tool_row.bom_name))[0][0]
              
-
+            if status == "Maintenance":
+                load_qty = tool_row.tool_load_quantity or 0
+                balance_qty = max(0, balance_qty - load_qty)
+                
             data.append({
                 "indent": 1,
                 "tool": tool_row.tool,
