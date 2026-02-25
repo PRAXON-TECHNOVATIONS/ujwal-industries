@@ -1,5 +1,3 @@
-// Copyright (c) 2026, Ujjwal Aggrawal and contributors
-// For license information, please see license.txt
 
 frappe.query_reports["Tool Utilisation"] = {
 	filters: [
@@ -21,8 +19,8 @@ frappe.query_reports["Tool Utilisation"] = {
         },
 	],
 
-    tree: true,
-    initial_depth: 0,
+    // tree: true,
+    // initial_depth: 0,
     
     formatter(value, row, column, data, default_formatter) {
         value = default_formatter(value, row, column, data);
@@ -32,6 +30,27 @@ frappe.query_reports["Tool Utilisation"] = {
             value = `<b>${value}</b>`;
         }
 
+        if (column.fieldname === "status" && data.status) {
+			let color = "";
+            switch (data.status) {
+                case "Working":
+					color = "#49ba0c";
+					break;
+                case "Maintenance":
+                    color = "#2490ef";
+					break;
+
+                case "Open":
+                    color = "#f64848";
+					break;   
+
+            }
+        value = `<span style="color:${color}; font-weight:600;">
+                        ${data.status}
+                     </span>`;    
+
+        }
+        
         return value;
     },
 };
