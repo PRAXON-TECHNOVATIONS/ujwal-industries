@@ -116,6 +116,7 @@ def make_time_log_with_material_check(args):
         
         if jc.custom_tool_name:
             args["custom_tool"] = jc.custom_tool_name
+            args["custom_tool_reason"] = jc.custom_reason_for_tool_change
             
         if jc.work_order:
             # Transferred FG from Work Order
@@ -168,13 +169,8 @@ def make_time_log_with_material_check(args):
         last_row = jc.time_logs[-1]
 
         if jc.custom_tool_name and not last_row.custom_tool:
-            frappe.db.set_value(
-                "Job Card Time Log",
-                last_row.name,
-                "custom_tool",
-                jc.custom_tool_name,
-                update_modified=False
-            )
+            frappe.db.set_value("Job Card Time Log", last_row.name, "custom_tool", jc.custom_tool_name, update_modified=False)
+            frappe.db.set_value("Job Card Time Log", last_row.name, "custom_tool_reason", jc.custom_reason_for_tool_change, update_modified=False)
 
     return result
     
@@ -725,35 +721,38 @@ def check_tool_maintenance(tool):
 
 @frappe.whitelist()
 def create_tool_maintenance(tool, reason):
-
-    first_team = frappe.get_all("Asset Maintenance Team", fields=["name"], order_by="creation asc", limit=1)
-    first_team_name = ''
-    user = ''
+    if not tool:
+        return
     
-    if first_team:
-        first_team_name = first_team[0].name
+    else:
+        first_team = frappe.get_all("Asset Maintenance Team", fields=["name"], order_by="creation asc", limit=1)
+        first_team_name = ''
+        user = ''
         
-    first_member = frappe.get_all("Maintenance Team Member", filters={"parent": first_team_name}, fields=["team_member"],order_by="idx asc", limit=1)
-    if first_member:
-        user = first_member[0].team_member
-        
-    maintenance = frappe.new_doc("Asset Maintenance")
-    maintenance.asset_name = tool
-    maintenance.maintenance_team = first_team_name or " "
-    maintenance.company = frappe.defaults.get_user_default("Company")
+        if first_team:
+            first_team_name = first_team[0].name
+            
+        first_member = frappe.get_all("Maintenance Team Member", filters={"parent": first_team_name}, fields=["team_member"],order_by="idx asc", limit=1)
+        if first_member:
+            user = first_member[0].team_member
+            
+        maintenance = frappe.new_doc("Asset Maintenance")
+        maintenance.asset_name = tool
+        maintenance.maintenance_team = first_team_name or " "
+        maintenance.company = frappe.defaults.get_user_default("Company")
 
-    maintenance.append("asset_maintenance_tasks", {
-        "description": f"Tool replaced. Reason: {reason}",
-        "start_date": nowdate(),
-        "end_date": add_days(nowdate(), 1),
-        "maintenance_task": 'General Mainteance',
-        "maintenance_type": 'Preventive Maintenance',
-        "maintenance_status": 'Planned',
-        "periodicity": 'Daily',
-        "assign_to": user,
-        
-    })
+        maintenance.append("asset_maintenance_tasks", {
+            "description": f"Tool replaced. Reason: {reason}",
+            "start_date": nowdate(),
+            "end_date": add_days(nowdate(), 1),
+            "maintenance_task": 'General Mainteance',
+            "maintenance_type": 'Preventive Maintenance',
+            "maintenance_status": 'Planned',
+            "periodicity": 'Daily',
+            "assign_to": user,
+            
+        })
 
-    maintenance.insert(ignore_permissions=True)
+        maintenance.insert(ignore_permissions=True)
 
-    return maintenance.name        
+        return maintenance.name        
