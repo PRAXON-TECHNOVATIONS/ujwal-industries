@@ -15,6 +15,51 @@ from erpnext.manufacturing.doctype.job_card.job_card import (
     make_time_log as _original_make_time_log,
 )
 
+def _is_workstation_under_maintenance(workstation: str) -> str | None:
+    """
+    Check if workstation's linked Asset is under maintenance.
+    Returns message if under maintenance else None.
+    """
+
+    if not workstation:
+        return None
+
+    # 1️⃣ Get linked Asset from Workstation
+    asset = frappe.db.get_value(
+        "Workstation",
+        workstation,
+        "custom_asset_name"
+    )
+
+    if not asset:
+        return None
+
+    today = getdate(nowdate())
+
+    # 2️⃣ Check maintenance schedule
+    result = frappe.db.sql("""
+        SELECT mt.start_date, mt.end_date
+        FROM `tabAsset Maintenance` am
+        JOIN `tabAsset Maintenance Task` mt
+            ON mt.parent = am.name
+        WHERE am.asset_name = %s
+          AND mt.start_date <= %s
+          AND mt.end_date >= %s
+        LIMIT 1
+    """, (asset, today, today), as_dict=True)
+
+    if result:
+        start_date = formatdate(result[0].start_date, "dd-MM-yyyy")
+        end_date = formatdate(result[0].end_date, "dd-MM-yyyy")
+
+        return f"""
+        Workstation <b>{workstation}</b> is under Preventive Maintenance<br>
+        Linked Asset: <b>{asset}</b><br>
+        From <b>{start_date}</b> To <b>{end_date}</b>
+        """
+
+    return None
+
 def build_tool_summary_html(doc):
     """
     Build tool-wise produced quantity summary
@@ -214,6 +259,12 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
         )
 
 def job_card_validate(doc: Document, method=None):
+    message = _is_workstation_under_maintenance(doc.workstation)
+    if message:
+        frappe.throw(
+            title="Workstation Under Maintenance",
+            msg=message
+    )
     validate_job_card_qty_fg_based(doc, method)
     build_tool_summary_html(doc)
     set_previous_tool(doc)
