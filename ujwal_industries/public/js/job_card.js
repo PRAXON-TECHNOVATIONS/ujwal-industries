@@ -27,7 +27,8 @@ frappe.ui.form.on("Job Card", {
     },
 
 	custom_tool_name: function(frm) {
-
+		//  1. Check if Tool Is on Maintanance Period 
+		//  2. Pop Option to Add Reson for changes Tool 
         if (frm.doc.custom_tool_name) {
 
             frappe.call({
@@ -37,61 +38,63 @@ frappe.ui.form.on("Job Card", {
                 },
                 callback: function(r) {
                     if (r.message) {
+						//  1. Check if Tool Is on Maintanance Period 
                         frappe.msgprint(r.message);
                         frm.set_value("custom_tool_name", null);
                     }
 					else{
-						
-						frappe.run_serially([
-							() => {
+						//  2. Check If Privious Tool added then Pop Option to Add Reson for changes Tool
+						if(frm.doc.custom_previous_tool){
+							frappe.run_serially([
+								() => {
 
-									frm.set_value("custom_reason_for_tool_change", '');
-									let old_tool = frm.doc.custom_previous_tool;
+										frm.set_value("custom_reason_for_tool_change", '');
+										let old_tool = frm.doc.custom_previous_tool;
 
-									let d = new frappe.ui.Dialog({
-										title: "Reason for Tool Change",
-										fields: [
-											{
-												label: "Reason",
-												fieldname: "reason",
-												fieldtype: "Small Text",
-												reqd: 1
-											}
-										],
-										primary_action_label: "Submit",
-										primary_action(values) {
-											frm.set_value("custom_reason_for_tool_change", values.reason);
-
-											frappe.call({
-											method: "ujwal_industries.ujwal_industries.overrides.job_card.create_tool_maintenance",
-											args: {
-												tool: old_tool,
-												reason: values.reason
-											},
-											callback: function(res) {
-												if (res && res.message) {
-													frappe.msgprint({
-													title: "Success",
-													message: "<b>Tool Maintenance Created Successfully</b>",
-													indicator: "green"
-													});
+										let d = new frappe.ui.Dialog({
+											title: "Reason for Tool Change",
+											fields: [
+												{
+													label: "Reason",
+													fieldname: "reason",
+													fieldtype: "Small Text",
+													reqd: 1
 												}
-											},
+											],
+											primary_action_label: "Submit",
+											primary_action(values) {
+												frm.set_value("custom_reason_for_tool_change", values.reason);
+
+												frappe.call({
+												method: "ujwal_industries.ujwal_industries.overrides.job_card.create_tool_maintenance",
+												args: {
+													tool: old_tool,
+													reason: values.reason
+												},
+												callback: function(res) {
+													if (res && res.message) {
+														frappe.msgprint({
+														title: "Success",
+														message: "<b>Tool Maintenance Created Successfully</b>",
+														indicator: "green"
+														});
+													}
+												},
+											});
+
+												d.hide();
+											}
 										});
-
-											d.hide();
-										}
-									});
-									d.show();
-							},
+										d.show();
+								},
 
 
-							() => {
-								frm.refresh()
+								() => {
+									frm.refresh()
 
-							}
-						])
-						
+								}
+							])
+					}
 					}
                 }
             });

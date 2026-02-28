@@ -345,19 +345,41 @@ function setup_production_tabs(frm) {
 }
 
 
-function _duration_label(start_str, end_str) {
-	/* Returns a human-readable duration string like "~1.8 days" or "4h 20m" */
-	if (!start_str || !end_str) return '';
-	const s = new Date(start_str);
-	const e = new Date(end_str);
-	const diff_min = Math.round((e - s) / 60000);
-	if (isNaN(diff_min) || diff_min <= 0) return '';
-	if (diff_min >= 1440) {
-		return '~' + (diff_min / 1440).toFixed(1) + ' days';
-	}
-	const h = Math.floor(diff_min / 60);
-	const m = diff_min % 60;
-	return h ? h + 'h ' + m + 'm' : m + 'm';
+
+function _duration_label(start_str, end_str, bom) {
+
+    var tool_min = 0;
+
+    frappe.call({
+        method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_tool_days',
+        args: {
+            bom: bom
+        },
+        async: false, 
+        callback: function (r) {
+            if (!r.exc) {
+                tool_min = r.message || 0;
+            }
+        }
+    });
+
+    if (!start_str || !end_str) return '';
+
+    const s = new Date(start_str);
+    const e = new Date(end_str);
+
+    const diff_min = Math.round((e - s) / 60000) + tool_min;
+
+    if (isNaN(diff_min) || diff_min <= 0) return '';
+
+    if (diff_min >= 1440) {
+        return '~' + (diff_min / 1440).toFixed(1) + ' days';
+    }
+
+    const h = Math.floor(diff_min / 60);
+    const m = diff_min % 60;
+
+    return h ? h + 'h ' + m + 'm' : m + 'm';
 }
 
 function render_fg_table(items) {
@@ -383,7 +405,8 @@ function render_fg_table(items) {
 	`;
 
 	items.forEach(function(item) {
-		const dur = _duration_label(item.planned_start_date, item.custom_planned_end_date);
+		const dur =_duration_label(item.planned_start_date, item.custom_planned_end_date, item.bom_no);
+
 		const logic_html = `
 			<small class="text-muted">
 				Backward from delivery date<br>
@@ -437,7 +460,7 @@ function render_sfg_table(items) {
 	`;
 
 	items.forEach(function(item) {
-		const dur = _duration_label(item.schedule_date, item.custom_schedule_end_date);
+		const dur = _duration_label(item.schedule_date, item.custom_schedule_end_date, item.bom_no);
 		const is_inhouse = (item.type_of_manufacturing || 'In House') === 'In House';
 		const parent_note = item.parent_item_code
 			? '← from <strong>' + item.parent_item_code + '</strong> start'
