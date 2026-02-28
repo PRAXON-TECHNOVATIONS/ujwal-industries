@@ -1446,6 +1446,6 @@ function render_bulk_pp_sidebar(frm, data) {
 	`;
 
 	// Add to sidebar - remove existing first to avoid duplicates
-	$(frm.wrapper).find('.form-sidebar .bulk-pp-sidebar-info').remove();
+	$(frm.wrapper).find('.form-sidebar .bulk-pp-sidebar-info').remove();	
 	$(frm.wrapper).find('.form-sidebar .sidebar-menu').first().before(html);
 }

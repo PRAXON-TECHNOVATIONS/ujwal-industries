@@ -474,6 +474,18 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 		]
 	}
 
+@frappe.whitelist()
+def get_tool_days(bom):
+    bom_doc = frappe.get_doc("BOM", bom)
+    tool_min = 0
+    if bom_doc.custom_tool_details:
+        for i in bom_doc.custom_tool_details:
+            if i.is_default:
+                tool = frappe.get_doc("Asset",i.tool)
+                tool_min += tool.custom_required_maintenance_days * 1440
+                
+    return tool_min
+ 
 
 @frappe.whitelist()
 def generate_production_plan_items(docname: str) -> dict[str, Any]:
