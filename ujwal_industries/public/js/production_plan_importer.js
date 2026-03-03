@@ -40,6 +40,8 @@ let _opt_shift_wise = false; // enable_shift_wise_scheduling
 let _opt_backdated  = false; // allow_backdated_planned_start_date
 let _opt_shift_type = "";    // selected shift type name
 let _shift_types    = [];    // all Shift Type names fetched once
+let _opt_parallel   = false; // allow_parallel_planning
+let _is_reloading_pp = false; // prevents stale HOT flush during DB refresh
 
 // ─── Form events ───────────────────────────────────────────────────────────
 frappe.ui.form.on("Production Plan Importer", {
@@ -114,29 +116,31 @@ function _build_layout(frm) {
 					</span>
 				</div>
 
-				<!-- FG Items Section -->
-				<div class="ppi-section-hdr ppi-section-hdr--fg">
-					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="5" height="5" rx="1"/><rect x="0" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
-					${__("FG Items")}
-					<span class="ppi-badge" id="ppi-badge-fg">—</span>
-				</div>
-				<div class="ppi-hot-wrap" id="ppi-hot-fg"></div>
+				<div class="ppi-overlay-zone" id="ppi-overlay-zone">
+					<!-- FG Items Section -->
+					<div class="ppi-section-hdr ppi-section-hdr--fg">
+						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="5" height="5" rx="1"/><rect x="0" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
+						${__("FG Items")}
+						<span class="ppi-badge" id="ppi-badge-fg">—</span>
+					</div>
+					<div class="ppi-hot-wrap" id="ppi-hot-fg"></div>
 
-				<!-- Sub Assembly Section -->
-				<div class="ppi-section-hdr ppi-section-hdr--sfg">
-					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0l6 3.5v5L6 12 0 8.5v-5z"/></svg>
-					${__("Sub Assembly")}
-					<span class="ppi-badge" id="ppi-badge-sfg">—</span>
-				</div>
-				<div class="ppi-hot-wrap" id="ppi-hot-sfg"></div>
+					<!-- Sub Assembly Section -->
+					<div class="ppi-section-hdr ppi-section-hdr--sfg">
+						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0l6 3.5v5L6 12 0 8.5v-5z"/></svg>
+						${__("Sub Assembly")}
+						<span class="ppi-badge" id="ppi-badge-sfg">—</span>
+					</div>
+					<div class="ppi-hot-wrap" id="ppi-hot-sfg"></div>
 
-				<!-- MR Items Section -->
-				<div class="ppi-section-hdr ppi-section-hdr--mr">
-					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="12" height="3" rx="1"/><rect x="0" y="4.5" width="12" height="3" rx="1"/><rect x="0" y="9" width="12" height="3" rx="1"/></svg>
-					${__("MR Items")}
-					<span class="ppi-badge" id="ppi-badge-mr">—</span>
+					<!-- MR Items Section -->
+					<div class="ppi-section-hdr ppi-section-hdr--mr">
+						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="12" height="3" rx="1"/><rect x="0" y="4.5" width="12" height="3" rx="1"/><rect x="0" y="9" width="12" height="3" rx="1"/></svg>
+						${__("MR Items")}
+						<span class="ppi-badge" id="ppi-badge-mr">—</span>
+					</div>
+					<div class="ppi-hot-wrap" id="ppi-hot-mr"></div>
 				</div>
-				<div class="ppi-hot-wrap" id="ppi-hot-mr"></div>
 
 			</div>
 		</div>
@@ -181,6 +185,12 @@ function _build_layout(frm) {
 		const old = _opt_backdated;
 		_opt_backdated = this.checked;
 		_log_setting("backdated", old ? "1" : "0", _opt_backdated ? "1" : "0");
+	});
+	$root.on("change", "#ppi-parallel-check", function () {
+		const old = _opt_parallel;
+		_opt_parallel = this.checked;
+		_log_setting("parallel", old ? "1" : "0", _opt_parallel ? "1" : "0");
+		if (_current_pp && _pp_data[_current_pp]) _rebuild_all_tables();
 	});
 	$root.on("change", "#ppi-shift-type-input", function () {
 		const old = _opt_shift_type;
@@ -231,6 +241,10 @@ function _render_editbar($root) {
 		<label class="ppi-opt-check-wrap">
 			<input type="checkbox" id="ppi-backdated-check" ${_opt_backdated ? "checked" : ""}>
 			<span class="ppi-opt-label">${__("Allow Backdated")}</span>
+		</label>
+		<label class="ppi-opt-check-wrap">
+			<input type="checkbox" id="ppi-parallel-check" ${_opt_parallel ? "checked" : ""}>
+			<span class="ppi-opt-label">${__("Allow Parallel Planning")}</span>
 		</label>
 		${shiftWrap}
 	`);
@@ -423,22 +437,25 @@ function _switch_pp(pp_name) {
 	// Populate HOT instances
 	if (_hot_fg) {
 		_hot_fg.loadData(data.po_items || []);
+		_hot_fg.updateSettings({ columns: _cols_for("fg"), colHeaders: _cols_for("fg").map(c => c.title) });
 	} else {
-		_hot_fg = _make_hot("ppi-hot-fg", data.po_items || [], _FG_COLS,
+		_hot_fg = _make_hot("ppi-hot-fg", data.po_items || [], _cols_for("fg"),
 			{ tableKey: "fg",  itemCodeField: "item_code",       supplierField: "custom_supplier", mfgTypeField: "custom_manufacturing_type" });
 	}
 
 	if (_hot_sfg) {
 		_hot_sfg.loadData(data.sfg_items || []);
+		_hot_sfg.updateSettings({ columns: _cols_for("sfg"), colHeaders: _cols_for("sfg").map(c => c.title) });
 	} else {
-		_hot_sfg = _make_hot("ppi-hot-sfg", data.sfg_items || [], _SFG_COLS,
+		_hot_sfg = _make_hot("ppi-hot-sfg", data.sfg_items || [], _cols_for("sfg"),
 			{ tableKey: "sfg", itemCodeField: "production_item", supplierField: "supplier",        mfgTypeField: "type_of_manufacturing" });
 	}
 
 	if (_hot_mr) {
 		_hot_mr.loadData(data.mr_items || []);
+		_hot_mr.updateSettings({ columns: _cols_for("mr"), colHeaders: _cols_for("mr").map(c => c.title) });
 	} else {
-		_hot_mr = _make_hot("ppi-hot-mr", data.mr_items || [], _MR_COLS,
+		_hot_mr = _make_hot("ppi-hot-mr", data.mr_items || [], _cols_for("mr"),
 			{ tableKey: "mr",  itemCodeField: "item_code",       supplierField: "custom_supplier" });
 	}
 
@@ -461,6 +478,17 @@ function _re_render_active_hot() {
 	[_hot_fg, _hot_sfg, _hot_mr].forEach(h => { if (h) h.render(); });
 }
 
+function _rebuild_all_tables() {
+	if (!_current_pp || !_pp_data[_current_pp]) return;
+	const fgCols = _cols_for("fg");
+	const sfgCols = _cols_for("sfg");
+	const mrCols = _cols_for("mr");
+	if (_hot_fg)  _hot_fg.updateSettings({ columns: fgCols,  colHeaders: fgCols.map(c => c.title) });
+	if (_hot_sfg) _hot_sfg.updateSettings({ columns: sfgCols, colHeaders: sfgCols.map(c => c.title) });
+	if (_hot_mr)  _hot_mr.updateSettings({ columns: mrCols,  colHeaders: mrCols.map(c => c.title) });
+	_re_render_active_hot();
+}
+
 // ─── Renderers ─────────────────────────────────────────────────────────────
 // Strips the time portion so MR Date fields show only YYYY-MM-DD.
 function _dateOnlyRenderer(hotInstance, TD, row, col, prop, value, cellProperties) {
@@ -475,6 +503,13 @@ function _dateOnlyRenderer(hotInstance, TD, row, col, prop, value, cellPropertie
 // Columns whose data key starts with "_actual_" are styled as ppi-actual-col.
 
 const _MFG_TYPES = ["In House", "Subcontract"];
+const _SPLIT_COL = {
+	data: "split_action",
+	title: "Split",
+	readOnly: true,
+	width: 70,
+	renderer: _getSplitButtonRenderer()
+};
 
 const _FG_COLS = [
 	{ data: "name",                           title: "Row ID",        readOnly: true,  width: 120 },
@@ -514,6 +549,22 @@ const _MR_COLS = [
 	{ data: "_actual_schedule_date",     title: "Saved Req By", readOnly: true,  width: 140, renderer: _dateOnlyRenderer },
 	{ data: "custom_supplier",           title: "Supplier",        readOnly: false, width: 160 },
 ];
+
+function _getSplitButtonRenderer() {
+	return function(hotInstance, TD) {
+		TD.innerHTML = '<button class="ppi-split-btn">Split</button>';
+		TD.style.padding = "0";
+		TD.style.textAlign = "center";
+	};
+}
+
+function _cols_for(tableKey) {
+	const base = tableKey === "fg" ? _FG_COLS : (tableKey === "sfg" ? _SFG_COLS : _MR_COLS);
+	if (!_opt_parallel) return base;
+	const cols = base.slice();
+	cols.splice(4, 0, { ..._SPLIT_COL });
+	return cols;
+}
 
 // ─── Cross-table row linkage ───────────────────────────────────────────────
 // Flow: FG.name → SFG.production_plan_item → (via FG.sales_order) → MR.sales_order
@@ -629,6 +680,35 @@ function _validate_hot_datetime(val) {
 function _fmt_dt(dt) {
 	const p = n => String(n).padStart(2, "0");
 	return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}:${p(dt.getSeconds())}`;
+}
+
+function _fmt_date(dt) {
+	const p = n => String(n).padStart(2, "0");
+	return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+
+function _parse_dt(v) {
+	if (!v) return null;
+	const s = String(v).trim();
+	if (!s) return null;
+	if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T00:00:00`);
+	const d = new Date(s.replace(" ", "T"));
+	return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function _format_like(original, dt) {
+	const s = String(original || "");
+	return s.length > 10 ? _fmt_dt(dt) : _fmt_date(dt);
+}
+
+function _sanitize_parallel_row(row) {
+	const out = {};
+	Object.keys(row || {}).forEach(k => {
+		if (k === "split_action") return;
+		if (k.startsWith("_")) return;
+		out[k] = row[k];
+	});
+	return out;
 }
 
 // ─── Date cascade functions ────────────────────────────────────────────────
@@ -1144,6 +1224,22 @@ function _make_hot(container_id, data, columns, opts) {
 			});
 		},
 
+		afterOnCellMouseDown(event, coords) {
+			if (!_opt_parallel || !coords || coords.row < 0 || coords.col < 0) return;
+			const ppDoc = _current_pp && _pp_data[_current_pp];
+			const docstatus = ppDoc ? (ppDoc.docstatus || 0) : 0;
+			const useExcel = _current_pp ? (_pp_use_excel[_current_pp] === true) : false;
+			const isImported = _current_pp && _pp_imported[_current_pp] && _pp_imported[_current_pp].ok;
+			if (docstatus !== 0 || useExcel || isImported) return;
+			const colDef = columns[coords.col];
+			if (!colDef || colDef.data !== "split_action") return;
+			if (event) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+			_show_split_dialog(coords.row, (opts && opts.tableKey) || "fg");
+		},
+
 		// Cross-table linkage: highlight linked rows in all 3 tables on row select/deselect
 		afterSelectionEnd(row) {
 			if (row >= 0) _update_links((opts && opts.tableKey) || "fg", row);
@@ -1293,6 +1389,7 @@ function _replay_log_from_server() {
 					if      (entry.field_name === "shift_wise") { _opt_shift_wise = v === "1"; settings_restored = true; }
 					else if (entry.field_name === "backdated")  { _opt_backdated  = v === "1"; settings_restored = true; }
 					else if (entry.field_name === "shift_type") { _opt_shift_type = v;          settings_restored = true; }
+					else if (entry.field_name === "parallel")   { _opt_parallel   = v === "1"; settings_restored = true; }
 				} else {
 					if (entry.field_name === "use_excel" && _pp_data[entry.pp_name] !== undefined) {
 						_pp_use_excel[entry.pp_name] = v === "1";
@@ -1402,7 +1499,7 @@ function _apply_to_pp() {
 			importer_doc:         _frm_ref.doc.name,
 			production_plan_name: pp_name,
 			po_items_data: JSON.stringify(
-				(data.po_items || []).map(r => ({
+				(data.po_items || []).map(r => _opt_parallel ? _sanitize_parallel_row(r) : ({
 					name:                      r.name,
 					planned_start_date:        r.planned_start_date        || null,
 					custom_planned_end_date:   r.custom_planned_end_date   || null,
@@ -1411,7 +1508,7 @@ function _apply_to_pp() {
 				}))
 			),
 			sfg_data: JSON.stringify(
-				(data.sfg_items || []).map(r => ({
+				(data.sfg_items || []).map(r => _opt_parallel ? _sanitize_parallel_row(r) : ({
 					name:                     r.name,
 					schedule_date:            r.schedule_date            || null,
 					custom_schedule_end_date: r.custom_schedule_end_date || null,
@@ -1420,7 +1517,7 @@ function _apply_to_pp() {
 				}))
 			),
 			mr_data: JSON.stringify(
-				(data.mr_items || []).map(r => ({
+				(data.mr_items || []).map(r => _opt_parallel ? _sanitize_parallel_row(r) : ({
 					name:              r.name,
 					custom_start_date: r.custom_start_date || null,
 					schedule_date:     r.schedule_date     || null,
@@ -1486,24 +1583,28 @@ function _update_importer_status() {
 // editing again — _pp_imported entry is cleared on next HOT edit).
 function _update_import_state(pp_name) {
 	const imp = _pp_imported[pp_name];
+	const overlayZone = document.getElementById("ppi-overlay-zone");
 
 	["fg", "sfg", "mr"].forEach(sec => {
 		const wrap = document.getElementById(`ppi-hot-${sec}`);
 		if (!wrap) return;
-		// Remove previous import overlay (keep submitted/cancelled overlay if present)
+		// Clear any old per-table import overlays.
 		wrap.querySelectorAll(".ppi-import-overlay").forEach(el => el.remove());
-		if (!imp) return;
-
-		const ov = document.createElement("div");
-		ov.className = imp.ok
-			? "ppi-doc-overlay ppi-import-overlay ppi-doc-overlay--imported"
-			: "ppi-doc-overlay ppi-import-overlay ppi-doc-overlay--import-error";
-		ov.innerHTML = imp.ok
-			? `<span class="ppi-doc-overlay-badge">${__("Imported")}</span>`
-			: `<span class="ppi-doc-overlay-badge">${__("Import Failed")}</span>` +
-			  `<p class="ppi-overlay-error-msg">${frappe.utils.escape_html(imp.error || "")}</p>`;
-		wrap.appendChild(ov);
 	});
+	if (overlayZone) {
+		overlayZone.querySelectorAll(".ppi-global-import-overlay").forEach(el => el.remove());
+		if (imp) {
+			const ov = document.createElement("div");
+			ov.className = imp.ok
+				? "ppi-doc-overlay ppi-global-import-overlay ppi-doc-overlay--imported"
+				: "ppi-doc-overlay ppi-global-import-overlay ppi-doc-overlay--import-error";
+			ov.innerHTML = imp.ok
+				? `<span class="ppi-doc-overlay-badge">${__("Imported")}</span>`
+				: `<span class="ppi-doc-overlay-badge">${__("Import Failed")}</span>` +
+				  `<p class="ppi-overlay-error-msg">${frappe.utils.escape_html(imp.error || "")}</p>`;
+			overlayZone.appendChild(ov);
+		}
+	}
 
 	// Re-render so cells() picks up the new imported state (makes all cells readonly)
 	[_hot_fg, _hot_sfg, _hot_mr].forEach(h => { if (h) h.render(); });
@@ -1580,4 +1681,127 @@ function _clear_pp_log(pp_name) {
 		method: "ujwal_industries.ujwal_industries.overrides.pp_mr_dates.clear_hot_log",
 		args: { pp_names: JSON.stringify([pp_name]) },
 	});
+}
+
+// ─── Split row functionality (parallel planning only) ─────────────────────
+function _show_split_dialog(rowIdx, tableKey) {
+	let hotInstance, qtyField, itemField, startDateField, endDateField;
+
+	if (tableKey === "fg") {
+		hotInstance = _hot_fg;
+		qtyField = "planned_qty";
+		itemField = "item_code";
+		startDateField = "planned_start_date";
+		endDateField = "custom_planned_end_date";
+	} else if (tableKey === "mr") {
+		hotInstance = _hot_mr;
+		qtyField = "quantity";
+		itemField = "item_code";
+		startDateField = "custom_start_date";
+		endDateField = "schedule_date";
+	} else {
+		hotInstance = _hot_sfg;
+		qtyField = "qty";
+		itemField = "production_item";
+		startDateField = "schedule_date";
+		endDateField = "custom_schedule_end_date";
+	}
+
+	if (!hotInstance) return;
+	const row = (hotInstance.getSourceData() || [])[rowIdx];
+	if (!row) return;
+
+	const totalQty = parseFloat(row[qtyField]) || 0;
+	const startDate = row[startDateField];
+	const endDate = row[endDateField];
+	const itemName = row[itemField];
+	const defaultQty = Math.round((totalQty / 2) * 1000) / 1000;
+
+	const d = new frappe.ui.Dialog({
+		title: __("Split Row - " + itemName),
+		fields: [
+			{
+				fieldname: "info",
+				fieldtype: "HTML",
+				options: `<p><strong>Item:</strong> ${itemName}</p>
+					<p><strong>Total Qty:</strong> ${totalQty}</p>
+					<p><strong>Start Date:</strong> ${startDate || "-"}</p>
+					<p><strong>End Date:</strong> ${endDate || "-"}</p>`
+			},
+			{ fieldname: "qty_1", fieldtype: "Float", label: "Qty 1st Row", reqd: 1, default: defaultQty },
+			{ fieldname: "qty_2", fieldtype: "Float", label: "Qty 2nd Row", reqd: 1, default: Math.max(0, totalQty - defaultQty), read_only: 1 },
+		],
+		primary_action_label: __("Apply Split"),
+		primary_action(values) {
+			const q1 = parseFloat(values.qty_1) || 0;
+			const q2 = parseFloat(values.qty_2) || 0;
+			if (q1 <= 0 || q2 <= 0) {
+				frappe.show_alert({ message: __("Both split quantities must be greater than zero."), indicator: "orange" });
+				return;
+			}
+			_apply_split(rowIdx, q1, q2, startDate, endDate, tableKey, qtyField, startDateField, endDateField);
+			d.hide();
+		}
+	});
+
+	const updateQty2 = function() {
+		const qty1 = parseFloat(d.fields_dict.qty_1.get_value()) || 0;
+		d.set_value("qty_2", Math.max(0, totalQty - qty1));
+	};
+	d.fields_dict.qty_1.$input.on("change", updateQty2).on("keyup", updateQty2).on("input", updateQty2);
+	d.show();
+}
+
+function _apply_split(rowIdx, qty1, qty2, startDate, endDate, tableKey, qtyField, startDateField, endDateField) {
+	let hotInstance = tableKey === "fg" ? _hot_fg : (tableKey === "mr" ? _hot_mr : _hot_sfg);
+	if (!hotInstance) return;
+
+	const hotData = (hotInstance.getSourceData() || []).map(r => ({ ...r }));
+	const originalRow = hotData[rowIdx];
+	if (!originalRow) return;
+
+	const originalQty = parseFloat(originalRow[qtyField]) || 0;
+	const totalQty = qty1 + qty2;
+	if (Math.abs(totalQty - originalQty) > 0.01) {
+		frappe.show_alert({ message: __("Sum of split quantities must equal original quantity"), indicator: "red" });
+		return;
+	}
+
+	let end1Str = endDate || "";
+	let start2Str = startDate || "";
+	const startObj = _parse_dt(startDate);
+	const endObj = _parse_dt(endDate);
+	if (startObj && endObj && endObj.getTime() > startObj.getTime()) {
+		const totalMs = endObj.getTime() - startObj.getTime();
+		const splitRatio = qty1 / (qty1 + qty2);
+		const firstMs = Math.max(0, Math.round(totalMs * splitRatio));
+		const end1Obj = new Date(startObj.getTime() + firstMs);
+		const start2Obj = new Date(end1Obj.getTime() + 1000);
+		end1Str = _format_like(endDate, end1Obj);
+		start2Str = _format_like(startDate, start2Obj);
+	}
+
+	hotData[rowIdx][qtyField] = qty1;
+	if (startDate && startDateField) hotData[rowIdx][startDateField] = startDate;
+	if (end1Str && endDateField) hotData[rowIdx][endDateField] = end1Str;
+
+	const newRow = {
+		...originalRow,
+		[qtyField]: qty2,
+		split_source_name: originalRow.split_source_name || originalRow.name,
+		name: `new_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+	};
+	if (start2Str && startDateField) newRow[startDateField] = start2Str;
+	if (endDate && endDateField) newRow[endDateField] = endDate;
+
+	hotData.splice(rowIdx, 0, newRow);
+	hotInstance.loadData(hotData);
+	hotInstance.render();
+
+	if (_current_pp) {
+		_pp_has_edits[_current_pp] = true;
+		_refresh_pp_tab_status(_current_pp);
+		_update_apply_btn();
+	}
+	frappe.show_alert({ message: __("Row split successfully. Qty: {0} → {1} + {2}", [originalQty, qty1, qty2]), indicator: "green" });
 }

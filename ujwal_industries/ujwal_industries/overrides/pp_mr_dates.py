@@ -1068,6 +1068,9 @@ def save_managed_dates(
     set_planned_start_dates, set_subcontracting_suppliers, master_set_fg_dates_by_type,
     and adjust_mr_items_and_propagate are completely bypassed — the manually chosen
     dates are stored exactly as the user set them in the dialog.
+    
+    Directly persist changes. Handles INSERT (for split rows) and UPDATE (for existing).
+    Uses direct SQL for updates to guarantee values (like Qty) are persisted.
     """
     import json as _json
 
@@ -1078,33 +1081,174 @@ def save_managed_dates(
     if isinstance(mr_data, str):
         mr_data = _json.loads(mr_data)
 
-    # ── FG po_items ────────────────────────────────────────────────────────
-    _FG_FIELDS = {"planned_start_date", "custom_planned_end_date",
-                  "custom_manufacturing_type", "custom_supplier"}
+    def _to_float(val):
+        """Helper to safely convert values to float, handling strings with commas."""
+        if val is None: return 0.0
+        if isinstance(val, (int, float)): return float(val)
+        try:
+            return float(str(val).replace(",", ""))
+        except ValueError:
+            return 0.0
+
+    def _update_row_sql(doctype, row_name, updates):
+        """Generates and executes a direct SQL update to bypass ORM skipping."""
+        if not updates: return
+        
+        set_clauses = []
+        values = []
+        for field, value in updates.items():
+            set_clauses.append(f"`{field}` = %s")
+            values.append(value)
+        
+        values.append(row_name) # For WHERE clause
+        
+        # NOTE: Using backticks around table name to handle spaces in Doctype Name
+        sql = f"UPDATE `tab{doctype}` SET {', '.join(set_clauses)} WHERE name = %s"
+        frappe.db.sql(sql, tuple(values))
+
+    def _build_new_row_from_source(
+        doctype: str,
+        incoming_item: dict[str, Any],
+        insert_fields: set[str],
+        qty_fields: set[str],
+    ) -> dict[str, Any]:
+        """
+        Build a new child row payload for split inserts.
+        Priority:
+        1) Copy from source DB row (split_source_name) for complete field coverage.
+        2) Overlay incoming non-empty values.
+        This prevents NULLs in columns not present in frontend payload.
+        """
+        row = {}
+        source_name = (incoming_item.get("split_source_name") or "").strip()
+        table_columns = set(frappe.db.get_table_columns(doctype) or [])
+        valid_insert_fields = {f for f in insert_fields if f in table_columns}
+        if source_name and not source_name.startswith("new_"):
+            source_vals = frappe.db.get_value(
+                doctype,
+                source_name,
+                list(valid_insert_fields),
+                as_dict=True,
+            ) or {}
+            row.update(source_vals)
+
+        for k in valid_insert_fields:
+            if k in incoming_item and incoming_item.get(k) not in (None, ""):
+                row[k] = incoming_item[k]
+
+        for qf in qty_fields:
+            if qf in row:
+                row[qf] = _to_float(row[qf])
+        return row
+
+    # ─── 1. FG ITEMS (po_items) ─────────────────────────────────────────────
+    _FG_UPDATE = {"planned_start_date", "custom_planned_end_date",
+                  "custom_manufacturing_type", "custom_supplier", "planned_qty"}
+    _FG_INSERT = _FG_UPDATE | {"item_code", "bom_no", "sales_order", "uom", "description"}
+
     for item in (po_items_data or []):
-        updates = {k: v for k, v in item.items() if k in _FG_FIELDS and v is not None}
-        if updates:
-            frappe.db.set_value("Production Plan Item", item["name"], updates,
-                                update_modified=False)
+        if str(item.get("name", "")).startswith("new_"):
+            # INSERT
+            new_row = _build_new_row_from_source(
+                "Production Plan Item", item, _FG_INSERT, {"planned_qty"}
+            )
+            new_row.update({
+                "doctype": "Production Plan Item",
+                "parent": production_plan_name,
+                "parenttype": "Production Plan",
+                "parentfield": "po_items"
+            })
+            frappe.get_doc(new_row).insert(ignore_permissions=True)
+        else:
+            # UPDATE
+            updates = {k: v for k, v in item.items() if k in _FG_UPDATE and v is not None}
+            if "planned_qty" in updates: updates["planned_qty"] = _to_float(updates["planned_qty"])
+            _update_row_sql("Production Plan Item", item["name"], updates)
 
-    # ── SFG sub_assembly_items ─────────────────────────────────────────────
-    _SFG_FIELDS = {"schedule_date", "custom_schedule_end_date",
-                   "type_of_manufacturing", "supplier"}
+    # ─── 2. SFG ITEMS (sub_assembly_items) ──────────────────────────────────
+    _SFG_UPDATE = {
+        "schedule_date", "custom_schedule_end_date", "type_of_manufacturing",
+        "supplier", "qty", "fg_warehouse", "production_plan_item",
+        "uom", "stock_uom", "description", "parent_item_code",
+        "item_name", "bom_no", "production_item", "target_warehouse", 
+        "custom_tool"
+    }
+    
+    _SFG_INSERT = _SFG_UPDATE | {
+        "bom_level", "wo_produced_qty", "ordered_qty", 
+        "received_qty", "indent", "actual_qty", "projected_qty"
+    }
+
     for item in (sfg_data or []):
-        updates = {k: v for k, v in item.items() if k in _SFG_FIELDS and v is not None}
-        if updates:
-            frappe.db.set_value("Production Plan Sub Assembly Item", item["name"], updates,
-                                update_modified=False)
+        if str(item.get("name", "")).startswith("new_"):
+            # INSERT
+            new_row = _build_new_row_from_source(
+                "Production Plan Sub Assembly Item", item, _SFG_INSERT, {"qty"}
+            )
+            new_row.update({
+                "doctype": "Production Plan Sub Assembly Item",
+                "parent": production_plan_name,
+                "parenttype": "Production Plan",
+                "parentfield": "sub_assembly_items"
+            })
+            frappe.get_doc(new_row).insert(ignore_permissions=True)
+        else:
+            # UPDATE
+            updates = {k: v for k, v in item.items() if k in _SFG_UPDATE and v is not None}
+            if "qty" in updates: updates["qty"] = _to_float(updates["qty"])
+            _update_row_sql("Production Plan Sub Assembly Item", item["name"], updates)
 
-    # ── MR mr_items ────────────────────────────────────────────────────────
-    _MR_FIELDS = {"custom_start_date", "schedule_date", "custom_supplier"}
+    # ─── 3. MR ITEMS (mr_items) ─────────────────────────────────────────────
+    _MR_UPDATE = {"custom_start_date", "schedule_date", "custom_supplier", "quantity"}
+    _MR_INSERT = _MR_UPDATE | {"item_code", "item_name", "sales_order", "uom", "description"}
+
     for item in (mr_data or []):
-        updates = {k: v for k, v in item.items() if k in _MR_FIELDS and v is not None}
-        if updates:
-            frappe.db.set_value("Material Request Plan Item", item["name"], updates,
-                                update_modified=False)
+        if str(item.get("name", "")).startswith("new_"):
+            # INSERT
+            new_row = _build_new_row_from_source(
+                "Material Request Plan Item", item, _MR_INSERT, {"quantity"}
+            )
+            new_row.update({
+                "doctype": "Material Request Plan Item",
+                "parent": production_plan_name,
+                "parenttype": "Production Plan",
+                "parentfield": "mr_items"
+            })
+            frappe.get_doc(new_row).insert(ignore_permissions=True)
+        else:
+            # UPDATE
+            updates = {k: v for k, v in item.items() if k in _MR_UPDATE and v is not None}
+            if "quantity" in updates: updates["quantity"] = _to_float(updates["quantity"])
+            _update_row_sql("Material Request Plan Item", item["name"], updates)
 
-    # Mark as manually managed — skips all automatic date hooks on next save/submit
+    # ─── 4. Re-sequence Row Numbers (idx) by start date DESC ───────────────
+    # Highest start date should appear first in each child table.
+    def _resequence_by_start_date(doctype: str, start_field: str) -> None:
+        frappe.db.sql("SET @rownum := 0")
+        frappe.db.sql(
+            f"""
+            UPDATE `tab{doctype}` t
+            INNER JOIN (
+                SELECT name, (@rownum := @rownum + 1) AS new_idx
+                FROM `tab{doctype}`
+                WHERE parent = %s
+                ORDER BY
+                    CASE WHEN `{start_field}` IS NULL THEN 1 ELSE 0 END ASC,
+                    `{start_field}` DESC,
+                    creation DESC,
+                    name DESC
+            ) r ON r.name = t.name
+            SET t.idx = r.new_idx
+            WHERE t.parent = %s
+            """,
+            (production_plan_name, production_plan_name),
+        )
+
+    _resequence_by_start_date("Production Plan Item", "planned_start_date")
+    _resequence_by_start_date("Production Plan Sub Assembly Item", "schedule_date")
+    _resequence_by_start_date("Material Request Plan Item", "custom_start_date")
+
+    # ─── 5. Finalize ────────────────────────────────────────────────────────
     frappe.db.set_value(
         "Production Plan", production_plan_name,
         {"custom_skip_date_calculation": 1, "modified": now_datetime()},
@@ -1112,7 +1256,6 @@ def save_managed_dates(
     )
     frappe.db.commit()
     return {"status": "ok"}
-
 
 @frappe.whitelist()
 def get_pp_importer_data(production_plan_name: str) -> dict[str, list[dict]]:
@@ -1429,6 +1572,7 @@ def apply_pp_import(
     mr_count  = len(mr_data or [])
 
     try:
+        # return importer_doc, production_plan_name, po_items_data, sfg_data, mr_data
         save_managed_dates(production_plan_name, po_items_data, sfg_data, mr_data)
         frappe.get_doc({
             "doctype":      "PP Import Log",
