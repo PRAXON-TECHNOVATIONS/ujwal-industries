@@ -389,7 +389,7 @@
 	z-index: 260 !important;
 }
 
-/* For global overlay, hide top-right badge (user wants only watermark) */
+/* Hide top-right imported badge only for global overlay */
 .ppi-global-import-overlay .ppi-doc-overlay-badge,
 .ppi-global-import-overlay .ppi-overlay-error-msg {
 	display: none !important;

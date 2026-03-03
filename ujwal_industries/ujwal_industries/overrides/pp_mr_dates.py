@@ -1054,7 +1054,6 @@ def propagate_mr_schedule_to_sfg_fg(
 
 
 @frappe.whitelist()
-@frappe.whitelist()
 def save_managed_dates(
     production_plan_name: str,
     po_items_data: list[dict[str, Any]] | str,
@@ -1249,79 +1248,6 @@ def save_managed_dates(
     )
     frappe.db.commit()
     return {"status": "ok"}
-# def save_managed_dates(
-#     production_plan_name: str,
-#     po_items_data: list[dict[str, Any]] | str,
-#     sfg_data: list[dict[str, Any]] | str,
-#     mr_data: list[dict[str, Any]] | str,
-# ) -> dict[str, str]:
-#     """
-#     Directly persist all date/type/supplier changes from the Manage Dates dialog
-#     without triggering any before_save or validate hooks.
-
-#     Also handles split rows (created by frontend split dialog):
-#     - Rows with name "new_*" are inserted as new rows
-#     - Existing rows are updated with new values
-#     - Rows removed from the list are deleted
-#     """
-#     import json as _json
-#     from .split_handler import handle_split_rows
-
-#     if isinstance(po_items_data, str):
-#         po_items_data = _json.loads(po_items_data)
-#     if isinstance(sfg_data, str):
-#         sfg_data = _json.loads(sfg_data)
-#     if isinstance(mr_data, str):
-#         mr_data = _json.loads(mr_data)
-
-#     # ─── Step 1: Handle split rows (INSERT new, UPDATE modified, DELETE removed) ───
-#     split_result = handle_split_rows(production_plan_name, po_items_data, sfg_data, mr_data)
-    
-#     # ─── Step 2: Apply standard updates for date/type/supplier fields ───
-#     # FG po_items ────────────────────────────────────────────────────────
-#     _FG_FIELDS = {"planned_start_date", "custom_planned_end_date",
-#                   "custom_manufacturing_type", "custom_supplier",}
-#     for item in (po_items_data or []):
-#         # Skip if this is a new row (already handled by split_handler)
-#         if str(item.get("name", "")).startswith("new_"):
-#             continue
-#         updates = {k: v for k, v in item.items() if k in _FG_FIELDS and v is not None}
-#         if updates:
-#             frappe.db.set_value("Production Plan Item", item["name"], updates,
-#                                 update_modified=False)
-
-#     # ── SFG sub_assembly_items ─────────────────────────────────────────────
-#     _SFG_FIELDS = {"schedule_date", "custom_schedule_end_date",
-#                    "type_of_manufacturing", "supplier", "production_item" , "bom_no" , "qty" , "parent_item_code"}
-#     for item in (sfg_data or []):
-#         # Skip if this is a new row (already handled by split_handler)
-#         if str(item.get("name", "")).startswith("new_"):
-#             continue
-#         updates = {k: v for k, v in item.items() if k in _SFG_FIELDS and v is not None}
-#         if updates:
-#             frappe.db.set_value("Production Plan Sub Assembly Item", item["name"], updates,
-#                                 update_modified=False)
-
-#     # ── MR mr_items ────────────────────────────────────────────────────────
-#     _MR_FIELDS = {"custom_start_date", "schedule_date", "custom_supplier"}
-#     for item in (mr_data or []):
-#         # Skip if this is a new row (already handled by split_handler)
-#         if str(item.get("name", "")).startswith("new_"):
-#             continue
-#         updates = {k: v for k, v in item.items() if k in _MR_FIELDS and v is not None}
-#         if updates:
-#             frappe.db.set_value("Material Request Plan Item", item["name"], updates,
-#                                 update_modified=False)
-
-#     # Mark as manually managed — skips all automatic date hooks on next save/submit
-#     frappe.db.set_value(
-#         "Production Plan", production_plan_name,
-#         {"custom_skip_date_calculation": 1, "modified": now_datetime()},
-#         update_modified=False,
-#     )
-#     frappe.db.commit()
-#     return {"status": "ok"}
-
 
 @frappe.whitelist()
 def get_pp_importer_data(production_plan_name: str) -> dict[str, list[dict]]:

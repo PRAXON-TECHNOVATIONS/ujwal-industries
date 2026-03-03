@@ -115,8 +115,6 @@ function _build_layout(frm) {
 						<span id="ppi-autosave-status" style="font-size:11px;color:#6b7280;font-style:italic;"></span>
 					</span>
 				</div>
-				<div class="ppi-import-status" id="ppi-import-status" style="display:none"></div>
-
 				<div class="ppi-grids" id="ppi-grids">
 					<!-- FG Items Section -->
 					<div class="ppi-section-hdr ppi-section-hdr--fg">
@@ -1497,7 +1495,6 @@ function _replay_log_from_server() {
 }
 
 // Delete all log entries for this session's PP names (called after successful Apply).
-// NOTE: currently unused (kept for future "clear all PP logs" flow).
 function _clear_log() {
 	clearTimeout(_log_flush_timer);
 	_pending_log_entries = [];
@@ -1531,32 +1528,6 @@ function _apply_to_pp() {
 		args: {
 			importer_doc:         _frm_ref.doc.name,
 			production_plan_name: pp_name,
-			// po_items_data: JSON.stringify(
-				
-			// 	(data.po_items || []).map(r => ({
-			// 		name:                      r.name,
-			// 		planned_start_date:        r.planned_start_date        || null,
-			// 		custom_planned_end_date:   r.custom_planned_end_date   || null,
-			// 		custom_manufacturing_type: r.custom_manufacturing_type || null,
-			// 		custom_supplier:           r.custom_supplier           || null,
-			// 	}))
-			// ),
-			// sfg_data: JSON.stringify(
-			// 	(data.sfg_items || []).map(r => ({
-			// 		name:                     r.name,
-			// 		schedule_date:            r.schedule_date            || null,
-			// 		custom_schedule_end_date: r.custom_schedule_end_date || null,
-			// 		type_of_manufacturing:    r.type_of_manufacturing    || null,
-			// 		supplier:                 r.supplier                 || null,
-			// 	}))
-			// ),
-			// mr_data: JSON.stringify(
-			// 	(data.mr_items || []).map(r => ({
-			// 		name:              r.name,
-			// 		custom_start_date: r.custom_start_date || null,
-			// 		schedule_date:     r.schedule_date     || null,
-			// 		custom_supplier:   r.custom_supplier   || null,
-			// 	}))
 			po_items_data: JSON.stringify(
 				(data.po_items || []).map(r => {
 					if (_opt_parallel) {
@@ -1660,13 +1631,12 @@ function _update_importer_status() {
 // editing again — _pp_imported entry is cleared on next HOT edit).
 function _update_import_state(pp_name) {
 	const imp = _pp_imported[pp_name];
-	const statusEl = document.getElementById("ppi-import-status");
 	const gridsEl = document.getElementById("ppi-grids");
 
 	["fg", "sfg", "mr"].forEach(sec => {
 		const wrap = document.getElementById(`ppi-hot-${sec}`);
 		if (!wrap) return;
-		// Remove previous per-table import overlays.
+		// Remove any legacy per-table import overlays.
 		wrap.querySelectorAll(".ppi-import-overlay").forEach(el => el.remove());
 	});
 
@@ -1685,13 +1655,10 @@ function _update_import_state(pp_name) {
 		}
 	}
 
-	if (statusEl) {
-		statusEl.style.display = "none";
-		statusEl.className = "ppi-import-status";
-		statusEl.innerHTML = "";
-	}
+	// Explicitly force view-only after successful import.
+	if (imp && imp.ok) _pp_use_excel[pp_name] = true;
 
-	// Re-render so cells() picks up imported readonly state.
+	// Re-render so cells() picks up the new imported state (makes all cells readonly)
 	[_hot_fg, _hot_sfg, _hot_mr].forEach(h => { if (h) h.render(); });
 }
 
@@ -1931,7 +1898,6 @@ function _apply_split(rowIdx, qty1, qty2, startDate, endDate, tableKey, qtyField
 	const newRow = {
 		...originalRow,
 		[qtyField]: q2,
-		split_source_name: originalRow.split_source_name || originalRow.name,
 		name: `new_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
 	};
 
