@@ -39,7 +39,8 @@
 /* ── Outer shell ─────────────────────────────────────────────────────────── */
 .ppi-container {
 	display: flex;
-	height: 610px;
+	height: auto;
+	min-height: 400px;
 	border-radius: 12px;
 	overflow: hidden;
 	margin-top: 14px;
@@ -192,7 +193,7 @@
 	flex: 1;
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	overflow-y: auto;
 	background: #fff;
 	min-width: 0;
 }
@@ -311,10 +312,32 @@
 /* ── HOT wrappers ────────────────────────────────────────────────────────── */
 .ppi-hot-wrap {
 	overflow: auto;
-	flex: 1;
+	flex: none;
 	background: var(--ppi-bg);
 	position: relative; /* needed for overlay */
 }
+
+/* ── Section headers (vertical layout) ──────────────────────────────────── */
+.ppi-section-hdr {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 9px 16px;
+	font-size: 12px;
+	font-weight: 600;
+	border-top: 1.5px solid var(--ppi-line);
+	flex-shrink: 0;
+}
+
+.ppi-section-hdr--fg  { color: var(--ppi-fg);  background: var(--ppi-fg-light);  border-left: 3px solid var(--ppi-fg); }
+.ppi-section-hdr--sfg { color: var(--ppi-sfg); background: var(--ppi-sfg-light); border-left: 3px solid var(--ppi-sfg); }
+.ppi-section-hdr--mr  { color: var(--ppi-mr);  background: var(--ppi-mr-light);  border-left: 3px solid var(--ppi-mr); }
+
+.ppi-section-hdr--fg  .ppi-badge { background: var(--ppi-fg);  color: #fff; }
+.ppi-section-hdr--sfg .ppi-badge { background: var(--ppi-sfg); color: #fff; }
+.ppi-section-hdr--mr  .ppi-badge { background: var(--ppi-mr);  color: #fff; }
+
+.ppi-section-hdr svg { flex-shrink: 0; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    HANDSONTABLE — COMPREHENSIVE OVERRIDES

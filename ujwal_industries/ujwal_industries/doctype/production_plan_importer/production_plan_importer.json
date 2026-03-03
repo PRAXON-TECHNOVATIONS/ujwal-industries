@@ -6,18 +6,17 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "excel_file",
+  "production_plans",
   "status",
   "importer_layout"
  ],
  "fields": [
   {
-   "description": "Upload the Production Plan Excel exported from ERPNext Data Export",
-   "fieldname": "excel_file",
-   "fieldtype": "Attach",
-   "in_list_view": 1,
-   "label": "Production Plan Excel",
-   "reqd": 1
+   "fieldname": "production_plans",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Production Plans",
+   "read_only": 1
   },
   {
    "fieldname": "importer_layout",
@@ -37,7 +36,7 @@
  ],
  "hide_toolbar": 1,
  "links": [],
- "modified": "2026-02-21 10:07:52.078393",
+ "modified": "2026-03-03 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Production Plan Importer",

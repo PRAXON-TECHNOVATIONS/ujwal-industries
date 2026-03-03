@@ -1539,3 +1539,24 @@ def update_importer_status(importer_doc: str, all_pp_names: list | str) -> dict:
     )
     frappe.db.commit()
     return {"status": "ok", "importer_status": new_status}
+
+
+@frappe.whitelist()
+def create_importer_from_selection(pp_names: list | str) -> dict:
+    """
+    Create a new Production Plan Importer doc from selected PP names (from list view).
+    Stores the PP names as JSON in the production_plans field.
+    Returns: { "name": "<new importer doc name>" }
+    """
+    import json as _json
+
+    if isinstance(pp_names, str):
+        pp_names = _json.loads(pp_names)
+    if not pp_names:
+        frappe.throw("No Production Plans selected.")
+
+    doc = frappe.new_doc("Production Plan Importer")
+    doc.production_plans = _json.dumps(pp_names)
+    doc.insert(ignore_permissions=False)
+    frappe.db.commit()
+    return {"name": doc.name}

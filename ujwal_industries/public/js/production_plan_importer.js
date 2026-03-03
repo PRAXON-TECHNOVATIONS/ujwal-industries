@@ -1,8 +1,7 @@
 // Production Plan Importer — Handsontable integration
-// Parses a Production Plan Excel export (ERPNext Data Export format).
-// After parsing, fetches actual DB values for each PP and merges them
-// as _actual_* shadow fields for comparison (red = differs from DB).
-// Left panel  : vertical tabs, one per Production Plan in the file.
+// Loads Production Plan data directly from DB (selected from PP list view).
+// After loading, _actual_* shadow fields capture the DB baseline for comparison (red = differs from DB).
+// Left panel  : vertical tabs, one per Production Plan.
 // Right panel : FG Items / Sub Assembly / MR Items tabs with Handsontable grids.
 // Apply       : calls save_managed_dates for each PP (direct DB write, bypasses hooks).
 
@@ -14,7 +13,7 @@ const _HOT_ASSETS = [
 
 // ─── Module state ──────────────────────────────────────────────────────────
 let _pp_data       = {};   // { ppName: { po_items, sfg_items, mr_items } }
-let _pp_use_excel  = {};   // { ppName: bool } — true = use Excel dates on Apply
+let _pp_use_excel  = {};   // { ppName: bool } — true = view-only mode (readonly grids); false = edit mode
 let _pp_imported   = {};   // { ppName: { ok: bool, error?: str } } — set after Apply
 let _pp_has_edits  = {};   // { ppName: true } — PP has unsaved HOT edits
 let _apply_btn     = null; // jQuery ref to our Apply button (NOT page.btn_primary)
@@ -54,17 +53,8 @@ frappe.ui.form.on("Production Plan Importer", {
 
 		frappe.require(_HOT_ASSETS, () => {
 			_build_layout(frm);
-			if (frm.doc.excel_file) {
-				_parse_file(frm.doc.excel_file);
-			}
-		});
-	},
-
-	excel_file(frm) {
-		_frm_ref = frm;
-		frappe.require(_HOT_ASSETS, () => {
-			if (frm.doc.excel_file) {
-				_parse_file(frm.doc.excel_file);
+			if (frm.doc.production_plans) {
+				_load_from_db(frm.doc.production_plans);
 			}
 		});
 	},
@@ -97,7 +87,7 @@ function _build_layout(frm) {
 					${__("Production Plans")}
 				</div>
 				<div class="ppi-pp-tabs-wrap" id="ppi-pp-tabs">
-					<div class="ppi-empty-hint">${__("Upload an Excel file to load plans")}</div>
+					<div class="ppi-empty-hint">${__("Select Production Plans from list view to load here")}</div>
 				</div>
 			</div>
 
@@ -109,26 +99,11 @@ function _build_layout(frm) {
 					<span class="ppi-infobar-label">${__("Select a plan from the left")}</span>
 				</div>
 
-				<!-- Edit-mode options bar (shown when "Go with Excel Dates" is unchecked) -->
+				<!-- Edit-mode options bar (shown when "View Only" is unchecked) -->
 				<div class="ppi-editbar" id="ppi-editbar" style="display:none"></div>
 
-				<!-- Section tabs -->
+				<!-- Legend bar -->
 				<div class="ppi-stabs" id="ppi-stabs">
-					<button class="ppi-stab ppi-stab--fg active" data-sec="fg">
-						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="5" height="5" rx="1"/><rect x="0" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
-						${__("FG Items")}
-						<span class="ppi-badge" id="ppi-badge-fg">—</span>
-					</button>
-					<button class="ppi-stab ppi-stab--sfg" data-sec="sfg">
-						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0l6 3.5v5L6 12 0 8.5v-5z"/></svg>
-						${__("Sub Assembly")}
-						<span class="ppi-badge" id="ppi-badge-sfg">—</span>
-					</button>
-					<button class="ppi-stab ppi-stab--mr" data-sec="mr">
-						<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="12" height="3" rx="1"/><rect x="0" y="4.5" width="12" height="3" rx="1"/><rect x="0" y="9" width="12" height="3" rx="1"/></svg>
-						${__("MR Items")}
-						<span class="ppi-badge" id="ppi-badge-mr">—</span>
-					</button>
 					<div class="ppi-stabs-spacer"></div>
 					<span class="ppi-edit-hint" id="ppi-edit-hint">
 						<span class="ppi-legend-dot ppi-legend-changed"></span>${__("Changed from DB")}
@@ -139,21 +114,35 @@ function _build_layout(frm) {
 					</span>
 				</div>
 
-				<!-- Grid wrappers -->
+				<!-- FG Items Section -->
+				<div class="ppi-section-hdr ppi-section-hdr--fg">
+					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="5" height="5" rx="1"/><rect x="7" y="0" width="5" height="5" rx="1"/><rect x="0" y="7" width="5" height="5" rx="1"/><rect x="7" y="7" width="5" height="5" rx="1"/></svg>
+					${__("FG Items")}
+					<span class="ppi-badge" id="ppi-badge-fg">—</span>
+				</div>
 				<div class="ppi-hot-wrap" id="ppi-hot-fg"></div>
-				<div class="ppi-hot-wrap" id="ppi-hot-sfg" style="display:none"></div>
-				<div class="ppi-hot-wrap" id="ppi-hot-mr"  style="display:none"></div>
+
+				<!-- Sub Assembly Section -->
+				<div class="ppi-section-hdr ppi-section-hdr--sfg">
+					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0l6 3.5v5L6 12 0 8.5v-5z"/></svg>
+					${__("Sub Assembly")}
+					<span class="ppi-badge" id="ppi-badge-sfg">—</span>
+				</div>
+				<div class="ppi-hot-wrap" id="ppi-hot-sfg"></div>
+
+				<!-- MR Items Section -->
+				<div class="ppi-section-hdr ppi-section-hdr--mr">
+					<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor"><rect x="0" y="0" width="12" height="3" rx="1"/><rect x="0" y="4.5" width="12" height="3" rx="1"/><rect x="0" y="9" width="12" height="3" rx="1"/></svg>
+					${__("MR Items")}
+					<span class="ppi-badge" id="ppi-badge-mr">—</span>
+				</div>
+				<div class="ppi-hot-wrap" id="ppi-hot-mr"></div>
 
 			</div>
 		</div>
 	`);
 
-	// Section tab clicks
-	$root.find(".ppi-stab").on("click", function () {
-		_switch_section($(this).data("sec"));
-	});
-
-	// Per-PP "Go with Excel Dates" checkbox (delegated — infobar re-renders on each switch)
+	// Per-PP "View Only" checkbox (delegated — infobar re-renders on each switch)
 	$root.on("change", "#ppi-excel-check", function () {
 		if (!_current_pp) return;
 		const old_val = _pp_use_excel[_current_pp] !== false;  // default true
@@ -172,7 +161,7 @@ function _build_layout(frm) {
 		_log_flush_timer = setTimeout(_flush_log, 1500);
 		if (!checked) {
 			frappe.show_alert({
-				message: __("{0}: Edit mode — modify dates and suppliers, then click Apply.", [_current_pp]),
+				message: __("{0}: Edit mode enabled — modify dates and suppliers, then click Apply.", [_current_pp]),
 				indicator: "blue",
 			});
 		}
@@ -247,60 +236,55 @@ function _render_editbar($root) {
 	`);
 }
 
-// ─── Parse Excel via server ────────────────────────────────────────────────
-function _parse_file(file_url) {
+// ─── Load Production Plans directly from DB ────────────────────────────────
+function _load_from_db(production_plans_json) {
 	if (!_frm_ref) return;
 	const $root = _frm_ref.fields_dict.importer_layout.$wrapper;
 
-	// show skeleton
+	let pp_names;
+	try {
+		pp_names = JSON.parse(production_plans_json || "[]");
+	} catch(e) {
+		pp_names = [];
+	}
+
+	if (!pp_names || !pp_names.length) {
+		$root.find("#ppi-pp-tabs").html(
+			`<div class="ppi-empty">${__("No Production Plans found.")}</div>`
+		);
+		return;
+	}
+
 	$root.find("#ppi-pp-tabs").html(
-		`<div class="ppi-loading">${__("Parsing file…")}</div>`
+		`<div class="ppi-loading">${__("Loading Production Plans…")}</div>`
 	);
 
-	frappe.call({
-		method: "ujwal_industries.ujwal_industries.overrides.pp_mr_dates.parse_pp_excel",
-		args: { file_url },
-		callback(r) {
-			if (!r.message || !Object.keys(r.message).length) {
-				$root.find("#ppi-pp-tabs").html(
-					`<div class="ppi-empty">${__("No Production Plan data found in file.")}</div>`
-				);
-				return;
-			}
-			_pp_data = r.message;
+	_pp_data = {};
+	let fetched = 0;
 
-			// Fetch actual DB data for every PP found in the Excel,
-			// then merge _actual_* fields before rendering.
-			const pp_names = Object.keys(_pp_data);
-			let fetched = 0;
-
-			$root.find("#ppi-pp-tabs").html(
-				`<div class="ppi-loading">${__("Loading DB actuals…")}</div>`
-			);
-
-			pp_names.forEach(pp_name => {
-				frappe.call({
-					method: "ujwal_industries.ujwal_industries.overrides.pp_mr_dates.get_pp_importer_data",
-					args: { production_plan_name: pp_name },
-					callback(db_r) {
-						if (db_r.message) {
-							_merge_actual_data(pp_name, db_r.message);
-						}
-						fetched++;
-						if (fetched === pp_names.length) _after_load($root);
-					},
-					error() {
-						fetched++;
-						if (fetched === pp_names.length) _after_load($root);
-					},
-				});
-			});
-		},
-		error() {
-			$root.find("#ppi-pp-tabs").html(
-				`<div class="ppi-empty text-danger">${__("Failed to parse file.")}</div>`
-			);
-		},
+	pp_names.forEach(pp_name => {
+		frappe.call({
+			method: "ujwal_industries.ujwal_industries.overrides.pp_mr_dates.get_pp_importer_data",
+			args: { production_plan_name: pp_name },
+			callback(r) {
+				if (r.message) {
+					_pp_data[pp_name] = {
+						po_items:  r.message.po_items  || [],
+						sfg_items: r.message.sfg_items || [],
+						mr_items:  r.message.mr_items  || [],
+						docstatus: r.message.docstatus != null ? r.message.docstatus : 0,
+					};
+					// Capture DB baseline in _actual_* shadow fields (used for red-diff highlighting)
+					_set_actual_fields(pp_name);
+				}
+				fetched++;
+				if (fetched === pp_names.length) _after_load($root);
+			},
+			error() {
+				fetched++;
+				if (fetched === pp_names.length) _after_load($root);
+			},
+		});
 	});
 }
 
@@ -333,68 +317,27 @@ function _prefetch_suppliers() {
 	});
 }
 
-// ─── Merge DB actual values into Excel row objects ─────────────────────────
-// Each matching row gets _actual_<fieldname> shadow props used for comparison.
-function _merge_actual_data(pp_name, db_data) {
+// ─── Capture DB baseline into _actual_* shadow fields ──────────────────────
+// Called right after _pp_data[pp_name] is populated from DB.
+// _actual_* values show the "saved in DB" snapshot alongside any in-HOT edits (red = changed).
+function _set_actual_fields(pp_name) {
 	const pp = _pp_data[pp_name];
 	if (!pp) return;
 
-	// Build lookup maps keyed by row name
-	const fg_map  = {};
-	const sfg_map = {};
-	const mr_map  = {};
-
-	(db_data.po_items   || []).forEach(row => { fg_map[row.name]  = row; });
-	(db_data.sfg_items  || []).forEach(row => { sfg_map[row.name] = row; });
-	(db_data.mr_items   || []).forEach(row => { mr_map[row.name]  = row; });
-
-	// FG: planned_start_date, custom_planned_end_date
-	// Also copy bom_no from DB — Excel export doesn't include it, needed for recalculate_fg_end_date.
 	(pp.po_items || []).forEach(row => {
-		const actual = fg_map[row.name] || {};
-		row._actual_planned_start_date       = actual.planned_start_date        != null ? String(actual.planned_start_date)       : "";
-		row._actual_custom_planned_end_date  = actual.custom_planned_end_date   != null ? String(actual.custom_planned_end_date)  : "";
-		if (!row.bom_no && actual.bom_no) row.bom_no = actual.bom_no;
+		row._actual_planned_start_date       = row.planned_start_date       != null ? String(row.planned_start_date)       : "";
+		row._actual_custom_planned_end_date  = row.custom_planned_end_date  != null ? String(row.custom_planned_end_date)  : "";
 	});
 
-	// SFG: schedule_date, custom_schedule_end_date
-	// Also copy linkage + display fields from DB — Excel export doesn't include them.
 	(pp.sfg_items || []).forEach(row => {
-		const actual = sfg_map[row.name] || {};
-		row._actual_schedule_date            = actual.schedule_date             != null ? String(actual.schedule_date)            : "";
-		row._actual_custom_schedule_end_date = actual.custom_schedule_end_date  != null ? String(actual.custom_schedule_end_date) : "";
-		if (!row.production_plan_item && actual.production_plan_item) {
-			row.production_plan_item = actual.production_plan_item;
-		}
-		if (!row.parent_item_code && actual.parent_item_code) {
-			row.parent_item_code = actual.parent_item_code;
-		}
-		if (!row.bom_no && actual.bom_no) row.bom_no = actual.bom_no;
-	});
-
-	// MR: custom_start_date, schedule_date, quantity
-	// Note: MR row names in Excel often differ from DB names (rows regenerated on PP save).
-	// Build a secondary item_code map so we can copy quantity from DB even when name fails.
-	const mr_code_map = {};
-	(db_data.mr_items || []).forEach(row => {
-		if (!mr_code_map[row.item_code]) mr_code_map[row.item_code] = row;
+		row._actual_schedule_date            = row.schedule_date            != null ? String(row.schedule_date)            : "";
+		row._actual_custom_schedule_end_date = row.custom_schedule_end_date != null ? String(row.custom_schedule_end_date) : "";
 	});
 
 	(pp.mr_items || []).forEach(row => {
-		const actual          = mr_map[row.name] || {};
-		const actual_by_code  = mr_code_map[row.item_code] || {};
-		row._actual_custom_start_date = actual.custom_start_date != null ? String(actual.custom_start_date) : "";
-		row._actual_schedule_date     = actual.schedule_date     != null ? String(actual.schedule_date)     : "";
-		// Quantity: always prefer DB value — Excel column name is unreliable
-		const db_qty = actual.quantity != null ? actual.quantity : actual_by_code.quantity;
-		if (db_qty != null) row.quantity = db_qty;
-		// Copy sales_order from DB — Excel export doesn't include this linkage key.
-		if (!row.sales_order) {
-			row.sales_order = (actual.sales_order || actual_by_code.sales_order || "");
-		}
+		row._actual_custom_start_date = row.custom_start_date != null ? String(row.custom_start_date) : "";
+		row._actual_schedule_date     = row.schedule_date     != null ? String(row.schedule_date)     : "";
 	});
-
-	pp.docstatus = db_data.docstatus != null ? db_data.docstatus : 0;
 }
 
 // ─── Left panel: PP tabs ───────────────────────────────────────────────────
@@ -442,8 +385,8 @@ function _switch_pp(pp_name) {
 	const data = _pp_data[pp_name];
 	const $root = _frm_ref.fields_dict.importer_layout.$wrapper;
 
-	// Default to true (use Excel dates) if not yet set for this PP
-	if (_pp_use_excel[pp_name] === undefined) _pp_use_excel[pp_name] = true;
+	// Default to false (edit mode) if not yet set for this PP
+	if (_pp_use_excel[pp_name] === undefined) _pp_use_excel[pp_name] = false;
 	const useExcel   = _pp_use_excel[pp_name];
 	const docstatus  = data.docstatus || 0;
 	const isDraft    = docstatus === 0;
@@ -468,7 +411,7 @@ function _switch_pp(pp_name) {
 		<div class="ppi-infobar-spacer"></div>
 		<label class="ppi-excel-check-wrap${isDraft && !isImported ? "" : " ppi-excel-check-wrap--disabled"}">
 			<input type="checkbox" id="ppi-excel-check" ${useExcel ? "checked" : ""} ${isDraft && !isImported ? "" : "disabled"}>
-			<span class="ppi-excel-check-label">${__("Go with Excel Dates")}</span>
+			<span class="ppi-excel-check-label">${__("View Only")}</span>
 		</label>
 	`);
 	$root.find("#ppi-badge-fg").text((data.po_items  || []).length);
@@ -512,29 +455,10 @@ function _switch_pp(pp_name) {
 	_update_apply_btn();
 }
 
-// ─── Right panel: section tabs ─────────────────────────────────────────────
-function _switch_section(sec) {
-	if (!_frm_ref) return;
-	_current_sec = sec;
-
-	_frm_ref.fields_dict.importer_layout.$wrapper
-		.find(".ppi-stab")
-		.removeClass("active")
-		.filter(`[data-sec="${sec}"]`)
-		.addClass("active");
-
-	["fg", "sfg", "mr"].forEach(s => {
-		const el = document.getElementById(`ppi-hot-${s}`);
-		if (el) el.style.display = s === sec ? "" : "none";
-	});
-
-	_re_render_active_hot();
-}
-
+// ─── Re-render all HOT instances ──────────────────────────────────────────
+// All three grids are always visible (vertical layout), so render all.
 function _re_render_active_hot() {
-	const map = { fg: _hot_fg, sfg: _hot_sfg, mr: _hot_mr };
-	const hot = map[_current_sec];
-	if (hot) hot.render();
+	[_hot_fg, _hot_sfg, _hot_mr].forEach(h => { if (h) h.render(); });
 }
 
 // ─── Renderers ─────────────────────────────────────────────────────────────
@@ -1047,7 +971,7 @@ function _make_hot(container_id, data, columns, opts) {
 		rowHeaders:            true,
 		licenseKey:            "non-commercial-and-evaluation",
 		stretchH:              "last",
-		height:                460,
+		height:                "auto",
 		contextMenu:           false,
 		manualColumnResize:    true,
 		wordWrap:              false,
@@ -1071,14 +995,14 @@ function _make_hot(container_id, data, columns, opts) {
 			const cls       = [];
 			const ppDoc     = _current_pp && _pp_data[_current_pp];
 			const docstatus = ppDoc ? (ppDoc.docstatus || 0) : 0;
-			// useExcel true (default/checked) = view-only; false (unchecked) = edit mode
-			const useExcel     = _current_pp ? (_pp_use_excel[_current_pp] !== false) : true;
+			// viewOnly true (checked) = readonly grids; false (unchecked) = edit mode
+			const useExcel     = _current_pp ? (_pp_use_excel[_current_pp] === true) : false;
 			// Lock cells after a successful import (user must clear overlay / re-edit to re-apply)
 			const isImported   = _current_pp && _pp_imported[_current_pp] && _pp_imported[_current_pp].ok;
 
 			const isActual          = colDef && colDef.data && colDef.data.startsWith("_actual_");
 			const isInherentlyEdit  = colDef && !colDef.readOnly && !isActual;
-			// effective readonly: submitted/cancelled OR imported OR column not editable OR Excel mode locked
+			// effective readonly: submitted/cancelled OR imported OR column not editable OR view-only mode
 			const effectiveRO       = docstatus !== 0 || isImported || !isInherentlyEdit || useExcel;
 
 			if (effectiveRO)    cls.push("ppi-readonly-cell");
@@ -1092,7 +1016,7 @@ function _make_hot(container_id, data, columns, opts) {
 			}
 
 			// Red highlight when the cell value differs from its DB-saved counterpart.
-			// Shown in both Excel-mode (readonly) and edit-mode — useful feedback either way.
+			// Shown in both view-only and edit-mode — useful feedback either way.
 			if (isInherentlyEdit && hot) {
 				const rowData = hot.getSourceDataAtRow(row);
 				if (rowData) {
@@ -1413,7 +1337,6 @@ function _replay_log_from_server() {
 		const first = Object.keys(_pp_data)[0];
 		if (first) {
 			_switch_pp(first);       // _update_import_state is called inside _switch_pp
-			_switch_section("fg");
 			_refresh_all_pp_tab_statuses(); // sync sidebar badges with restored state
 			if (restored || settings_restored) {
 				const _now = new Date();
