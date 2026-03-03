@@ -259,6 +259,67 @@
 	white-space: nowrap;
 }
 
+/* Single import status bar (shown once above all tables) */
+.ppi-import-status {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 16px;
+	border-top: 1px solid var(--ppi-line);
+	border-bottom: 1px solid var(--ppi-line);
+	background: #F8FAFC;
+}
+
+.ppi-import-status-badge {
+	display: inline-flex;
+	align-items: center;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.3px;
+	text-transform: uppercase;
+	padding: 3px 10px;
+	border-radius: 999px;
+}
+
+.ppi-import-status-msg {
+	font-size: 11px;
+	line-height: 1.35;
+}
+
+.ppi-import-status--ok {
+	background: #ECFDF5;
+	border-color: #A7F3D0;
+}
+
+.ppi-import-status--ok .ppi-import-status-badge {
+	background: #065F46;
+	color: #ECFDF5;
+	border: 1px solid #10B981;
+}
+
+.ppi-import-status--error {
+	background: #FEF2F2;
+	border-color: #FECACA;
+}
+
+.ppi-import-status--error .ppi-import-status-badge {
+	background: #991B1B;
+	color: #FEF2F2;
+	border: 1px solid #EF4444;
+}
+
+.ppi-import-status--error .ppi-import-status-msg {
+	color: #991B1B;
+}
+
+/* Safety: never show per-table import overlays.
+   Import status should appear only once in the global status bar above tables. */
+.ppi-hot-wrap .ppi-import-overlay,
+.ppi-hot-wrap .ppi-doc-overlay--imported,
+.ppi-hot-wrap .ppi-doc-overlay--import-error {
+	display: none !important;
+}
+
 /* Tab button */
 .ppi-stab {
 	display: inline-flex;
@@ -315,6 +376,23 @@
 	flex: none;
 	background: var(--ppi-bg);
 	position: relative; /* needed for overlay */
+}
+
+/* Wrapper for all 3 grids; used to show one global import overlay */
+.ppi-grids {
+	position: relative;
+	overflow: visible;
+}
+
+/* Global import overlay should sit above all grid internals */
+.ppi-global-import-overlay {
+	z-index: 260 !important;
+}
+
+/* For global overlay, hide top-right badge (user wants only watermark) */
+.ppi-global-import-overlay .ppi-doc-overlay-badge,
+.ppi-global-import-overlay .ppi-overlay-error-msg {
+	display: none !important;
 }
 
 /* ── Section headers (vertical layout) ──────────────────────────────────── */
@@ -592,7 +670,7 @@
 	position: absolute;
 	inset: 0;
 	pointer-events: none;
-	z-index: 10;
+	z-index: 120;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -635,6 +713,7 @@
 	position: absolute;
 	top: 12px;
 	right: 16px;
+	z-index: 121;
 	font-size: 11px;
 	font-weight: 700;
 	padding: 4px 14px;
@@ -642,6 +721,8 @@
 	letter-spacing: 0.4px;
 	text-transform: uppercase;
 	pointer-events: none;
+	text-shadow: 0 1px 0 rgba(255,255,255,0.25);
+	box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
 }
 
 .ppi-doc-overlay--submitted .ppi-doc-overlay-badge {
@@ -658,17 +739,17 @@
 
 /* ── Import success overlay ──────────────────────────────────────────────── */
 .ppi-doc-overlay--imported {
-	background: rgba(209, 250, 229, 0.60);
+	background: rgba(209, 250, 229, 0.74);
 }
 
 .ppi-doc-overlay--imported::before {
 	content: "IMPORTED";
-	color: rgba(4, 120, 87, 0.15);
+	color: rgba(4, 120, 87, 0.24);
 }
 
 .ppi-doc-overlay--imported .ppi-doc-overlay-badge {
-	background: #D1FAE5;
-	color: #065F46;
+	background: #064E3B;
+	color: #ECFDF5;
 	border: 1.5px solid #10B981;
 }
 
@@ -815,4 +896,63 @@
 .ppi-shift-select:focus {
 	border-color: #F59E0B;
 	box-shadow: 0 0 0 2px rgba(251,191,36,0.22);
+}
+/* ── Split button (Parallel Planning) ────────────────────────────────────── */
+.ppi-split-btn {
+	background: #DBEAFE;
+	border: 1px solid #3B82F6;
+	color: #1E40AF;
+	border-radius: 4px;
+	padding: 4px 8px;
+	height: 24px;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+	transition: all 0.2s ease;
+	outline: none;
+	pointer-events: auto !important;
+	z-index: 10;
+	position: relative;
+}
+
+.ppi-split-btn:hover {
+	background: #BFDBFE;
+	border-color: #2563EB;
+}
+
+.ppi-split-btn:active {
+	background: #93C5FD;
+	transform: scale(0.98);
+}
+
+.ppi-split-btn:focus {
+	outline: 2px solid #3B82F6;
+	outline-offset: 1px;
+}
+
+/* ── Control bar for parallel planning checkbox ──────────────────────────── */
+.ppi-control-bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid #e5e7eb;
+	background: #f9fafb;
+}
+
+.ppi-control-bar label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	cursor: pointer;
+	font-weight: 500;
+	color: #374151;
+	user-select: none;
+}
+
+.ppi-control-bar input[type="checkbox"] {
+	cursor: pointer;
+	width: 16px;
+	height: 16px;
 }
