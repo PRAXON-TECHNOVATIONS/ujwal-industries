@@ -312,14 +312,6 @@
 	color: #991B1B;
 }
 
-/* Safety: never show per-table import overlays.
-   Import status should appear only once in the global status bar above tables. */
-.ppi-hot-wrap .ppi-import-overlay,
-.ppi-hot-wrap .ppi-doc-overlay--imported,
-.ppi-hot-wrap .ppi-doc-overlay--import-error {
-	display: none !important;
-}
-
 /* Tab button */
 .ppi-stab {
 	display: inline-flex;
@@ -384,14 +376,19 @@
 	overflow: visible;
 }
 
+/* Active JS host for one overlay over FG+SFG+MR block */
+.ppi-overlay-zone {
+	position: relative;
+}
+
 /* Global import overlay should sit above all grid internals */
 .ppi-global-import-overlay {
 	z-index: 260 !important;
+	inset: 0 !important;
 }
 
-/* Hide top-right imported badge only for global overlay */
-.ppi-global-import-overlay .ppi-doc-overlay-badge,
-.ppi-global-import-overlay .ppi-overlay-error-msg {
+/* No badge for global import overlay; show only watermark */
+.ppi-global-import-overlay .ppi-doc-overlay-badge {
 	display: none !important;
 }
 
