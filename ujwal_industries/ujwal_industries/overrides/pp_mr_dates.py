@@ -1061,6 +1061,14 @@ def save_managed_dates(
     mr_data: list[dict[str, Any]] | str,
 ) -> dict[str, str]:
     """
+    Directly persist all date/type/supplier changes from the Manage Dates dialog
+    without triggering any before_save or validate hooks.
+
+    Uses frappe.db.set_value on each child-table row so that hooks like
+    set_planned_start_dates, set_subcontracting_suppliers, master_set_fg_dates_by_type,
+    and adjust_mr_items_and_propagate are completely bypassed — the manually chosen
+    dates are stored exactly as the user set them in the dialog.
+    
     Directly persist changes. Handles INSERT (for split rows) and UPDATE (for existing).
     Uses direct SQL for updates to guarantee values (like Qty) are persisted.
     """

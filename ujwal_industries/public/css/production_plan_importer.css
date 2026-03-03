@@ -667,7 +667,7 @@
 	position: absolute;
 	inset: 0;
 	pointer-events: none;
-	z-index: 120;
+	z-index: 10;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -710,7 +710,6 @@
 	position: absolute;
 	top: 12px;
 	right: 16px;
-	z-index: 121;
 	font-size: 11px;
 	font-weight: 700;
 	padding: 4px 14px;
@@ -736,17 +735,17 @@
 
 /* ── Import success overlay ──────────────────────────────────────────────── */
 .ppi-doc-overlay--imported {
-	background: rgba(209, 250, 229, 0.74);
+	background: rgba(209, 250, 229, 0.60);
 }
 
 .ppi-doc-overlay--imported::before {
 	content: "IMPORTED";
-	color: rgba(4, 120, 87, 0.24);
+	color: rgba(4, 120, 87, 0.15);
 }
 
 .ppi-doc-overlay--imported .ppi-doc-overlay-badge {
-	background: #064E3B;
-	color: #ECFDF5;
+	background: #D1FAE5;
+	color: #065F46;
 	border: 1.5px solid #10B981;
 }
 
