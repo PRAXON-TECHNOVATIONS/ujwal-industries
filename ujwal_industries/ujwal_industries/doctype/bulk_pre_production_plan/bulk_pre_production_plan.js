@@ -405,8 +405,7 @@ function render_fg_table(items) {
 	`;
 
 	items.forEach(function(item) {
-		const dur =_duration_label(item.planned_start_date, item.custom_planned_end_date, item.bom_no);
-
+		const dur = _duration_label(item.planned_start_date, item.custom_planned_end_date, item.bom_no);
 		const logic_html = `
 			<small class="text-muted">
 				Backward from delivery date<br>
