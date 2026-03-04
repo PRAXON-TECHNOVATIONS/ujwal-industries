@@ -5,7 +5,6 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-
 def validate_subcontracting_suppliers(doc: Document, method: str | None = None) -> None:
     """
     Validate Item Subcontracting Supplier table.
@@ -56,3 +55,52 @@ def validate_subcontracting_suppliers(doc: Document, method: str | None = None) 
             frappe.throw(
                 _("Row #{0}: Lead Time Days cannot be negative").format(idx)
             )
+
+
+def autoname(self, method):
+
+    if not self.item_group:
+        return
+    
+    stock_setting = frappe.get_single("Stock Settings")
+    
+    matched_row = None
+    if stock_setting.item_naming_series:
+        for row in stock_setting.item_naming_series:
+            if row.item_group == self.item_group:
+                matched_row = row
+                break
+    
+    if not matched_row:
+            frappe.throw(f"No Naming Series defined for Item Group in Stock Settings: {self.item_group}") 
+    
+    
+    from_start = int(matched_row.from_start)
+    to_end = int(matched_row.to_end) 
+    
+    frappe.db.sql(
+            """
+            SELECT current_no
+            FROM `tabItem Naming Series`
+            WHERE name = %s
+            FOR UPDATE
+            """,
+            matched_row.name,
+        )
+
+    current_no = frappe.db.get_value("Item Naming Series", matched_row.name, "current_no")
+
+    if not current_no:
+        next_no = from_start + 1
+    else:
+        next_no = int(current_no) + 1
+
+    if next_no > to_end:
+        frappe.throw(
+            f"Naming series out of range for Item Group {self.item_group}. "
+            f"Allowed Range: {from_start} to {to_end}"
+        )
+
+    self.name = str(next_no)
+
+    frappe.db.set_value("Item Naming Series", matched_row.name,"current_no",next_no)

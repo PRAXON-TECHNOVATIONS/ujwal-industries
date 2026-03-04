@@ -104,6 +104,10 @@ doctype_js = {
 # before_install = "ujwal_industries.install.before_install"
 # after_install = "ujwal_industries.install.after_install"
 
+after_install = "ujwal_industries.install.after_install"
+after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all",
+                 "ujwal_industries.install.after_install"]
+                
 # Uninstallation
 # ------------
 
@@ -117,7 +121,6 @@ doctype_js = {
 
 # before_app_install = "ujwal_industries.utils.before_app_install"
 # after_app_install = "ujwal_industries.utils.after_app_install"
-after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all"
 
 # Integration Cleanup
 # -------------------
@@ -151,7 +154,7 @@ permission_query_conditions = {
 # Override standard doctype classes
 
 override_doctype_class = {
-	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
+	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
 }
 
 # Document Events
@@ -160,8 +163,14 @@ override_doctype_class = {
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
+		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
+ 
+	"Stock Settings" :{
+		"validate": "ujwal_industries.ujwal_industries.overrides.stock_settings.validate",
+    },
+ 
  	"Stock Entry": {
         "validate": [
             "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
@@ -252,9 +261,11 @@ override_whitelisted_methods = {
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
-# override_doctype_dashboards = {
-# 	"Task": "ujwal_industries.task.get_dashboard_data"
-# }
+
+override_doctype_dashboards = {
+    
+	"Purchase Order" : "ujwal_industries.ujwal_industries.custom_dashboard.update_po_dashboard",
+}
 
 # exempt linked doctypes from being automatically cancelled
 #
@@ -322,47 +333,49 @@ standard_queries = {
 # Fixtures
 # --------
 fixtures = [
-	{
-		"doctype": "Workflow",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Purchase Order Approval",
-					"Supplier Approval",
-					"Material Request Approval",
-				),
-			]
-		],
-	},
-	{
-		"doctype": "Workspace",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Purchase",
-					"Sales",
-					"Manufacturing"
-				),
-			]
-		]
-	},
-	{
-		"doctype": "Role",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Store Manager",
-					"Sales Executive"
-				),
-			]
-		],
-	},
+	# {
+	# 	"doctype": "Workflow",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Purchase Order Approval",
+	# 				"Supplier Approval",
+	# 				"Material Request Approval",
+	# 			),
+	# 		]
+	# 	],
+	# },
+	# {
+	# 	"doctype": "Workspace",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Purchase",
+	# 				"Sales",
+	# 				"Manufacturing"
+	# 			),
+	# 		]
+	# 	]
+	# },
+	# {
+	# 	"doctype": "Role",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Store Manager",
+	# 				"Sales Executive"
+	# 			),
+	# 		]
+	# 	],
+	# },
+	
+ {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
 ]
 
 # Translation
