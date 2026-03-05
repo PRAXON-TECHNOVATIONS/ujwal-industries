@@ -243,6 +243,9 @@ scheduler_events = {
 			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
 		]
 	},
+	"hourly": [
+		"ujwal_industries.api.optimized_reorder.optimized_reorder_item"
+	],
 }
 
 # Testing
