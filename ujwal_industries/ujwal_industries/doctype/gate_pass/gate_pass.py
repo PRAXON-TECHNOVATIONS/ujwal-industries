@@ -104,23 +104,24 @@ def get_delivery_note_items(delivery_note):
 
 @frappe.whitelist()
 def get_po_items(po_number):
-    
-    if not po_number:
-        return []
-    
-    po_doc = frappe.get_doc("Purchase Order", po_number)
-    
-    items = []
+	
+	if not po_number:
+		return []
+	
+	po_doc = frappe.get_doc("Purchase Order", po_number)
+	
+	items = []
 
-    for row in po_doc.items:
-        items.append({
-            "item": row.item_code,
-            "qty": row.qty,
-            "uom": row.uom,
-            "description": row.description
-        })
-
-    return items
+	for row in po_doc.items:
+		items.append({
+			"item": row.item_code,
+			"qty": row.qty,
+			"uom": row.uom,
+			"description": row.description,
+			"po_item":row.name
+		})
+	print("......",items)
+	return items
 
 
 
