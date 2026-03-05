@@ -12,9 +12,16 @@
   "posting_date",
   "po_number",
   "delivery_note",
+  "column_break_xtif",
+  "supplier",
+  "plant",
   "section_break_dgts",
   "gate_pass_detail",
-  "amended_from"
+  "amended_from",
+  "more_info_tab",
+  "vehicle_no",
+  "column_break_k03z",
+  "vehicle_in_time"
  ],
  "fields": [
   {
@@ -78,13 +85,48 @@
    "print_hide": 1,
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "more_info_tab",
+   "fieldtype": "Tab Break",
+   "label": "More Info"
+  },
+  {
+   "fieldname": "vehicle_no",
+   "fieldtype": "Data",
+   "label": "Vehicle No"
+  },
+  {
+   "fieldname": "column_break_k03z",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "vehicle_in_time",
+   "fieldtype": "Time",
+   "label": "Vehicle In Time"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "column_break_xtif",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "plant",
+   "fieldtype": "Link",
+   "label": "Plant",
+   "options": "Warehouse"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-03-04 19:14:22.503604",
+ "modified": "2026-03-05 12:55:25.176900",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Gate Pass",
@@ -105,6 +147,7 @@
   }
  ],
  "row_format": "Dynamic",
+ "search_fields": "category, po_number",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

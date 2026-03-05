@@ -17,7 +17,16 @@ frappe.ui.form.on('Gate Pass', {
                     }
                 });
             })
-        }
+        };
+
+        cur_frm.fields_dict["po_number"].get_query = function(doc){
+            return {
+                filters: {
+                    'docstatus': 1,
+                }
+            }
+        };
+
 	},
     
     delivery_note: function(frm) {
@@ -41,6 +50,7 @@ frappe.ui.form.on('Gate Pass', {
                             row.qty = d.qty;
                             row.uom = d.uom;
                             row.description = d.description;
+                            row.po_item = d.po_item;
 
                         });
 
@@ -72,6 +82,7 @@ frappe.ui.form.on('Gate Pass', {
                             row.qty = d.qty;
                             row.uom = d.uom;
                             row.description = d.description;
+                            row.po_item = d.po_item;
 
                         });
 
