@@ -14,6 +14,7 @@
   "delivery_note",
   "column_break_xtif",
   "supplier",
+  "supplier_invoice",
   "plant",
   "section_break_dgts",
   "gate_pass_detail",
@@ -120,13 +121,18 @@
    "fieldtype": "Link",
    "label": "Plant",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "supplier_invoice",
+   "fieldtype": "Data",
+   "label": "Supplier Invoice"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-03-05 22:53:23.091267",
+ "modified": "2026-03-06 15:46:54.050635",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Gate Pass",
