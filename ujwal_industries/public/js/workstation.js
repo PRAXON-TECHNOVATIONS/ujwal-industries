@@ -1,5 +1,16 @@
 // Copyright (c) 2026, Ujwal Industries
 // Custom overrides for Workstation
+frappe.ui.form.on('Workstation', {
+    onload: function(frm) {
+        frm.set_query('custom_asset_name', function() {
+            return {
+                filters: {
+                    asset_category: 'Workstation'
+                }
+            };
+        });
+    }
+});
 
 frappe.ui.form.on("Workstation", {
 	setup: function(frm) {

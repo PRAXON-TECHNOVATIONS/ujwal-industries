@@ -63,7 +63,9 @@ doctype_js = {
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {
+	"Production Plan": "public/js/production_plan_list.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -223,11 +225,13 @@ doc_events = {
  	"Quality Inspection": {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
     },
-  
 	"BOM":{
   		"on_update_after_submit": "ujwal_industries.overrides.bom.on_update_validate_default_tool",
   		"validate": "ujwal_industries.overrides.bom.validate_default_tool",
-	}
+	},
+ 	"Asset Maintenance": {
+        "before_save": "ujwal_industries.ujwal_industries.overrides.asset_maintenance.set_end_date_from_asset",
+    }
 }
 
 # Scheduled Tasks
@@ -239,6 +243,9 @@ scheduler_events = {
 			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
 		]
 	},
+	"hourly": [
+		"ujwal_industries.api.optimized_reorder.optimized_reorder_item"
+	],
 }
 
 # Testing
