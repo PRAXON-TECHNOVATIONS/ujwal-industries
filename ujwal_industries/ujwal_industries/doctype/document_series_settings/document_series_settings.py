@@ -35,7 +35,11 @@ def get_next_number(doctype):
         "Document Series Settings",
         limit=1
     )
+    
+    # if not frappe.db.table_exists("tabDocument Series Settings"):
+    #     return None
 
+    
     if not settings:
         return None
 
