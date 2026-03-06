@@ -119,9 +119,15 @@ def get_columns():
         # --- Rejection ---
         {
             "fieldname": "rejected_qty",
-            "label": _("Rejection Qty Returned"),
+            "label": _("Rejected Qty"),
             "fieldtype": "Float",
-            "width": 150,
+            "width": 120,
+        },
+        {
+            "fieldname": "returned_qty",
+            "label": _("Return Qty"),
+            "fieldtype": "Float",
+            "width": 110,
         },
         {
             "fieldname": "uom",
@@ -172,6 +178,7 @@ def get_data(filters):
 
             /* Rejection */
             pri.rejected_qty              AS rejected_qty,
+            pri.returned_qty              AS returned_qty,
             pri.uom                       AS uom,
             pri.rejected_warehouse        AS rejected_warehouse
 
