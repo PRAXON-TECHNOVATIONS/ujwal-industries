@@ -347,7 +347,6 @@ function setup_production_tabs(frm) {
 
 
 function _duration_label(start_str, end_str, bom) {
-
     var tool_min = 0;
 
     frappe.call({
@@ -362,7 +361,6 @@ function _duration_label(start_str, end_str, bom) {
             }
         }
     });
-
     if (!start_str || !end_str) return '';
 
     const s = new Date(start_str);
@@ -373,13 +371,13 @@ function _duration_label(start_str, end_str, bom) {
     if (isNaN(diff_min) || diff_min <= 0) return '';
 
     if (diff_min >= 1440) {
-        return '~' + (diff_min / 1440).toFixed(1) + ' days';
+        return ['~' + (diff_min / 1440).toFixed(1) + ' days', parseInt((tool_min / 1440).toFixed(1))];
     }
 
     const h = Math.floor(diff_min / 60);
     const m = diff_min % 60;
 
-    return h ? h + 'h ' + m + 'm' : m + 'm';
+    return [h ? h + 'h ' + m + 'm' : m + 'm', 0];
 }
 
 function render_fg_table(items) {
@@ -410,7 +408,7 @@ function render_fg_table(items) {
 			<small class="text-muted">
 				Backward from delivery date<br>
 				via BOM production mins
-				${dur ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur + '</span>' : ''}
+				${dur[0] ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur[0] + '</span>' : ''}
 			</small>`;
 		html += `
 			<tr>
@@ -422,7 +420,8 @@ function render_fg_table(items) {
 					</span>
 				</td>
 				<td>${frappe.format(item.planned_start_date, {fieldtype: 'Datetime'})}</td>
-				<td>${item.custom_planned_end_date ? frappe.format(item.custom_planned_end_date, {fieldtype: 'Datetime'}) : '<span class="text-muted">—</span>'}</td>
+				
+				<td>${ addDays(item.custom_planned_end_date, dur[1]) ? frappe.format(addDays(item.custom_planned_end_date, dur[1]),{fieldtype: 'Datetime'}) : '<span class="text-muted">—</span>'}</td>
 				<td>${logic_html}</td>
 				<td><small>${item.bom_no || ''}</small></td>
 				<td><small>${item.warehouse || ''}</small></td>
@@ -434,6 +433,11 @@ function render_fg_table(items) {
 	return html;
 }
 
+function addDays(datetime, days) {
+    let d = new Date(datetime);
+    d.setDate(d.getDate() + days);
+    return d;
+}
 
 function render_sfg_table(items) {
 	if (!items || items.length === 0) {
@@ -471,7 +475,7 @@ function render_sfg_table(items) {
 			<small class="text-muted">
 				${parent_note}<br>
 				${logic_note}
-				${dur ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur + '</span>' : ''}
+				${dur[0] ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur[0] + '</span>' : ''}
 			</small>`;
 		html += `
 			<tr>
@@ -484,7 +488,7 @@ function render_sfg_table(items) {
 					</span>
 				</td>
 				<td>${frappe.format(item.schedule_date, {fieldtype: 'Datetime'})}</td>
-				<td>${frappe.format(item.custom_schedule_end_date, {fieldtype: 'Datetime'})}</td>
+				<td>${frappe.format(addDays(item.custom_schedule_end_date, dur[1]), {fieldtype: 'Datetime'})}</td>
 				<td>${logic_html}</td>
 				<td><small>${item.supplier || '-'}</small></td>
 				<td><small>${item.bom_no || ''}</small></td>

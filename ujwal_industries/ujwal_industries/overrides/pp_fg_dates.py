@@ -141,7 +141,6 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
         return
 
     combine_items = bool(doc.get("combine_items"))
-
     # A. Delivery Dates
     delivery_cache = _batch_fetch_delivery_dates(doc, combine_items)
 
