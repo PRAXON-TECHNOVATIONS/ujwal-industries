@@ -120,7 +120,6 @@ def get_po_items(po_number):
 			"description": row.description,
 			"po_item":row.name
 		})
-	print("......",items)
 	return items
 
 
@@ -187,5 +186,11 @@ def custom_make_purchase_receipt(source_name, gate_pass, target_doc=None, args=N
 		set_missing_values,
 	)
 	doc.custom_gate_pass = gate_pass
+	gp_doc = frappe.get_doc("Gate Pass",gate_pass)
+	for pr_item in doc.items:
+		for gp_item in gp_doc.gate_pass_detail:
+			if pr_item.item_code == gp_item.item:
+				pr_item.received_qty = gp_item.qty
+				pr_item.qty = gp_item.qty
 	doc.save()
 	return doc.name
