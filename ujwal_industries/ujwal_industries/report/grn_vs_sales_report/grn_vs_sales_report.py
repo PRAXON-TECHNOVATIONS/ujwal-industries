@@ -1,6 +1,8 @@
 import frappe
 from frappe import _
 from frappe.utils import nowdate
+from itertools import zip_longest
+
 
 def execute(filters=None):
     columns = get_columns(filters)
@@ -24,7 +26,8 @@ def get_columns(filters):
         {"label": _("PO Delivery Date"), "fieldname": "schedule_date", "fieldtype": "Date", "width": 150},
         
         {"label": _("Purchase Invoice Value (Basic)"), "fieldname": "net_total", "fieldtype": "Data", "width": 250},
-        {"label": _("FG Description"), "fieldname": "item_name", "fieldtype": "Link", "options": 'Item',"width": 200},
+        
+        {"label": _("FG Description"), "fieldname": "fg_item_name", "fieldtype": "Link", "options": 'Item',"width": 200},
         {"label": _("Qty Produce"), "fieldname": "fg_completed_qty", "fieldtype": "Int", "width": 110},
         {"label": _("Qty Sale"), "fieldname": "qty_sale", "fieldtype": "Int", "width": 100},
         
@@ -42,16 +45,16 @@ def get_data(filters):
 	from_date = filters.get("from_date")
 	to_date = filters.get("to_date")
  
-	conditions = ""
+	pr_conditions = ""
 	
 	if filters.get("purchase_receipt"):
-		conditions += " AND pr.name = %(purchase_receipt)s"
+		pr_conditions += " AND pr.name = %(purchase_receipt)s"
   
 	if from_date:
-		conditions += " AND pr.posting_date >= %(from_date)s"
+		pr_conditions += " AND pr.posting_date >= %(from_date)s"
 
 	if to_date:
-		conditions += " AND pr.posting_date <= %(to_date)s"
+		pr_conditions += " AND pr.posting_date <= %(to_date)s"
     
 	data = []
  
@@ -59,8 +62,8 @@ def get_data(filters):
 		SELECT 
 			pr.name as purchase_receipt,
 			pr.posting_date,
-			pr.custom_supplier_invoice_no,
-			pr.custom_supplier_document_date,
+			pr.bill_no,
+			pr.bill_date,
 			pr.supplier,
 			pi.total
 		FROM `tabPurchase Receipt` pr
@@ -69,7 +72,7 @@ def get_data(filters):
 		LEFT JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent				
 		WHERE 1=1
 		AND pr.docstatus = 1
-		{conditions}
+		{pr_conditions}
 		GROUP BY pr.name
 	""", filters, as_dict=True)
 	
@@ -89,8 +92,8 @@ def get_data(filters):
 			"indent": 0,
 			'purchase_receipt' : row['purchase_receipt'],
 			'posting_date' : row['posting_date'],
-			'supplier_invoice_no' : row['custom_supplier_invoice_no'],
-			'supplier_document_date' : row['custom_supplier_document_date'],
+			'supplier_invoice_no' : row['bill_no'],
+			'supplier_document_date' : row['bill_date'],
 			'supplier' : row['supplier'],
 			'po_no' : po_item[0] if len(po_item) > 0 else '',	
 			'po_date' : po_date,	
@@ -114,9 +117,78 @@ def get_data(filters):
 				"indent": 1,
 				'item_code' : pr['item_code'],
 				'qty' : pr['qty'],
-				'qty' : pr['qty'],
 				'item_descriptio' : pr['description'],
 				'schedule_date' : pr['schedule_date'],
 			})
 
-	return data
+	# ////////////////////////////////////////////////////////////////////
+	se_conditions = ""
+	
+	if from_date:
+		se_conditions += " AND se.posting_date >= %(from_date)s"
+
+	if to_date:
+		se_conditions += " AND se.posting_date <= %(to_date)s"
+  
+	sales_data_1 = []
+	sales_data = frappe.db.sql(f"""
+		SELECT 
+			se.name as stock_entry,
+			se.posting_date,
+			sed.item_code,
+			sed.qty
+		FROM `tabStock Entry` se
+		LEFT JOIN `tabStock Entry Detail` sed ON sed.parent = se.name
+		WHERE 1=1
+		AND se.docstatus = 1
+		AND se.stock_entry_type = 'Manufacture'
+		AND sed.is_finished_item = 1
+		{se_conditions}
+	""", filters, as_dict=True)
+	
+	for sales in sales_data:
+		sales_data_1.append({
+			'fg_item_name': sales['item_code'],
+			'fg_completed_qty': sales['qty'],
+		})
+  
+		si_item = frappe.db.sql("""
+				SELECT 
+					sii.qty,
+					si.name,
+					si.posting_date,
+					sii.base_net_amount
+				FROM `tabSales Invoice Item` sii
+				LEFT JOIN `tabSales Invoice` si ON si.name = sii.parent
+				WHERE sii.item_code = %s
+				AND si.posting_date = %s
+			""", (sales['item_code'], sales['posting_date']), as_dict=True)
+  
+		for sitem in si_item:
+			sales_data_1.append({
+				'qty_sale': sitem['qty'],
+				'sales_invoice': sitem['name'],
+				'sales_invoice_date': sitem['posting_date'],
+				'base_net_total': sitem['base_net_amount'],
+			})
+	
+	output = []
+  
+	output = []
+
+	data_len = len(data)
+	sales_len = len(sales_data_1)
+
+	for i in range(max(data_len, sales_len)):
+		row = {}
+
+		if i < data_len:
+			row.update(data[i])
+
+		if i < sales_len:
+			row.update(sales_data_1[i])
+
+		output.append(row)
+
+	return output
+   
