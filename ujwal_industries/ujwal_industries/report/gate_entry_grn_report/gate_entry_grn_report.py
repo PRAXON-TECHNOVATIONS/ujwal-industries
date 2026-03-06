@@ -54,6 +54,7 @@ def get_data(filters):
             gp.po_number,
             gp.vehicle_no,
             gp.vehicle_in_time,
+            gp.supplier_invoice,
             gp.supplier,
             gp.plant,
             po.transaction_date,
@@ -73,11 +74,12 @@ def get_data(filters):
 	data = []
  
 	for po in gp_data:
-		pi_item = []
-		pi_item_list = frappe.get_all("Purchase Invoice Item", filters={'purchase_order': po["po_number"]}, fields=['*'])
-		for i in pi_item_list:
-			if i.parent not in pi_item:
-				pi_item.append(i.parent)
+     
+		# pi_item = []
+		# pi_item_list = frappe.get_all("Purchase Invoice Item", filters={'purchase_order': po["po_number"]}, fields=['*'])
+		# for i in pi_item_list:
+		# 	if i.parent not in pi_item:
+		# 		pi_item.append(i.parent)
 			
 		data.append({
 			"indent": 0,
@@ -92,7 +94,7 @@ def get_data(filters):
 			"purchase_receipt": po["purchase_receipt"],
 			"posting_time": po["posting_time"],
 			"gr_posting_date": po["posting_date"],
-			"supplier_invoice_no": "', '".join(pi_item),
+			"supplier_invoice_no": po['supplier_invoice'],
 		})
   
 		po_items = frappe.db.sql("""
@@ -106,6 +108,7 @@ def get_data(filters):
 			LEFT JOIN `tabGate Pass Detail` gpd ON gpd.po_item = poi.name
 			LEFT JOIN `tabPurchase Receipt Item` pri ON pri.purchase_order_item = poi.name
 			WHERE poi.parent = %s
+			AND pri.docstatus != 2 
 		""", po["po_number"], as_dict=True)
 
 		item_map = {}
@@ -125,8 +128,8 @@ def get_data(filters):
 			data.append({
 				"indent": 1,
 				"item_code": val["item_code"],
-				"po_qty": val["po_qty"],
 				"gate_qty": val["gate_qty"],
+				"po_qty": val["po_qty"],
 				"grn_qty": val["grn_qty"],
 			})
 
