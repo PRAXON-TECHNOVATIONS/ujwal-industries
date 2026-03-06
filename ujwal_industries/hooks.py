@@ -231,6 +231,9 @@ doc_events = {
 	},
  	"Asset Maintenance": {
         "before_save": "ujwal_industries.ujwal_industries.overrides.asset_maintenance.set_end_date_from_asset",
+    },
+	"*": {
+        "autoname": "ujwal_industries.api.naming_series.numeric_series"
     }
 }
 
