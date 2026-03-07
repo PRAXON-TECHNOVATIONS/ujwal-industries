@@ -367,17 +367,18 @@ function _duration_label(start_str, end_str, bom) {
     const e = new Date(end_str);
 
     const diff_min = Math.round((e - s) / 60000) + tool_min;
+    // const diff_min = Math.round((e - s) / 60000);
 
     if (isNaN(diff_min) || diff_min <= 0) return '';
 
     if (diff_min >= 1440) {
-        return ['~' + (diff_min / 1440).toFixed(1) + ' days', parseInt((tool_min / 1440).toFixed(1))];
+        return ['~' + (diff_min / 1440).toFixed(1) + ' days', parseInt((tool_min / 1440).toFixed(1)),  + (tool_min / 1440).toFixed(1) + ' PM days',];
     }
 
     const h = Math.floor(diff_min / 60);
     const m = diff_min % 60;
 
-    return [h ? h + 'h ' + m + 'm' : m + 'm', 0];
+    return [h ? h + 'h ' + m + 'm' : m + 'm', 0, 0];
 }
 
 function render_fg_table(items) {
@@ -407,8 +408,8 @@ function render_fg_table(items) {
 		const logic_html = `
 			<small class="text-muted">
 				Backward from delivery date<br>
-				via BOM production mins
-				${dur[0] ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur[0] + '</span>' : ''}
+				via BOM production mins + ${dur[2] ? dur[2] : ''}
+				${dur[0] ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur[0] +'</span>' : ''}
 			</small>`;
 		html += `
 			<tr>
@@ -474,7 +475,7 @@ function render_sfg_table(items) {
 		const logic_html = `
 			<small class="text-muted">
 				${parent_note}<br>
-				${logic_note}
+				${logic_note + ' + ' + dur[2]} 
 				${dur[0] ? '<br><span class="badge badge-light" style="font-size:11px;">' + dur[0] + '</span>' : ''}
 			</small>`;
 		html += `
