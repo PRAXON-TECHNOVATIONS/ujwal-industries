@@ -1188,7 +1188,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			lt_result = get_supplier_lead_time(mr_row.item_code, mr_row.custom_supplier, doc.company)
 			lead_time_days = lt_result.get("lead_time_days", 0)
 		grn_days_mr = mr_grn_days_map.get(mr_row.item_code, 0)
-
+		print("...........................lead_time_days............................",lead_time_days)
 		# RM needs to arrive by parent SFG schedule_date
 		# custom_start_date = when to order = schedule - lead_time - grn_days
 		mr_row.schedule_date = earliest_sfg_schedule
