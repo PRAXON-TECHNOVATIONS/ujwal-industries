@@ -25,3 +25,39 @@ function set_operation_filter(frm) {
         };
     });
 }
+
+frappe.ui.form.on("BOM Operation", {
+    form_render(frm, cdt, cdn) {
+        let row = locals[cdt][cdn];
+        let grid_row = frm.fields_dict.operations.grid.grid_rows_by_docname[cdn];
+
+        if (!grid_row.grid_form) return;
+
+        let wrapper = $(grid_row.grid_form.fields_dict.custom_machine.wrapper);
+        wrapper.empty();
+
+        let control = frappe.ui.form.make_control({
+            parent: wrapper,
+            df: {
+                fieldtype: "MultiSelectList",
+                placeholder: "Select Workstations",
+
+                get_data: function(txt) {
+                    return frappe.db.get_link_options("Workstation", txt);
+                },
+                change: function() {
+                    let values = control.get_value() || [];
+                    frappe.model.set_value(cdt, cdn, "custom_workstations_csv", values.join(","));
+                    frm.dirty();
+                }
+            },
+            render_input: true
+        });
+        control.refresh();
+        if (row.custom_workstations_csv) {
+            let values = row.custom_workstations_csv.split(",");
+            control.set_value(values);
+        }
+
+    }
+});
