@@ -62,17 +62,22 @@ def autoname(self, method):
     if not self.item_group:
         return
     
+    parent_item_group = frappe.db.get_value("Item Group", self.item_group, "parent_item_group")
+
+    if not parent_item_group:
+        frappe.throw(f"Parent Item Group not found for Item Group: {self.item_group}")
+
     stock_setting = frappe.get_single("Stock Settings")
     
     matched_row = None
     if stock_setting.item_naming_series:
         for row in stock_setting.item_naming_series:
-            if row.item_group == self.item_group:
+            if row.item_group == parent_item_group:
                 matched_row = row
                 break
     
     if not matched_row:
-            frappe.throw(f"No Naming Series defined for Item Group in Stock Settings: {self.item_group}") 
+            frappe.throw(f"No Naming Series Defined for Parent Item Group in Stock Settings<br> <b>{parent_item_group}</b>")
     
     
     from_start = int(matched_row.from_start)
