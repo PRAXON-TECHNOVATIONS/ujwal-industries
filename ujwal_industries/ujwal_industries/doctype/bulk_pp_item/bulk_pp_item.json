@@ -9,10 +9,12 @@
   "include_exploded_items",
   "item_code",
   "bom_no",
+  "custom_workstations_csv",
   "column_break_1",
   "planned_qty",
   "stock_uom",
   "warehouse",
+  "target_warehouse",
   "planned_start_date",
   "custom_planned_end_date",
   "custom_schedule_end_date",
@@ -60,6 +62,11 @@
    "reqd": 1
   },
   {
+   "fieldname": "custom_workstations_csv",
+   "fieldtype": "Small Text",
+   "label": "Selected Workstations"
+  },
+  {
    "fieldname": "column_break_1",
    "fieldtype": "Column Break"
   },
@@ -89,6 +96,13 @@
    "in_list_view": 1,
    "label": "Finished Goods Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "target_warehouse",
+   "fieldtype": "Link",
+   "label": "Target Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
   },
   {
    "default": "Today",

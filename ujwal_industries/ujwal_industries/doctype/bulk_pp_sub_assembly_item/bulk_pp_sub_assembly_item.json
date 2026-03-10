@@ -15,6 +15,7 @@
   "column_break_1",
   "qty",
   "bom_no",
+  "custom_workstations_csv",
   "bom_level",
   "type_of_manufacturing",
   "supplier",
@@ -99,6 +100,11 @@
    "in_list_view": 1,
    "label": "Bom No",
    "options": "BOM"
+  },
+  {
+   "fieldname": "custom_workstations_csv",
+   "fieldtype": "Small Text",
+   "label": "Selected Workstations"
   },
   {
    "columns": 1,
