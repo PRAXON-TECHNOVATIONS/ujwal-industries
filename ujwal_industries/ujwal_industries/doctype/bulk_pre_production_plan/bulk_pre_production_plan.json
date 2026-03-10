@@ -20,7 +20,9 @@
   "start_pre_production",
   "sales_orders",
   "section_break_production_items",
+  "custom_planning_mode",
   "production_items_html",
+  "custom_batch_schedule",
   "po_items",
   "sub_assembly_items",
   "mr_items",
@@ -111,9 +113,23 @@
    "label": "Production Plan Items"
   },
   {
+   "default": "Sequential",
+   "fieldname": "custom_planning_mode",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Planning Mode",
+   "options": "Sequential\nParallel"
+  },
+  {
    "fieldname": "production_items_html",
    "fieldtype": "HTML",
    "label": "Production Items Tabs"
+  },
+  {
+   "fieldname": "custom_batch_schedule",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Batch Schedule JSON"
   },
   {
    "fieldname": "po_items",

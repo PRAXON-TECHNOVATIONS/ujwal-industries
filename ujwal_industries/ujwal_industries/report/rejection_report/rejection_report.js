@@ -64,6 +64,9 @@ frappe.query_reports["Rejection Report"] = {
 		if (column.fieldname === "rejected_qty" && data && data.rejected_qty > 0) {
 			value = `<span style="color: #dc2626; font-weight: 600;">${value}</span>`;
 		}
+		if (column.fieldname === "returned_qty" && data && data.returned_qty > 0) {
+			value = `<span style="color: #d97706; font-weight: 600;">${value}</span>`;
+		}
 		return value;
 	},
 };
