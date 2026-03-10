@@ -926,7 +926,6 @@ def generate_production_plan_items(docname: str, planning_mode: str | None = Non
 
 	if planning_mode:
 		doc.custom_planning_mode = planning_mode
-		frappe.db.set_value("Bulk Pre Production Plan", docname, "custom_planning_mode", planning_mode)
 
 	if not doc.sales_orders:
 		frappe.throw(_("No Sales Orders found. Please fetch Sales Orders first."))
