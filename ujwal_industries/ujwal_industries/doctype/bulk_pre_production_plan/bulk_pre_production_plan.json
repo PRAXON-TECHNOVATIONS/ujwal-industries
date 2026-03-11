@@ -117,13 +117,12 @@
   {
    "fieldname": "bom_selections",
    "fieldtype": "Table",
+   "hidden": 1,
    "label": "Sales Order Items",
    "no_copy": 1,
    "options": "Bulk PP BOM Selection"
   },
   {
-   "collapsible": 0,
-
    "depends_on": "eval: doc.po_items && doc.po_items.length > 0",
    "fieldname": "section_break_production_items",
    "fieldtype": "Section Break",
@@ -248,13 +247,8 @@
  "icon": "fa fa-calendar",
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
- "links": [
-  {
-   "link_doctype": "Production Plan",
-   "link_fieldname": "custom_bulk_pre_production_plan"
-  }
- ],
- "modified": "2026-03-10 19:44:38.580527",
+ "links": [],
+ "modified": "2026-03-11 13:01:26.579171",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",
