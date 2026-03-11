@@ -629,6 +629,13 @@ function _render_sequential_grid(frm, so_data, container) {
 		{
 			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false, filter: false,
 			editable: true,
+			autoHeight: true,
+			cellStyle: {
+				whiteSpace: 'normal',
+				lineHeight: '1.35',
+				paddingTop: '6px',
+				paddingBottom: '6px'
+			},
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1094,6 +1101,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		{
 			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
 			editable: p => !!p.data?._is_group,
+			autoHeight: true,
+			cellStyle: p => p.data?._is_group ? {
+				whiteSpace: 'normal',
+				lineHeight: '1.35',
+				paddingTop: '6px',
+				paddingBottom: '6px'
+			} : null,
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1315,17 +1329,10 @@ function _fg_section_html(fg_items, so_name) {
 			</td>
 			<td style="padding:10px 14px; position:relative; overflow:visible;">
 				<div
-					role="button"
-					tabindex="0"
-					class="bpp-fg-machine-trigger"
+					class="bpp-fg-machine-inline"
 					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
-					title="${frappe.utils.escape_html(_machine_button_label(item.custom_workstations_csv))}"
-					style="cursor:pointer;"
-				>${_machine_display_html(item.custom_workstations_csv, item.batchsize || 0)}</div>
-				<div
-					class="bpp-fg-machine-editor-host"
-					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
-					style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:25;padding:12px;border:1px solid #CBD5E1;border-radius:10px;background:#fff;box-shadow:0 10px 25px rgba(15,23,42,.12);min-width:320px;max-width:420px;"
+					data-csv="${frappe.utils.escape_html(item.custom_workstations_csv || '')}"
+					style="min-width:200px;cursor:pointer;"
 				></div>
 			</td>
 		</tr>`;
@@ -1447,23 +1454,12 @@ function _machine_button_label(csv_value) {
 	return values.join(', ');
 }
 
-function _machine_button_html(csv_value) {
-	const values = _parse_csv_list(csv_value);
-	const title = values.join(', ');
-	return `<button type="button"
-		class="bpp-machine-trigger"
-		title="${frappe.utils.escape_html(title || 'Select Workstations')}"
-		style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:4px 8px;font-size:12px;color:#334155;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-		${frappe.utils.escape_html(_machine_button_label(csv_value))}
-	</button>`;
-}
-
 function _machine_summary_html(batchsize, csv_value) {
 	const count = _parse_csv_list(csv_value).length;
 	const spm = Number(batchsize || 0) * count;
-	return `<div style="margin-top:6px;font-size:11px;color:#475569;white-space:nowrap;">
+	return `<div style="margin-top:4px;font-size:10px;color:#64748b;white-space:nowrap;">
 		<span>Machines: <strong>${count}</strong></span>
-		<span style="margin-left:8px;">SPM: <strong>${spm}</strong></span>
+		<span style="margin-left:6px;">SPM: <strong>${spm}</strong></span>
 	</div>`;
 }
 
@@ -1487,12 +1483,31 @@ function _find_bpp_row(frm, row_name, row_type) {
 		: (frm.doc.sub_assembly_items || []).find(item => item.name === row_name || item.row_name === row_name);
 }
 
+/* ── Tag / pill styles shared by all inline machine editors ─────────── */
+const _TAG_STYLE = 'display:inline-flex;align-items:center;gap:3px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:2px 8px 2px 10px;font-size:11px;color:#1E40AF;font-weight:500;white-space:nowrap;margin:2px;';
+const _TAG_REMOVE_STYLE = 'cursor:pointer;border:none;background:none;color:#3B82F6;font-size:13px;line-height:1;padding:0 1px;font-weight:700;';
+const _TAG_INPUT_STYLE = 'border:none;outline:none;font-size:12px;color:#334155;min-width:90px;flex:1;padding:4px 2px;background:transparent;';
+const _TAG_WRAPPER_STYLE = 'display:flex;flex-wrap:wrap;align-items:center;border:1px solid #CBD5E1;border-radius:6px;background:#fff;padding:3px 4px;min-height:32px;cursor:text;position:relative;box-sizing:border-box;';
+const _DROPDOWN_STYLE = 'position:absolute;left:0;right:0;top:100%;z-index:100;background:#fff;border:1px solid #CBD5E1;border-top:none;border-radius:0 0 6px 6px;max-height:180px;overflow-y:auto;box-shadow:0 8px 20px rgba(15,23,42,.12);';
+const _DROPDOWN_ITEM_STYLE = 'padding:7px 12px;font-size:12px;color:#334155;cursor:pointer;';
+const _DROPDOWN_ITEM_HOVER = 'background:#EFF6FF;color:#1E40AF;';
+
+function _render_machine_tags(values) {
+	if (!values.length) return '';
+	return values.map(v =>
+		`<span class="bpp-machine-tag" data-value="${frappe.utils.escape_html(v)}" style="${_TAG_STYLE}">
+			${frappe.utils.escape_html(v)}
+			<button type="button" class="bpp-machine-tag-remove" data-value="${frappe.utils.escape_html(v)}" style="${_TAG_REMOVE_STYLE}" title="Remove">&times;</button>
+		</span>`
+	).join('');
+}
+
 function _machine_display_html(csv_value, batchsize, fallback_csv = '') {
 	const effective_csv = csv_value || fallback_csv || '';
 	const values = _parse_csv_list(effective_csv);
 	const label = values.length ? values.join(', ') : 'Select';
-	return `<div style="height:100%;display:flex;align-items:center;">
-		<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;min-width:300px;max-width:420px;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-sizing:border-box;">
+	return `<div style="height:100%;display:flex;align-items:center;width:100%;">
+		<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;width:100%;text-align:left;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.35;">
 			${frappe.utils.escape_html(label)}
 		</div>
 	</div>`;
@@ -1509,92 +1524,222 @@ function _get_workstation_options(txt) {
 	}).then(r => (r.message || []).map(option => option.value || option.name || option));
 }
 
+/**
+ * Creates a reusable inline tag autocomplete widget.
+ * Returns { el, getValues, destroy } where el is the DOM element to mount.
+ * onchange(csv_string) is called on every add/remove.
+ */
+function _create_inline_tag_editor(initial_csv, onchange) {
+	const wrapper = document.createElement('div');
+	wrapper.style.cssText = _TAG_WRAPPER_STYLE;
+
+	const tagsContainer = document.createElement('span');
+	tagsContainer.style.cssText = 'display:contents;';
+	wrapper.appendChild(tagsContainer);
+
+	const input = document.createElement('input');
+	input.type = 'text';
+	input.placeholder = 'Type to add…';
+	input.style.cssText = _TAG_INPUT_STYLE;
+	input.setAttribute('autocomplete', 'off');
+	wrapper.appendChild(input);
+
+	const dropdown = document.createElement('div');
+	dropdown.style.cssText = _DROPDOWN_STYLE;
+	dropdown.style.display = 'none';
+	wrapper.appendChild(dropdown);
+
+	let selected = _parse_csv_list(initial_csv);
+	let options = [];
+	let highlightIdx = -1;
+	let _searchTimeout = null;
+	let _destroyed = false;
+
+	function _renderTags() {
+		tagsContainer.innerHTML = _render_machine_tags(selected);
+		tagsContainer.querySelectorAll('.bpp-machine-tag-remove').forEach(btn => {
+			btn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				const val = btn.getAttribute('data-value');
+				selected = selected.filter(v => v !== val);
+				_renderTags();
+				_fireChange();
+			});
+		});
+		if (!selected.length) {
+			input.placeholder = 'Type to add…';
+		} else {
+			input.placeholder = '';
+		}
+	}
+
+	function _fireChange() {
+		if (onchange) onchange(selected.join(','));
+	}
+
+	function _renderDropdown() {
+		const filtered = options.filter(o => !selected.includes(o));
+		if (!filtered.length || _destroyed) {
+			dropdown.style.display = 'none';
+			dropdown.innerHTML = '';
+			return;
+		}
+		highlightIdx = Math.min(highlightIdx, filtered.length - 1);
+		dropdown.innerHTML = filtered.map((o, i) => {
+			const hl = i === highlightIdx ? _DROPDOWN_ITEM_HOVER : '';
+			return `<div class="bpp-machine-dd-item" data-value="${frappe.utils.escape_html(o)}" style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o)}</div>`;
+		}).join('');
+		dropdown.style.display = 'block';
+		dropdown.querySelectorAll('.bpp-machine-dd-item').forEach(item => {
+			item.addEventListener('mousedown', (e) => {
+				e.preventDefault();
+				const val = item.getAttribute('data-value');
+				if (val && !selected.includes(val)) {
+					selected.push(val);
+					_renderTags();
+					_fireChange();
+				}
+				input.value = '';
+				_searchOptions('');
+				input.focus();
+			});
+			item.addEventListener('mouseenter', () => {
+				item.style.background = '#EFF6FF';
+				item.style.color = '#1E40AF';
+			});
+			item.addEventListener('mouseleave', () => {
+				item.style.background = '';
+				item.style.color = '#334155';
+			});
+		});
+	}
+
+	function _searchOptions(txt) {
+		_get_workstation_options(txt).then(results => {
+			if (_destroyed) return;
+			options = results || [];
+			highlightIdx = -1;
+			_renderDropdown();
+		});
+	}
+
+	input.addEventListener('input', () => {
+		clearTimeout(_searchTimeout);
+		_searchTimeout = setTimeout(() => _searchOptions(input.value), 200);
+	});
+
+	input.addEventListener('focus', () => {
+		_searchOptions(input.value);
+	});
+
+	input.addEventListener('blur', () => {
+		setTimeout(() => {
+			dropdown.style.display = 'none';
+		}, 200);
+	});
+
+	input.addEventListener('keydown', (e) => {
+		const filtered = options.filter(o => !selected.includes(o));
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			highlightIdx = highlightIdx < 0 ? 0 : Math.min(highlightIdx + 1, filtered.length - 1);
+			_renderDropdown();
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			highlightIdx = highlightIdx <= 0 ? 0 : highlightIdx - 1;
+			_renderDropdown();
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			if (filtered.length && highlightIdx >= 0 && highlightIdx < filtered.length) {
+				const val = filtered[highlightIdx];
+				if (!selected.includes(val)) {
+					selected.push(val);
+					_renderTags();
+					_fireChange();
+				}
+				input.value = '';
+				highlightIdx = 0;
+				_searchOptions('');
+			}
+		} else if (e.key === 'Backspace' && !input.value && selected.length) {
+			selected.pop();
+			_renderTags();
+			_fireChange();
+		}
+	});
+
+	wrapper.addEventListener('click', () => input.focus());
+
+	_renderTags();
+
+	return {
+		el: wrapper,
+		getValues: () => selected.slice(),
+		getCsv: () => selected.join(','),
+		setValues: (vals) => {
+			selected = vals.slice();
+			_renderTags();
+		},
+		focus: () => input.focus(),
+		destroy: () => {
+			_destroyed = true;
+			clearTimeout(_searchTimeout);
+		}
+	};
+}
+
+/**
+ * AG Grid cell editor — inline tag autocomplete (no popup).
+ */
 class WorkstationPopupEditor {
 	init(params) {
 		this.params = params;
-		this.eGui = document.createElement('div');
-		this.eGui.style.cssText = 'min-width:280px;max-width:340px;padding:12px;background:#fff;border:1px solid #CBD5E1;border-radius:10px;box-shadow:0 10px 25px rgba(15,23,42,.15);';
-
-		this.summary = document.createElement('div');
-		this.summary.style.marginBottom = '10px';
-		this.eGui.appendChild(this.summary);
-
-		this.controlHost = document.createElement('div');
-		this.eGui.appendChild(this.controlHost);
-
-		const footer = document.createElement('div');
-		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:10px;';
-		this.applyBtn = document.createElement('button');
-		this.applyBtn.type = 'button';
-		this.applyBtn.textContent = 'Apply';
-		this.applyBtn.style.cssText = 'border:1px solid #16A34A;background:#16A34A;color:#fff;border-radius:4px;padding:5px 10px;font-size:12px;';
-		footer.appendChild(this.applyBtn);
-		this.eGui.appendChild(footer);
-
-		this.applyBtn.addEventListener('click', async () => {
-			const selected_csv = this.getValue();
-			const frm = this.params.frm;
-			const row_name = this.params.row_name;
-			const row_type = this.params.row_type || 'sfg';
-			const machine_count = _parse_csv_list(selected_csv).length;
-			const spm = Number(this.params.base_batchsize || 0) * machine_count;
-			if (frm && row_name) {
-				const row = _find_bpp_row(frm, row_name, row_type);
-				if (row) {
-					row.custom_workstations_csv = selected_csv;
-					row.machine_count = machine_count;
-					row.spm = spm;
-					_mark_bom_form_dirty(frm);
-					if (row.doctype && row.name) {
-						await frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv);
-						await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
-						await frappe.model.set_value(row.doctype, row.name, 'machine_count', machine_count);
-					}
-					if (row_type === 'sfg') {
-						frm.refresh_field('sub_assembly_items');
-					} else if (row_type === 'fg') {
-						frm.refresh_field('po_items');
-					}
-				}
-			}
-			_sync_parallel_schedule_override(frm, row_name, row_type, {
-				custom_workstations_csv: selected_csv,
-				machine_count,
-				spm
-			});
-			if (this.params.data) {
-				this.params.data.custom_workstations_csv = selected_csv;
-				this.params.data.machine_count = machine_count;
-				this.params.data.spm = spm;
-			}
-			if (this.params.api) {
-				this.params.api.refreshCells({ force: true });
-			}
-			this.params.stopEditing();
-		});
-		this.control = frappe.ui.form.make_control({
-			parent: this.controlHost,
-			df: {
-				fieldtype: 'MultiSelectList',
-				placeholder: __('Select Workstations'),
-				get_data(txt) {
-					return _get_workstation_options(txt);
-				},
-				change: () => this.renderSummary()
-			},
-			render_input: true
-		});
-		this.control.refresh();
-		const selected = _parse_csv_list(params.value || '');
-		if (selected.length) {
-			this.control.set_value(selected);
-		}
-		this.renderSummary();
+		this._tags = _create_inline_tag_editor(
+			params.value || '',
+			(csv) => this._onTagChange(csv)
+		);
+		this.eGui = this._tags.el;
+		const popupWidth = Math.max(220, (params.column?.getActualWidth?.() || 340) - 16);
+		this.eGui.style.boxSizing = 'border-box';
+		this.eGui.style.width = `${popupWidth}px`;
+		this.eGui.style.minWidth = `${popupWidth}px`;
+		this.eGui.style.maxWidth = `${popupWidth}px`;
+		this.eGui.style.marginLeft = '8px';
 	}
 
-	renderSummary() {
-		const selected = this.control?.get_value() || [];
-		this.summary.innerHTML = _machine_summary_html(this.params.base_batchsize || 0, selected.join(','));
+	async _onTagChange(csv) {
+		const frm = this.params.frm;
+		const row_name = this.params.row_name;
+		const row_type = this.params.row_type || 'sfg';
+		const machine_count = _parse_csv_list(csv).length;
+		const spm = Number(this.params.base_batchsize || 0) * machine_count;
+		if (frm && row_name) {
+			const row = _find_bpp_row(frm, row_name, row_type);
+			if (row) {
+				row.custom_workstations_csv = csv;
+				row.machine_count = machine_count;
+				row.spm = spm;
+				_mark_bom_form_dirty(frm);
+				if (row.doctype && row.name) {
+					await frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', csv);
+					await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+					await frappe.model.set_value(row.doctype, row.name, 'machine_count', machine_count);
+				}
+			}
+		}
+		_sync_parallel_schedule_override(frm, row_name, row_type, {
+			custom_workstations_csv: csv,
+			machine_count,
+			spm
+		});
+		if (this.params.data) {
+			this.params.data.custom_workstations_csv = csv;
+			this.params.data.machine_count = machine_count;
+			this.params.data.spm = spm;
+		}
+		if (this.params.api) {
+			this.params.api.refreshCells({ force: true });
+		}
 	}
 
 	getGui() {
@@ -1602,13 +1747,11 @@ class WorkstationPopupEditor {
 	}
 
 	afterGuiAttached() {
-		if (this.control?.$input) {
-			this.control.$input.focus();
-		}
+		this._tags.focus();
 	}
 
 	getValue() {
-		return (this.control?.get_value() || []).join(',');
+		return this._tags.getCsv();
 	}
 
 	isPopup() {
@@ -1618,119 +1761,10 @@ class WorkstationPopupEditor {
 	getPopupPosition() {
 		return 'under';
 	}
-}
 
-function _close_fg_workstation_popover() {
-	$('.bpp-fg-machine-editor-host').empty().hide();
-}
-
-function _open_workstation_selector(frm, row, row_type, context = {}) {
-	if (!row?.bom_no || row_type !== 'fg') {
-		if (!row?.bom_no) {
-			frappe.msgprint(__('Please select a BOM first.'));
-		}
-		return;
+	destroy() {
+		if (this._tags) this._tags.destroy();
 	}
-
-	const row_name = row.name || row.row_name;
-	const wrapper = $(context.wrapper || document);
-	const host = wrapper.find(`.bpp-fg-machine-editor-host[data-row-name="${row_name}"]`).get(0);
-	if (!host) return;
-
-	_close_fg_workstation_popover();
-
-	get_bom_details(row.bom_no, row.custom_workstations_csv || '', row.tool || '').then(details => {
-		const selected_values = _parse_csv_list(
-			row.custom_workstations_csv || details.selected_workstations_csv || details.workstations_csv
-		);
-		host.style.display = 'block';
-		host.innerHTML = '';
-
-		const summary = document.createElement('div');
-		summary.style.marginBottom = '10px';
-		host.appendChild(summary);
-
-		const controlHost = document.createElement('div');
-		host.appendChild(controlHost);
-
-		const footer = document.createElement('div');
-		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:10px;';
-		const cancelBtn = document.createElement('button');
-		cancelBtn.type = 'button';
-		cancelBtn.textContent = 'Cancel';
-		cancelBtn.style.cssText = 'border:1px solid #CBD5E1;background:#fff;color:#334155;border-radius:4px;padding:5px 10px;font-size:12px;';
-		const applyBtn = document.createElement('button');
-		applyBtn.type = 'button';
-		applyBtn.textContent = 'Apply';
-		applyBtn.style.cssText = 'border:1px solid #16A34A;background:#16A34A;color:#fff;border-radius:4px;padding:5px 10px;font-size:12px;';
-		footer.appendChild(cancelBtn);
-		footer.appendChild(applyBtn);
-		host.appendChild(footer);
-
-		const control = frappe.ui.form.make_control({
-			parent: controlHost,
-			df: {
-				fieldtype: 'MultiSelectList',
-				placeholder: __('Select Workstations'),
-				get_data(txt) {
-					return _get_workstation_options(txt);
-				},
-				change() {
-					renderSummary();
-				}
-			},
-			render_input: true
-		});
-		control.refresh();
-		if (selected_values.length) {
-			control.set_value(selected_values);
-		}
-
-		function positionEditor() {
-			host.style.top = 'calc(100% + 6px)';
-			host.style.bottom = 'auto';
-			const hostRect = host.getBoundingClientRect();
-			const belowSpace = window.innerHeight - trigger.getBoundingClientRect().bottom;
-			if (belowSpace < hostRect.height + 12) {
-				host.style.top = 'auto';
-				host.style.bottom = 'calc(100% + 6px)';
-			}
-		}
-
-		function renderSummary() {
-			const count = (control.get_value() || []).length;
-			const batchsize = Number(details.batchsize || 0);
-			const spm = batchsize * count;
-			summary.innerHTML = `
-				<div style="margin-bottom:0;padding:10px 12px;border:1px solid #DBEAFE;background:#EFF6FF;border-radius:6px;font-size:12px;color:#1E3A8A;">
-					<strong>${frappe.utils.escape_html(row.bom_no)}</strong>
-					<span style="margin-left:10px;">Batch Size: <strong>${batchsize}</strong></span>
-					<span style="margin-left:10px;">Machines: <strong>${count}</strong></span>
-					<span style="margin-left:10px;">SPM: <strong>${spm}</strong></span>
-				</div>
-			`;
-		}
-
-		applyBtn.addEventListener('click', () => {
-			const selected = control.get_value() || [];
-			if (!selected.length) {
-				frappe.msgprint(__('Select at least one workstation.'));
-				return;
-			}
-			const selected_csv = selected.join(',');
-			frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv).then(() => {
-				_close_fg_workstation_popover();
-				_handle_workstation_change(frm, row.name, row_type, selected_csv, context);
-			});
-		});
-		cancelBtn.addEventListener('click', () => _close_fg_workstation_popover());
-
-		renderSummary();
-		positionEditor();
-		if (control.$input) {
-			control.$input.focus();
-		}
-	});
 }
 
 function _get_bom_options(item_code, current_bom) {
@@ -1808,36 +1842,75 @@ function _bind_fg_tool_selects(frm, wrapper) {
 	});
 }
 
+/** Shows CSV display for FG machine cells, opens inline tag editor on click */
 function _bind_fg_machine_selects(frm, wrapper) {
-	$(wrapper).find('.bpp-fg-machine-trigger').each(function () {
-		const row_name = $(this).data('row-name');
+	$(wrapper).find('.bpp-fg-machine-inline').each(function () {
+		const host = this;
+		const row_name = $(host).data('row-name');
 		const row = _find_bpp_row(frm, row_name, 'fg');
 		if (!row) return;
+
+		// Fetch BOM defaults and render CSV display
 		get_bom_details(row.bom_no, row.custom_workstations_csv || '', row.tool || '').then(details => {
-			const selected_csv = row.custom_workstations_csv || details.selected_workstations_csv || details.workstations_csv || '';
-			if (!row.custom_workstations_csv && selected_csv) {
-				row.custom_workstations_csv = selected_csv;
-				row.machine_count = details.machine_count || _parse_csv_list(selected_csv).length;
+			const initial_csv = row.custom_workstations_csv || details.selected_workstations_csv || details.workstations_csv || '';
+			if (!row.custom_workstations_csv && initial_csv) {
+				row.custom_workstations_csv = initial_csv;
+				row.machine_count = details.machine_count || _parse_csv_list(initial_csv).length;
 				row.spm = details.spm || _effective_spm_value({
 					batchsize: details.batchsize || 0,
-					custom_workstations_csv: selected_csv,
+					custom_workstations_csv: initial_csv,
 					machine_count: details.machine_count || 0
 				});
 			}
-			this.title = _machine_button_label(selected_csv);
-			this.innerHTML = _machine_display_html(selected_csv, details.batchsize || 0);
+
+			// Show comma-separated text by default
+			_render_fg_machine_display(host, initial_csv);
 		});
 	});
-	$(wrapper).find('.bpp-fg-machine-trigger').off('click keydown').on('click', function () {
-		const row_name = $(this).data('row-name');
+
+	// Click to open inline tag editor
+	$(wrapper).find('.bpp-fg-machine-inline').off('click.bpp_machine').on('click.bpp_machine', function (e) {
+		const host = this;
+		if (host._editing) return;
+		const row_name = $(host).data('row-name');
 		const row = _find_bpp_row(frm, row_name, 'fg');
 		if (!row) return;
-		_open_workstation_selector(frm, row, 'fg', { wrapper });
-	}).on('keydown', function (e) {
-		if (e.key !== 'Enter' && e.key !== ' ') return;
-		e.preventDefault();
-		$(this).trigger('click');
+
+		host._editing = true;
+		host.innerHTML = '';
+		const editor = _create_inline_tag_editor(row.custom_workstations_csv || '', (csv) => {
+			row.custom_workstations_csv = csv;
+			_render_fg_machine_display(host, csv);
+			frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', csv).then(() => {
+				_handle_workstation_change(frm, row.name, 'fg', csv, { wrapper });
+			});
+		});
+		host.appendChild(editor.el);
+		host._editor = editor;
+		editor.focus();
+
+		// Close editor when clicking outside
+		function _closeOnOutsideClick(ev) {
+			if (!host.contains(ev.target)) {
+				document.removeEventListener('mousedown', _closeOnOutsideClick, true);
+				const csv = editor.getCsv();
+				editor.destroy();
+				host._editing = false;
+				host._editor = null;
+				_render_fg_machine_display(host, csv);
+			}
+		}
+		setTimeout(() => document.addEventListener('mousedown', _closeOnOutsideClick, true), 50);
 	});
+}
+
+/** Renders comma-separated machine text in an FG cell */
+function _render_fg_machine_display(host, csv) {
+	const values = _parse_csv_list(csv);
+	const label = values.length ? values.join(', ') : 'Select';
+	host.innerHTML = `<div style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;width:100%;text-align:left;box-sizing:border-box;cursor:pointer;" title="${frappe.utils.escape_html(label)}">
+		${frappe.utils.escape_html(label)}
+	</div>`;
 }
 
 function _clear_parallel_schedule(frm) {
@@ -2181,10 +2254,13 @@ function _apply_bom_details_to_context(row_name, details, context = {}) {
 				? `Load Qty: ${tool_load_qty}${pm_days ? ` | PM Days: ${pm_days}` : ''}`
 				: '';
 		}
-		const trigger = $(context.wrapper).find(`.bpp-fg-machine-trigger[data-row-name="${row_name}"]`).get(0);
-		if (trigger) {
-			trigger.title = _machine_button_label(selected_csv);
-			trigger.innerHTML = _machine_display_html(selected_csv, batchsize);
+		const inlineHost = $(context.wrapper).find(`.bpp-fg-machine-inline[data-row-name="${row_name}"]`).get(0);
+		if (inlineHost) {
+			if (inlineHost._editor) {
+				inlineHost._editor.setValues(_parse_csv_list(selected_csv));
+			} else {
+				_render_fg_machine_display(inlineHost, selected_csv);
+			}
 		}
 	}
 }
@@ -2297,3 +2373,6 @@ function _format_bpp_date(value, empty_value = '—') {
 	const [year, month, day] = parts;
 	return `${day}-${month}-${year}`;
 }
+
+
+

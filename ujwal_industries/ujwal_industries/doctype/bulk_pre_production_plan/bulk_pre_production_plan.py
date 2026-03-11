@@ -351,6 +351,12 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 
 		for sfg_data in so_data.get("sfg_chain") or []:
 			row = sfg_map.get((sfg_data or {}).get("row_name"))
+			frappe.logger().info(
+				f"[SPM DEBUG OVERRIDE] sfg_data row_name={sfg_data.get('row_name')} | "
+				f"found_row={row.name if row else 'NONE'} | "
+				f"sfg_data.custom_workstations_csv='{sfg_data.get('custom_workstations_csv', '')}' | "
+				f"row.custom_workstations_csv='{getattr(row, 'custom_workstations_csv', '') if row else 'N/A'}'"
+			)
 			if not row:
 				continue
 			if sfg_data.get("bom_no"):
@@ -1153,10 +1159,17 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			pm_days       = int(tool_info.get("pm_days", 0))
 			grn_days      = int(grn_map.get(item_code, 0))
 
+			frappe.logger().info(
+				f"[SPM DEBUG] SFG {item_code} | row.name={sfg.name} | "
+				f"row.custom_workstations_csv='{getattr(sfg, 'custom_workstations_csv', '')}'"
+			)
 			spm_details = _get_row_spm_details(sfg, bom_no, bom_ops_map)
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			effective_spm = cint(spm_details.get("spm") or 0)
 			machine_count = cint(spm_details.get("machine_count") or 0)
+			frappe.logger().info(
+				f"[SPM DEBUG] SFG {item_code} | spm_details={spm_details}"
+			)
 
 			# per_shift_qty
 			per_shift_qty = effective_spm * shift_minutes if effective_spm and shift_minutes else 0
