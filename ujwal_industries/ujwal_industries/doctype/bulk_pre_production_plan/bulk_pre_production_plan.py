@@ -2529,6 +2529,7 @@ def create_production_plans_document(bulk_pp_name) :
 					'custom_planned_end_date' : k.get('end_date'),
 					'sales_order' : j.get('sales_order'),
 					'warehouse' : warehouse,
+					'custom_workstation' : j.get('custom_workstations_csv'),
 				})
 		
 		for j in so_details.get('sfg_chain')[::-1]:
@@ -2547,7 +2548,7 @@ def create_production_plans_document(bulk_pp_name) :
 					'custom_schedule_end_date' : k.get('end_date'),
 					'supplier' : j.get('supplier'),
 					'fg_warehouse' : warehouse,
-					'custom_workstation' : '',
+					'custom_workstation' : j.get('custom_workstations_csv'),
 				})
 		pp_doc.save()
  
