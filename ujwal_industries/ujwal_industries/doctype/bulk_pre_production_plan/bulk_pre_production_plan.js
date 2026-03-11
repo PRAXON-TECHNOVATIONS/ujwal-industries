@@ -3,11 +3,13 @@
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
 	refresh: function(frm) {
+
 		set_bom_selection_query(frm);
 
 		if ((frm.doc.sales_orders || []).length > 0 && (frm.doc.bom_selections || []).length === 0 && (frm.doc.po_items || []).length === 0) {
 			load_bom_selections(frm);
 		}
+
 
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
@@ -971,6 +973,7 @@ function _sync_parallel_schedule_override(frm, row_name, row_type, patch = {}) {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
 
 function _fg_section_html(fg_items, so_name) {
 	if (!fg_items || !fg_items.length) return '';

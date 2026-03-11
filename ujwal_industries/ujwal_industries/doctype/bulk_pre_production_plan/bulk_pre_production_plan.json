@@ -108,6 +108,7 @@
    "options": "Bulk PP Sales Order"
   },
   {
+
    "depends_on": "eval: doc.bom_selections && doc.bom_selections.length > 0",
    "fieldname": "bom_selection_section",
    "fieldtype": "Section Break",

@@ -9,6 +9,7 @@ from frappe.utils import getdate, get_datetime, add_to_date, add_days, now_datet
 from typing import Any
 import math
 from datetime import datetime, timedelta
+import json
 
 # Import helper functions from production_plan overrides
 from ujwal_industries.ujwal_industries.overrides.pp_utils import (
@@ -470,8 +471,21 @@ class BulkPreProductionPlan(Document):
 			return
 
 		# Enqueue async job to create production plans
+		# frappe.enqueue(
+		# 	"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_async",
+		# 	bulk_pp_name=self.name,
+		# 	timeout=3000,
+		# 	queue="long"
+		# )
+
+		# frappe.msgprint(
+		# 	_("Production Plans are being created in the background. You will be notified once complete."),
+		# 	indicator="blue",
+		# 	alert=True
+		# )
+
 		frappe.enqueue(
-			"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_async",
+			"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_document",
 			bulk_pp_name=self.name,
 			timeout=3000,
 			queue="long"
@@ -482,7 +496,7 @@ class BulkPreProductionPlan(Document):
 			indicator="blue",
 			alert=True
 		)
-
+  
 	@frappe.whitelist()
 	def get_items(self):
 		"""
@@ -1546,6 +1560,7 @@ def generate_production_plan_items(docname: str, planning_mode: str | None = Non
 		'sfg_items': total_sfg_items,
 		'mr_items': total_mr_items
 	}
+	
 
 
 def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int]:
@@ -1593,8 +1608,10 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	po_count = 0
 	sfg_count = 0
 	mr_count = 0
+
 	target_warehouse_map = _get_item_default_warehouse_map([item.item_code for item in so_items], doc.company)
 	existing_fg_ws_map = (getattr(doc.flags, "existing_fg_workstation_maps", {}) or {}).get(so_name, {})
+
 
 	# Process each SO item
 	for item in so_items:
@@ -1679,11 +1696,14 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	# Calculate dates for all items
 	calculate_dates_for_sales_order(doc, so_name)
 
-	return {
+	x = {
 		'po_items': po_count,
 		'sfg_items': sfg_count,
 		'mr_items': mr_count
 	}
+	print(".........x........",x)
+	print("..........so_name.......",so_name)
+	return x
 
 
 def get_sub_assembly_items_from_bom(
@@ -2353,6 +2373,71 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				fg_row.custom_planned_end_date = str(max_sfg_end)
 
 
+@frappe.whitelist()
+def create_production_plans_document(bulk_pp_name) :
+	bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+
+	if not bulk_pp.sales_orders:
+		return
+
+	so_data = json.loads(bulk_pp.custom_batch_schedule)
+	for i in so_data:
+		pp_doc = frappe.new_doc("Production Plan")
+		pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
+		pp_doc.get_items_from = 'Sales Order'
+		pp_doc.custom_parallel_planning = 1
+
+		pp_doc.append('sales_orders',{
+			'sales_order': i
+		})
+		so_details = so_data.get(i)
+		for j in so_details.get('fg'):
+			warehouse = ''
+			item_doc = frappe.get_doc("Item", j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+     
+			if 'manufacturing_type' in j:
+				types = j.get('manufacturing_type')
+			elif "custom_manufacturing_type" in j:
+				types = j.get('custom_manufacturing_type')
+			else:
+				types = 'In House'
+				
+			pp_doc.append('po_items',{
+				'include_exploded_items' : 1,
+				'item_code' : j.get('item_code'),
+				'bom_no' : item_doc.default_bom,
+				'planned_qty' : j.get('planned_qty'),
+				'stock_uom' : item_doc.stock_uom,
+				'custom_manufacturing_type' : types,
+				'planned_start_date' : j.get('planned_start_date'),
+				'custom_planned_end_date' : j.get('custom_planned_end_date'),
+				'sales_order' : j.get('sales_order'),
+				'warehouse' : warehouse,
+			})
+		
+		for j in so_details.get('sfg_chain')[::-1]:
+			warehouse = ''
+			item_doc = frappe.get_doc("Item",j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+			for k in j.get('batches'):
+				pp_doc.append('sub_assembly_items',{
+					'production_item' : j.get('item_code'),
+					'bom_no' : j.get('bom_no'),
+					'qty' : k.get('qty'),
+					'stock_uom' : item_doc.stock_uom,
+					'type_of_manufacturing' : j.get('type_of_manufacturing'),
+					'schedule_date' : k.get('start_date'),
+					'custom_schedule_end_date' : k.get('end_date'),
+					'supplier' : j.get('supplier'),
+					'fg_warehouse' : warehouse,
+					'custom_workstation' : '',
+				})
+		pp_doc.save()
+ 
+ 
 @frappe.whitelist()
 def create_production_plans_async(bulk_pp_name):
 	"""
