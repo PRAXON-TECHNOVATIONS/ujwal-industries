@@ -968,7 +968,6 @@ def get_active_boms_for_items(item_codes: str | list[str]) -> dict[str, list[str
 	result: dict[str, list[str]] = {}
 	for row in rows:
 		result.setdefault(row.item, []).append(row.name)
-
 	return result
 
 
@@ -1068,6 +1067,14 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		row.bom_no
 		for rows in so_map.values()
 		for row in rows["sfg"]
+		# for row in rows["fg"]
+		if getattr(row, "bom_no", None)
+	})
+ 
+	all_bom_nos += list({
+		row.bom_no
+		for rows in so_map.values()
+		for row in rows["fg"]
 		if getattr(row, "bom_no", None)
 	})
 	bom_tool_map = _fetch_bom_tool_map(all_bom_nos)     # bom_no → {tools, default_tool, fallback_lot_capacity}
@@ -1275,6 +1282,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"row_name":   mr.name,
 			})
 
+
+
 		# ── FG: parallel mode — start = last SFG (bom_level=0) batch[0] end ────
 		# sfg_chain_out is sorted deepest-first so [-1] = bom_level=0 (direct child of FG)
 		top_sfg_batch0_end = (
@@ -1295,6 +1304,78 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			else:
 				fg_end = fg_start
 
+		fg_rows_sorted =  items["fg"]
+		
+		prev_fg_row0_end: str | None = None
+
+		for fg_idx, fg in enumerate(fg_rows_sorted):
+			bom_no     = fg.bom_no or ""
+			item_code  = fg.item_code
+			sales_qty  = flt(fg.planned_qty)
+			tool_info = _resolve_bom_tool_info(
+				(bom_tool_map.get(bom_no) or {}).get("tools"),
+				selected_tool=getattr(fg, "tool", "") or None,
+				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
+			)
+			selected_tool = tool_info.get("tool") or ""
+			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
+			pm_days       = int(tool_info.get("pm_days", 0))
+			grn_days      = int(grn_map.get(item_code, 0))
+
+   
+   
+			spm_details = _get_row_spm_details(fg, bom_no, bom_ops_map)
+			base_batchsize = cint(spm_details.get("batchsize") or 0)
+			effective_spm = cint(spm_details.get("spm") or 0)
+			machine_count = cint(spm_details.get("machine_count") or 0)
+   
+			# per_shift_qty
+			per_shift_qty = effective_spm * shift_minutes if effective_spm and shift_minutes else 0
+
+			# Split into batches.
+			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
+			split_qty = tool_load_qty or per_shift_qty
+			batches = _split_batches(sales_qty, split_qty)
+   
+			batch_rows: list[dict] = []
+			for b_idx, batch_qty in enumerate(batches):
+				mfg_days = math.ceil(batch_qty / per_shift_qty) if per_shift_qty > 0 else 1
+
+				# Start date
+				if b_idx == 0:
+					if fg_idx == 0:
+						# Deepest SFG, first batch → wait until materials ready
+						start_dt = actual_deepest_start
+					else:
+						# Parallel chain: start when prev SFG batch-0 ended
+						start_dt = get_datetime(prev_fg_row0_end)
+				else:
+					# Within same SFG: pm_days gap after batch end, then +1 to start
+					# (pm_days maintenance days pass, batch begins the day after)
+					prev_end = get_datetime(batch_rows[b_idx - 1]["end_date"])
+					start_dt = _working_day_add(prev_end, pm_days + 1, holidays)
+
+				# End date = start + mfg_days + grn_days (working days, PM NOT included)
+				end_dt = _working_day_add(start_dt, mfg_days + grn_days, holidays)
+
+				is_last_batch = (b_idx == len(batches) - 1)
+				# Count holidays strictly between start_date and end_date
+				holiday_count = sum(
+					1 for h in holidays
+					if getdate(start_dt) < h <= getdate(end_dt)
+				)
+				batch_rows.append({
+					"batch":         b_idx + 1,
+					"total":         len(batches),
+					"qty":           batch_qty,
+					"mfg_days":      mfg_days,
+					"grn_days":      grn_days,
+					"pm_days":       0 if is_last_batch else pm_days,
+					"holiday_count": holiday_count,
+					"start_date":    str(start_dt),
+					"end_date":      str(end_dt),
+				})
+    
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
 				"bom_no":                  fg.bom_no or "",
@@ -1304,6 +1385,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
 				"planned_qty":             flt(fg.planned_qty),
+				"per_shift_qty":             per_shift_qty,
 				"manufacturing_type":      fg.manufacturing_type or "In House",
 				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
 				"target_warehouse": (
@@ -1312,6 +1394,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"planned_start_date":      str(fg_start),
 				"custom_planned_end_date": str(fg_end),
 				"row_name":                fg.name,
+				"batches":                batch_rows,
 			})
 
 		result[so_name] = {
@@ -2269,7 +2352,6 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			lt_result = get_supplier_lead_time(mr_row.item_code, mr_row.custom_supplier, doc.company)
 			lead_time_days = lt_result.get("lead_time_days", 0)
 		grn_days_mr = mr_grn_days_map.get(mr_row.item_code, 0)
-		print("...........................lead_time_days............................",lead_time_days)
 		# RM needs to arrive by parent SFG schedule_date
 		# custom_start_date = when to order = schedule - lead_time - grn_days
 		mr_row.schedule_date = earliest_sfg_schedule
@@ -2421,19 +2503,20 @@ def create_production_plans_document(bulk_pp_name) :
 				types = j.get('custom_manufacturing_type')
 			else:
 				types = 'In House'
-				
-			pp_doc.append('po_items',{
-				'include_exploded_items' : 1,
-				'item_code' : j.get('item_code'),
-				'bom_no' : item_doc.default_bom,
-				'planned_qty' : j.get('planned_qty'),
-				'stock_uom' : item_doc.stock_uom,
-				'custom_manufacturing_type' : types,
-				'planned_start_date' : j.get('planned_start_date'),
-				'custom_planned_end_date' : j.get('custom_planned_end_date'),
-				'sales_order' : j.get('sales_order'),
-				'warehouse' : warehouse,
-			})
+	
+			for k in j.get('batches'):
+				pp_doc.append('po_items',{
+					'include_exploded_items' : 1,
+					'item_code' : j.get('item_code'),
+					'bom_no' : j.get('bom_no'),
+					'planned_qty' : k.get('qty'),
+					'stock_uom' : item_doc.stock_uom,
+					'custom_manufacturing_type' : types,
+					'planned_start_date' : k.get('start_date'),
+					'custom_planned_end_date' : k.get('end_date'),
+					'sales_order' : j.get('sales_order'),
+					'warehouse' : warehouse,
+				})
 		
 		for j in so_details.get('sfg_chain')[::-1]:
 			warehouse = ''

@@ -491,6 +491,7 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	}
 
 	const item_codes = _collect_bom_item_codes(so_map, mode, parallel_data);
+	console.log("...........so_map........",so_map)
 	const missing_item_codes = item_codes.filter(item_code => !_bom_options_cache[item_code]);
 	if (missing_item_codes.length) {
 		frappe.call({
@@ -510,6 +511,7 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 
 	// For parallel mode, try stored JSON if no fresh data passed
 	let par_data = parallel_data || null;
+	// console.log("...........par_data........",par_data)
 	if (mode === 'Parallel' && !par_data && frm.doc.custom_batch_schedule) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
@@ -722,13 +724,250 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		return;
 	}
 
-	// ── FG section ──────────────────────────────────────────────────────────
-	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(par_data.fg || so_data.fg, so_data.so_name);
-	container.appendChild(fg_div);
-	_bind_fg_bom_selects(frm, fg_div);
-	_bind_fg_tool_selects(frm, fg_div);
-	_bind_fg_machine_selects(frm, fg_div);
+
+
+	// console.log("....par_data.......",par_data)
+
+	const total_batche = (par_data.fg || []).reduce((s, fg) => s + (fg.batches || []).length, 0);
+	const f_g_label = document.createElement('div');
+	const fg_label = document.createElement('div');
+	fg_label.innerHTML = _section_header(
+		`FG Batch Schedule — Parallel Pipeline <span style="font-size:11px;font-weight:400;opacity:.7;"> (${total_batche} batches)</span>`,
+		'#6D28D9', '#F5F3FF', 'fa-sitemap');
+	container.appendChild(fg_label);
+
+	const fg_chain_display = (par_data.fg || []).slice().reverse();
+
+	const fg_colors = ['#2563eb', '#d97706', '#16a34a', '#9333ea', '#dc2626', '#0891b2'];
+	const _expandeds = {}; 
+
+
+	// Timeline window from all batch dates
+	const _alls_bt = [];
+	fg_chain_display.forEach(fg => (fg.batches || []).forEach(b => {
+		if (b.start_date) _alls_bt.push(new Date(b.start_date).getTime());
+		if (b.end_date) _alls_bt.push(new Date(b.end_date).getTime());
+	}));
+	const t_mins = _alls_bt.length ? Math.min(..._alls_bt) : Date.now();
+	const t_maxs = _alls_bt.length ? Math.max(..._alls_bt) : Date.now() + 86400000;
+	const t_spans = t_maxs - t_mins || 1;
+
+	function _builds_rows() {
+		const rows = [];
+		fg_chain_display.forEach((fg, idx) => {
+			
+			const batches = fg.batches || [];
+			const is_exps = !!_expandeds[fg.item_code];
+			rows.push({
+				_is_group: true,
+				_expandeds: is_exps,
+				_fg_idx: idx,
+				_row_name: fg.row_name,
+				item_code: fg.item_code,
+				bom_no: fg.bom_no,
+				tool: fg.tool || '',
+				tools: fg.tools || [],
+				custom_workstations_csv: fg.custom_workstations_csv || '',
+				type: fg.type_of_manufacturing,
+				target_warehouse: fg.target_warehouse || '',
+				supplier: fg.supplier,
+				total_batches: batches.length,
+				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
+				per_shift_qty: fg.per_shift_qty || 0,
+				batchsize: fg.batchsize || 0,
+				spm: fg.spm || 0,
+				start_date: batches[0]?.start_date || '',
+				end_date: batches[batches.length - 1]?.end_date || '',
+			});
+			if (is_exps) {
+				batches.forEach(b => rows.push({
+					_is_group: false,
+					_fg_idx: idx,
+					item_code: fg.item_code,
+					batch_label: `${b.batch}/${b.total}`,
+					qty: b.qty,
+					mfg_days: b.mfg_days,
+					grn_days: b.grn_days,
+					pm_days: b.pm_days,
+					holiday_count: b.holiday_count || 0,
+					start_date: b.start_date,
+					end_date: b.end_date,
+				}));
+			}
+		});
+		return rows;
+	}
+
+	const _tl_bars = (p, opacity) => {
+		if (!p.data?.start_date || !p.data?.end_date) return '';
+		const s = new Date(p.data.start_date).getTime();
+		const e = new Date(p.data.end_date).getTime();
+		const lp = ((s - t_mins) / t_spans * 100).toFixed(1);
+		const wp = Math.max(((e - s) / t_spans * 100), 0.8).toFixed(1);
+		const cl = fg_colors[(p.data._fg_idx || 0) % fg_colors.length];
+		return `<div style="position:relative;width:100%;height:20px;background:#f3f4f6;border-radius:3px;overflow:hidden;">
+			<div style="position:absolute;left:${lp}%;width:${wp}%;height:100%;background:${cl};border-radius:3px;opacity:${opacity};"></div>
+		</div>`;
+	};
+
+	
+	const par_colss = [
+		// Chevron toggle
+		
+		{
+			headerName: '', field: '_expandeds', width: 36, pinned: 'left', sortable: false,
+			cellStyle: { padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				return `<span style="font-size:15px;color:#6b7280;user-select:none;">${p.data._expandeds ? '▾' : '▸'}</span>`;
+			},
+			onCellClicked: p => {
+				if (!p.data?._is_group) return;
+				_expandeds[p.data.item_code] = !_expandeds[p.data.item_code];
+				par_grids.setGridOption('rowData', _builds_rows());
+			}
+
+		},
+		{
+			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
+		},
+		{
+			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: _get_bom_options(p.data?.item_code, p.value)
+			}),
+			cellRenderer: p => (!p.data?._is_group) ? '' :
+				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		},
+		{
+			headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+			}),
+			cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
+		},
+		{
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
+			editable: p => !!p.data?._is_group,
+			cellEditor: WorkstationPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				base_batchsize: p.data?.batchsize || 0,
+				frm,
+				row_type: 'fg',
+				row_name: p.data?._row_name || p.data?.name || ''
+			}),
+			cellRenderer: p => p.data?._is_group ? _machine_display_html(
+				p.value,
+				p.data?.batchsize || 0,
+				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+			) : ''
+		},
+		{
+			headerName: 'Batches', field: 'total_batches', width: 72,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				const cl = fg_colors[(p.data._fg_idx || 0) % fg_colors.length];
+				return `<span style="background:${cl}22;color:${cl};border:1px solid ${cl}55;border-radius:12px;padding:1px 8px;font-size:11px;font-weight:700;">${p.value}</span>`;
+			}
+		},
+		{
+			headerName: 'Qty', width: 95, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'GRN Days', width: 82, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'PM Days', width: 78, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'Holi.', width: 58, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'SPM', width: 80, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'Start Date', field: 'start_date', width: 105,
+			valueFormatter: p => _format_bpp_date(p.value, ''),
+			cellStyle: p => p.data?._is_group ? { color: '#059669', fontWeight: '600' } : { color: '#059669' }
+		},
+		{
+			headerName: 'End Date', field: 'end_date', width: 105,
+			valueFormatter: p => _format_bpp_date(p.value, ''),
+			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
+		},
+		{
+			headerName: 'Type', field: 'type', width: 108,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				return p.value === 'Subcontract'
+					? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
+					: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
+			}
+		},
+		{
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
+		},
+		{
+			headerName: 'Supplier', field: 'supplier', width: 130,
+			cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
+		},
+		{
+			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
+			cellRenderer: p => _tl_bars(p, p.data?._is_group ? '0.85' : '0.45')
+		},
+	];
+
+	const fg_el = document.createElement('div');
+	fg_el.className = 'ag-theme-alpine';
+	fg_el.style.cssText = 'width:100%;';
+	container.appendChild(fg_el);
+
+	const par_grids = agGrid.createGrid(fg_el, {
+		columnDefs: par_colss,
+		rowData: _builds_rows(),
+		defaultColDef: { resizable: true, sortable: false },
+		getRowHeight: p => p.data?._is_group ? 40 : 34,
+		headerHeight: 40,
+		domLayout: 'autoHeight',
+		getRowStyle: p => p.data?._is_group
+			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
+			: { background: '#ffffff' },
+		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
+	});
+	_grids['par_' + so_data.so_name] = par_grids;
+	
+
+
+
 
 	// ── SFG batch grid ──────────────────────────────────────────────────────
 	const total_batches = (par_data.sfg_chain || []).reduce((s, sfg) => s + (sfg.batches || []).length, 0);
