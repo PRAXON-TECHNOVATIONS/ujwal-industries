@@ -156,3 +156,47 @@ def validate_default_tool(doc, method):
                     .format(row.operation)
                 )
             operation_default_map[row.operation] = row.tool
+            
+# import frappe
+# from frappe.utils import flt
+
+
+# def validate_bom(doc, method):
+
+#     # ------------------------------
+#     # Machine Count Auto Update
+#     # ------------------------------
+#     for op in doc.operations:
+
+#         if op.custom_workstations_csv:
+#             machines = [m.strip() for m in op.custom_workstations_csv.split(",") if m]
+#             op.custom_machine_count = len(machines)
+#         else:
+#             op.custom_machine_count = 0
+
+#     # ------------------------------
+#     # Tool vs Lot Validation
+#     # ------------------------------
+#     for op in doc.operations:
+
+#         operation_name = op.operation
+#         lot_capacity = flt(op.custom_fixed_lot_capacity)
+
+#         # find tools mapped to this operation
+#         tool_rows = [
+#             t for t in doc.custom_tool_details
+#             if t.operation == operation_name and flt(t.tool_load_quantity) > 0
+#         ]
+
+#         # CASE 1: Both exist → block
+#         if lot_capacity > 0 and tool_rows:
+
+#             frappe.throw(
+#                 f"""
+#                 <b>Invalid Capacity Setup</b><br><br>
+#                 Operation <b>{operation_name}</b> cannot have both:
+#                 <br>• Fixed Lot Capacity
+#                 <br>• Tool Load Quantity
+#                 <br><br>Please remove one of them.
+#                 """
+#             )

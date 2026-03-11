@@ -47,14 +47,42 @@ frappe.ui.form.on("BOM Operation", {
                     return frappe.db.get_link_options("Workstation", txt);
                 },
 
+                // change: function() {
+
+                //     let values = control.get_value() || [];
+
+                //     // ensure default workstation always exists
+                //     if (row.workstation && !values.includes(row.workstation)) {
+                //         values.unshift(row.workstation);
+                //         control.set_value(values);
+                //     }
+
+                //     frappe.model.set_value(
+                //         cdt,
+                //         cdn,
+                //         "custom_workstations_csv",
+                //         values.join(",")
+                //     );
+
+                //     frm.dirty();
+                // }
                 change: function() {
 
                     let values = control.get_value() || [];
+                    let machine_count = row.custom_machine_count || 0;
 
-                    // ensure default workstation always exists
-                    if (row.workstation && !values.includes(row.workstation)) {
-                        values.unshift(row.workstation);
+                    if (machine_count && values.length > machine_count) {
+
+                        frappe.msgprint({
+                            title: "Machine Limit Exceeded",
+                            message: `You can select exactly <b>${machine_count}</b> machines.`,
+                            indicator: "red"
+                        });
+
+                        values.pop();
                         control.set_value(values);
+
+                        return;
                     }
 
                     frappe.model.set_value(
@@ -66,6 +94,7 @@ frappe.ui.form.on("BOM Operation", {
 
                     frm.dirty();
                 }
+            
             },
             render_input: true
         });
@@ -84,6 +113,38 @@ frappe.ui.form.on("BOM Operation", {
         }
 
         control.set_value(values);
+
+    }
+});
+
+frappe.ui.form.on("BOM", {
+    validate(frm) {
+
+        (frm.doc.operations || []).forEach(row => {
+
+            let machine_count = row.custom_machine_count || 0;
+
+            if (!machine_count) return;
+
+            let machines = [];
+
+            if (row.custom_workstations_csv) {
+                machines = row.custom_workstations_csv
+                    .split(",")
+                    .map(m => m.trim())
+                    .filter(m => m);
+            }
+
+            if (machines.length !== machine_count) {
+
+                frappe.throw(
+                    `Row ${row.idx}: Operation <b>${row.operation}</b> requires exactly 
+                    <b>${machine_count}</b> machines selected.`
+                );
+
+            }
+
+        });
 
     }
 });

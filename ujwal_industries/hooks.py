@@ -228,6 +228,7 @@ doc_events = {
 	"BOM":{
   		"on_update_after_submit": "ujwal_industries.overrides.bom.on_update_validate_default_tool",
   		"validate": "ujwal_industries.overrides.bom.validate_default_tool",
+		"validate": "ujwal_industries.overrides.bom.validate_bom"
 	},
  	"Asset Maintenance": {
         "before_save": "ujwal_industries.ujwal_industries.overrides.asset_maintenance.set_end_date_from_asset",
