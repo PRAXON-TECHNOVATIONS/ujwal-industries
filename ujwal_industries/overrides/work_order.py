@@ -78,11 +78,11 @@ def update_work_order_set_work_order_operations(self):
 		as_dict=1,
 	)
 
+	parallel_row_counts = _get_parallel_row_counts(operations)
+
 	# Populate operations
 	for d in operations:
-		# Calculate time based on qty and custom_batchsize
-		if d.get("batch_size") and flt(d.batch_size) > 0:
-			d.time_in_mins = flt(d.time_in_mins) * (flt(self.qty) / flt(d.batch_size))
+		d.time_in_mins = _calculate_operation_time(self.qty, d, parallel_row_counts.get(d.idx, 1))
 
 		# Append to operations table
 		self.append("operations", {
@@ -97,6 +97,58 @@ def update_work_order_set_work_order_operations(self):
 			"sequence_id": d.sequence_id,
 			"fixed_time": d.fixed_time,
 		})
+
+
+def _get_parallel_row_counts(operations):
+	"""
+	Count consecutive BOM operation rows that represent the same logical operation
+	spread across multiple workstations.
+	"""
+	parallel_row_counts = {}
+	group = []
+	previous_key = None
+
+	for operation in operations:
+		current_key = (
+			operation.get("bom"),
+			operation.get("operation"),
+			operation.get("sequence_id") or 0,
+		)
+
+		if previous_key is not None and current_key != previous_key:
+			group_size = len(group) or 1
+			for row in group:
+				parallel_row_counts[row.idx] = group_size
+			group = []
+
+		group.append(operation)
+		previous_key = current_key
+
+	if group:
+		group_size = len(group)
+		for row in group:
+			parallel_row_counts[row.idx] = group_size
+
+	return parallel_row_counts
+
+
+def _calculate_operation_time(work_order_qty, operation, parallel_row_count):
+	"""
+	Distribute variable operation time across parallel machine rows.
+	"""
+	time_in_mins = flt(operation.get("time_in_mins"))
+
+	if operation.get("fixed_time"):
+		return time_in_mins
+
+	parallel_row_count = max(cint(parallel_row_count), 1)
+	qty_per_parallel_row = flt(work_order_qty) / parallel_row_count
+	batch_size = flt(operation.get("batch_size") or 0)
+
+	if batch_size > 0:
+		return time_in_mins * (qty_per_parallel_row / batch_size)
+
+	return time_in_mins * qty_per_parallel_row
 
 
 def update_work_order_update_operation_status(self):
