@@ -4,24 +4,23 @@
 frappe.ui.form.on('Bulk Pre Production Plan', {
 	refresh: function(frm) {
 
-		// cur_frm.add_custom_button(__('Create Production Plan'), function() {
-		// 	frappe.call({
-        //             method: "ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_document",
-        //             args: {
-        //                 bulk_pp_name: frm.doc.name,
-        //             },
-        //             callback: function(r) {
-        //                 if(!r.exc) {
-        //                     frappe.msgprint("Created Succesfully !")
-        //                 }
-        //             }
-        //     });
-		// })
+		set_bom_selection_query(frm);
+
+		if ((frm.doc.sales_orders || []).length > 0 && (frm.doc.bom_selections || []).length === 0 && (frm.doc.po_items || []).length === 0) {
+			load_bom_selections(frm);
+		}
+
 
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
 			setTimeout(function() { setup_production_tabs(frm); }, 200);
 		}
+	},
+	after_save: function(frm) {
+		if (!frm._bom_changed || _bom_recalc_inflight) return;
+
+		_bom_recalc_inflight = true;
+		_run_bom_change_recalculation(frm);
 	},
 
 	get_sales_orders: function(frm) {
@@ -62,6 +61,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 					// Refresh the sales_orders field to show the data
 					frm.refresh_field('sales_orders');
+					load_bom_selections(frm);
 
 					frappe.show_alert({
 						message: __('{0} Sales Orders loaded', [r.message.sales_orders.length]),
@@ -134,6 +134,77 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 });
 
 
+frappe.ui.form.on('Bulk PP BOM Selection', {
+	bom_no: function(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row || !row.bom_no) {
+			frappe.model.set_value(cdt, cdn, 'spm', 0);
+			return;
+		}
+
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_bom_spm_details',
+			args: { bom_no: row.bom_no },
+			callback: function(r) {
+				frappe.model.set_value(cdt, cdn, 'spm', r.message?.spm || 0);
+			}
+		});
+	}
+});
+
+
+function set_bom_selection_query(frm) {
+	if (!frm.fields_dict.bom_selections) return;
+
+	frm.fields_dict.bom_selections.grid.get_field('bom_no').get_query = function(doc, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		return {
+			filters: {
+				item: row.item_code,
+				is_active: 1,
+				docstatus: 1
+			}
+		};
+	};
+}
+
+
+function load_bom_selections(frm) {
+	const sales_orders = (frm.doc.sales_orders || []).map(row => row.sales_order).filter(Boolean);
+	if (!sales_orders.length) {
+		frm.clear_table('bom_selections');
+		frm.refresh_field('bom_selections');
+		return;
+	}
+
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_order_item_bom_rows',
+		args: {
+			sales_orders: sales_orders,
+			docname: frm.doc.name
+		},
+		callback: function(r) {
+			const rows = r.message || [];
+			frm.clear_table('bom_selections');
+
+			rows.forEach(function(item) {
+				const row = frm.add_child('bom_selections');
+				row.sales_order = item.sales_order;
+				row.sales_order_item = item.sales_order_item;
+				row.item_code = item.item_code;
+				row.item_name = item.item_name;
+				row.qty = item.qty;
+				row.stock_uom = item.stock_uom;
+				row.bom_no = item.bom_no;
+				row.spm = item.spm;
+			});
+
+			frm.refresh_field('bom_selections');
+		}
+	});
+}
+
+
 function cleanup_items_for_sales_order(frm, sales_order) {
 	/**
 	 * Remove all items related to a sales order
@@ -187,6 +258,21 @@ function cleanup_items_for_sales_order(frm, sales_order) {
 		frm.refresh_field('mr_items');
 	}
 
+	// Remove BOM selections
+	if (frm.doc.bom_selections) {
+		const items_to_keep = [];
+		frm.doc.bom_selections.forEach((item) => {
+			if (item.sales_order === sales_order) {
+				frappe.model.clear_doc(item.doctype, item.name);
+				total_removed++;
+			} else {
+				items_to_keep.push(item);
+			}
+		});
+		frm.doc.bom_selections = items_to_keep;
+		frm.refresh_field('bom_selections');
+	}
+
 	// Show alert
 	if (total_removed > 0) {
 		frappe.show_alert({
@@ -210,6 +296,9 @@ const _AG_ASSETS = [
 // Grid instance registry keyed by SO name (so we can destroy/recreate on tab switch)
 let _grids = {};
 let _ag_loaded = false;
+let _bom_options_cache = {};
+let _bom_recalc_inflight = false;
+let _bom_capacity_cache = {};
 
 function setup_production_tabs(frm) {
 	const html_field = frm.fields_dict.production_items_html;
@@ -401,6 +490,20 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 		return;
 	}
 
+	const item_codes = _collect_bom_item_codes(so_map, mode, parallel_data);
+	const missing_item_codes = item_codes.filter(item_code => !_bom_options_cache[item_code]);
+	if (missing_item_codes.length) {
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_active_boms_for_items',
+			args: { item_codes: missing_item_codes },
+			callback(r) {
+				Object.assign(_bom_options_cache, r.message || {});
+				_render_all_grids(frm, so_map, mode, $wrapper, parallel_data);
+			}
+		});
+		return;
+	}
+
 	// Destroy existing grid instances
 	Object.values(_grids).forEach(g => { try { g.destroy(); } catch(e) {} });
 	_grids = {};
@@ -411,16 +514,23 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch(e) {}
 	}
 
-	Object.values(so_map).forEach(so_data => {
-		const $grid_wrap = $wrapper.find(`.bpp-grid-wrap[data-so="${so_data.so_name}"]`);
-		if (!$grid_wrap.length) return;
-
-		if (mode === 'Sequential') {
-			_render_sequential_grid(frm, so_data, $grid_wrap[0]);
-		} else {
-			const so_par = par_data ? par_data[so_data.so_name] : null;
-			_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
+	_hydrate_machine_defaults(frm, par_data).then(changed => {
+		if (changed) {
+			_render_all_grids(frm, so_map, mode, $wrapper, par_data);
+			return;
 		}
+
+		Object.values(so_map).forEach(so_data => {
+			const $grid_wrap = $wrapper.find(`.bpp-grid-wrap[data-so="${so_data.so_name}"]`);
+			if (!$grid_wrap.length) return;
+
+			if (mode === 'Sequential') {
+				_render_sequential_grid(frm, so_data, $grid_wrap[0]);
+			} else {
+				const so_par = par_data ? par_data[so_data.so_name] : null;
+				_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
+			}
+		});
 	});
 }
 
@@ -434,8 +544,11 @@ function _render_sequential_grid(frm, so_data, container) {
 
 	// ── FG section ──────────────────────────────────────────────────────────
 	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(so_data.fg);
+	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
 	container.appendChild(fg_div);
+	_bind_fg_bom_selects(frm, fg_div);
+	_bind_fg_tool_selects(frm, fg_div);
+	_bind_fg_machine_selects(frm, fg_div);
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -469,18 +582,48 @@ function _render_sequential_grid(frm, so_data, container) {
 		  cellRenderer: p => `<strong>${p.value || ''}</strong>` },
 		{ headerName: 'Mfg Type',    field: 'type_of_manufacturing', width: 110,
 		  cellRenderer: p => _badge(p.value || 'In House', p.value === 'In House' ? '#16a34a' : '#d97706') },
+		{ headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
+		  cellRenderer: p => p.value || '—' },
 		{ headerName: 'Qty',         field: 'qty',            width: 90,  type: 'numericColumn',
 		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '' },
 		{ headerName: 'Start Date',  field: 'schedule_date',  width: 130, editable: true,
 		  cellStyle: { color: '#0F5132', fontWeight: '600' },
-		  valueFormatter: p => p.value ? p.value.toString().split(' ')[0] : '—' },
+		  valueFormatter: p => _format_bpp_date(p.value) },
 		{ headerName: 'End Date',    field: 'custom_schedule_end_date', width: 130, editable: true,
 		  cellStyle: { color: '#842029', fontWeight: '600' },
-		  valueFormatter: p => p.value ? p.value.toString().split(' ')[0] : '—' },
+		  valueFormatter: p => _format_bpp_date(p.value) },
 		{ headerName: 'Supplier',    field: 'supplier',       width: 150, editable: true },
 		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
-		{ headerName: 'BOM',         field: 'bom_no',         width: 160,
+		{ headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
+		  cellEditor: 'agSelectCellEditor',
+		  cellEditorParams: p => ({
+			values: _get_bom_options(p.data?.production_item, p.value)
+		  }),
+		  valueFormatter: p => p.value || '',
 		  cellRenderer: p => p.value ? `<code style="font-size:10px;color:#6b7280;background:#f1f5f9;padding:1px 5px;border-radius:3px;">${p.value}</code>` : '' },
+		{ headerName: 'Tool', field: 'tool', width: 190, editable: true,
+		  cellEditor: 'agSelectCellEditor',
+		  cellEditorParams: p => ({
+			values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		  }),
+		  cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
+		},
+		{ headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false, filter: false,
+		  editable: true,
+		  cellEditor: WorkstationPopupEditor,
+		  cellEditorPopup: true,
+		  cellEditorParams: p => ({
+			base_batchsize: p.data?.batchsize || 0,
+			frm,
+			row_type: 'sfg',
+			row_name: p.data?.name || p.data?._row_name || ''
+		  }),
+		  cellRenderer: p => _machine_display_html(
+			p.value,
+			p.data?.batchsize || 0,
+			_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+		  )
+		},
 	];
 
 	const sfg_grid = agGrid.createGrid(sfg_el, {
@@ -508,7 +651,39 @@ function _on_seq_cell_changed(frm, params) {
 	// Write edit back to frm.doc child table row
 	const row = params.data;
 	if (!row || !row.name) return;
-	frappe.model.set_value(row.doctype, row.name, params.colDef.field, params.newValue);
+	const fieldname = params.colDef.field;
+	const changed = params.oldValue !== params.newValue;
+	const doc_row = _find_bpp_row(frm, row.name, 'sfg') || row;
+	if (!fieldname) return;
+
+	if (changed && (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool')) {
+		_mark_bom_form_dirty(frm);
+		doc_row[fieldname] = params.newValue;
+	}
+
+	const update_promise = (doc_row.doctype && doc_row.name)
+		? frappe.model.set_value(doc_row.doctype, doc_row.name, fieldname, params.newValue)
+		: Promise.resolve();
+
+	if (fieldname === 'bom_no' && changed) {
+		update_promise.then(() => {
+			_handle_bom_change(frm, doc_row.name, params.newValue, 'sfg', { params });
+		}).catch(() => {
+			_handle_bom_change(frm, doc_row.name, params.newValue, 'sfg', { params });
+		});
+	} else if (fieldname === 'tool' && changed) {
+		update_promise.then(() => {
+			_handle_tool_change(frm, doc_row.name, 'sfg', params.newValue, { params });
+		}).catch(() => {
+			_handle_tool_change(frm, doc_row.name, 'sfg', params.newValue, { params });
+		});
+	} else if (fieldname === 'custom_workstations_csv' && changed) {
+		update_promise.then(() => {
+			_handle_workstation_change(frm, doc_row.name, 'sfg', params.newValue, { params });
+		}).catch(() => {
+			_handle_workstation_change(frm, doc_row.name, 'sfg', params.newValue, { params });
+		});
+	}
 }
 
 
@@ -532,8 +707,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	// ── FG section ──────────────────────────────────────────────────────────
 	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(par_data.fg || so_data.fg);
+	fg_div.innerHTML = _fg_section_html(par_data.fg || so_data.fg, so_data.so_name);
 	container.appendChild(fg_div);
+	_bind_fg_bom_selects(frm, fg_div);
+	_bind_fg_tool_selects(frm, fg_div);
+	_bind_fg_machine_selects(frm, fg_div);
 
 	// ── SFG batch grid ──────────────────────────────────────────────────────
 	const total_batches = (par_data.sfg_chain || []).reduce((s, sfg) => s + (sfg.batches || []).length, 0);
@@ -573,12 +751,17 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				_row_name:     sfg.row_name,
 				item_code:     sfg.item_code,
 				bom_no:        sfg.bom_no,
+				tool:          sfg.tool || '',
+				tools:         sfg.tools || [],
+				custom_workstations_csv: sfg.custom_workstations_csv || '',
 				type:          sfg.type_of_manufacturing,
+				target_warehouse: sfg.target_warehouse || '',
 				supplier:      sfg.supplier,
 				total_batches: batches.length,
 				total_qty:     batches.reduce((s, b) => s + (b.qty||0), 0),
 				per_shift_qty: sfg.per_shift_qty || 0,
 				batchsize:     sfg.batchsize || 0,
+				spm:           sfg.spm || 0,
 				start_date:    batches[0]?.start_date || '',
 				end_date:      batches[batches.length-1]?.end_date || '',
 			});
@@ -633,9 +816,36 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 		  }
 		},
-		{ headerName: 'BOM', field: 'bom_no', width: 150, pinned: 'left',
+		{ headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		  cellEditor: 'agSelectCellEditor',
+		  cellEditorParams: p => ({
+			values: _get_bom_options(p.data?.item_code, p.value)
+		  }),
 		  cellRenderer: p => (!p.data?._is_group) ? '' :
 			(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		},
+		{ headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
+		  cellEditor: 'agSelectCellEditor',
+		  cellEditorParams: p => ({
+			values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		  }),
+		  cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
+		},
+		{ headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
+		  editable: p => !!p.data?._is_group,
+		  cellEditor: WorkstationPopupEditor,
+		  cellEditorPopup: true,
+		  cellEditorParams: p => ({
+			base_batchsize: p.data?.batchsize || 0,
+			frm,
+			row_type: 'sfg',
+			row_name: p.data?._row_name || p.data?.name || ''
+		  }),
+		  cellRenderer: p => p.data?._is_group ? _machine_display_html(
+			p.value,
+			p.data?.batchsize || 0,
+			_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+		  ) : ''
 		},
 		{ headerName: 'Batches', field: 'total_batches', width: 72,
 		  cellRenderer: p => {
@@ -669,16 +879,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		  valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
 		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
-		{ headerName: 'SPM', width: 62, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? p.data.batchsize : null,
+		{ headerName: 'SPM', width: 80, type: 'numericColumn',
+		  valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
 		  cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 		{ headerName: 'Start Date', field: 'start_date', width: 105,
-		  valueFormatter: p => p.value ? p.value.split(' ')[0] : '',
+		  valueFormatter: p => _format_bpp_date(p.value, ''),
 		  cellStyle: p => p.data?._is_group ? { color:'#059669', fontWeight:'600' } : { color:'#059669' }
 		},
 		{ headerName: 'End Date', field: 'end_date', width: 105,
-		  valueFormatter: p => p.value ? p.value.split(' ')[0] : '',
+		  valueFormatter: p => _format_bpp_date(p.value, ''),
 		  cellStyle: p => p.data?._is_group ? { color:'#dc2626', fontWeight:'600' } : { color:'#dc2626' }
 		},
 		{ headerName: 'Type', field: 'type', width: 108,
@@ -688,6 +898,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
 				: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
 		  }
+		},
+		{ headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+		  cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 		{ headerName: 'Supplier', field: 'supplier', width: 130,
 		  cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
@@ -712,6 +925,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		getRowStyle:   p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
+		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
 	});
 	_grids['par_' + so_data.so_name] = par_grid;
 
@@ -736,8 +950,23 @@ function _on_par_cell_changed(frm, params, par_data) {
 function _find_so_for_row(schedule, row_name) {
 	for (const [so, data] of Object.entries(schedule)) {
 		if ((data.sfg_chain || []).some(s => s.row_name === row_name)) return so;
+		if ((data.fg || []).some(f => f.row_name === row_name)) return so;
 	}
 	return null;
+}
+
+function _sync_parallel_schedule_override(frm, row_name, row_type, patch = {}) {
+	if (!frm.doc.custom_batch_schedule || !row_name) return;
+	try {
+		const schedule = JSON.parse(frm.doc.custom_batch_schedule);
+		const so_name = _find_so_for_row(schedule, row_name);
+		if (!so_name || !schedule[so_name]) return;
+		const collection = row_type === 'fg' ? (schedule[so_name].fg || []) : (schedule[so_name].sfg_chain || []);
+		const row = collection.find(item => item.row_name === row_name);
+		if (!row) return;
+		Object.assign(row, patch || {});
+		frm.doc.custom_batch_schedule = JSON.stringify(schedule);
+	} catch (e) {}
 }
 
 
@@ -745,16 +974,16 @@ function _find_so_for_row(schedule, row_name) {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function _fg_section_html(fg_items) {
-	console.log(".....fg_items....",fg_items)
+
+function _fg_section_html(fg_items, so_name) {
 	if (!fg_items || !fg_items.length) return '';
 	const rows = fg_items.map(item => {
 		const mfg_type = item.manufacturing_type || item.custom_manufacturing_type || 'In House';
 		const badge_color = mfg_type === 'In House' ? '#059669' : '#2563EB';
-		const start = (item.planned_start_date || '').split(' ')[0] || '—';
-		const end   = (item.custom_planned_end_date || '').split(' ')[0] || '—';
+		const start = _format_bpp_date(item.planned_start_date);
+		const end   = _format_bpp_date(item.custom_planned_end_date);
 		const qty   = Number(item.planned_qty || item.qty || 0).toLocaleString('en-IN');
-		return `
+	return `
 		<tr style="background:#fff; border-bottom:1px solid #EFF6FF;">
 			<td style="padding:10px 14px; font-weight:700; color:#1E293B; font-size:13px; white-space:nowrap;">
 				<span style="display:inline-flex;align-items:center;gap:6px;">
@@ -765,6 +994,9 @@ function _fg_section_html(fg_items) {
 			<td style="padding:10px 14px; text-align:right; font-variant-numeric:tabular-nums;
 				color:#334155; font-weight:600;">${qty}</td>
 			<td style="padding:10px 14px;">${_badge(mfg_type, badge_color)}</td>
+			<td style="padding:10px 14px; color:#334155; font-weight:600;">
+				${item.target_warehouse || '—'}
+			</td>
 			<td style="padding:10px 14px;">
 				<span style="display:inline-flex;align-items:center;gap:5px;
 					background:#ECFDF5;border:1px solid #6EE7B7;border-radius:5px;padding:3px 10px;">
@@ -780,10 +1012,40 @@ function _fg_section_html(fg_items) {
 				</span>
 			</td>
 			<td style="padding:10px 14px;">
-				<code style="font-size:10px;color:#6B7280;background:#F1F5F9;
-					padding:2px 6px;border-radius:3px;border:1px solid #E2E8F0;">
-					${item.bom_no || '—'}
-				</code>
+				<select
+					class="bpp-fg-bom-select"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					data-item-code="${frappe.utils.escape_html(item.item_code || '')}"
+					data-so-name="${frappe.utils.escape_html(so_name || '')}"
+					style="min-width:150px;padding:4px 6px;border:1px solid #CBD5E1;border-radius:4px;background:#fff;font-size:12px;color:#475569;"
+				>
+					${_render_bom_select_options(item.item_code, item.bom_no)}
+				</select>
+			</td>
+			<td style="padding:10px 14px;">
+				<select
+					class="bpp-fg-tool-select"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					data-bom-no="${frappe.utils.escape_html(item.bom_no || '')}"
+					style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;min-width:300px;max-width:420px;"
+				>
+					${_render_tool_select_options(item.tools || [], item.tool || '')}
+				</select>
+			</td>
+			<td style="padding:10px 14px; position:relative; overflow:visible;">
+				<div
+					role="button"
+					tabindex="0"
+					class="bpp-fg-machine-trigger"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					title="${frappe.utils.escape_html(_machine_button_label(item.custom_workstations_csv))}"
+					style="cursor:pointer;"
+				>${_machine_display_html(item.custom_workstations_csv, item.batchsize || 0)}</div>
+				<div
+					class="bpp-fg-machine-editor-host"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:25;padding:12px;border:1px solid #CBD5E1;border-radius:10px;background:#fff;box-shadow:0 10px 25px rgba(15,23,42,.12);min-width:320px;max-width:420px;"
+				></div>
 			</td>
 		</tr>`;
 	}).join('');
@@ -793,7 +1055,7 @@ function _fg_section_html(fg_items) {
 			`Finished Goods <span style="font-size:11px;font-weight:400;opacity:.7;">(${fg_items.length})</span>`,
 			'#1E40AF', '#EFF6FF', 'fa-cube')}
 		<div style="background:#fff; border:1px solid #BFDBFE; border-left:4px solid #1E40AF;
-			border-radius:0 0 6px 6px; margin-top:0; margin-bottom:16px; overflow:hidden;">
+			border-radius:0 0 6px 6px; margin-top:0; margin-bottom:16px; overflow:visible;">
 			<table style="width:100%; border-collapse:collapse; font-size:12px;">
 				<thead>
 					<tr style="background:linear-gradient(90deg,#EFF6FF,#DBEAFE);
@@ -801,15 +1063,850 @@ function _fg_section_html(fg_items) {
 						<th style="${_th_style()}">Item Code</th>
 						<th style="${_th_style('right')}">Qty</th>
 						<th style="${_th_style()}">Mfg Type</th>
+						<th style="${_th_style()}">Target Warehouse</th>
 						<th style="${_th_style()}">Start Date</th>
 						<th style="${_th_style()}">End Date</th>
 						<th style="${_th_style()}">BOM</th>
+						<th style="${_th_style()}">Tool</th>
+						<th style="${_th_style()}">Machines</th>
 					</tr>
 				</thead>
 				<tbody>${rows}</tbody>
 			</table>
 		</div>`;
 }
+
+function _collect_bom_item_codes(so_map, mode, parallel_data) {
+	const item_codes = new Set();
+	Object.values(so_map || {}).forEach(so_data => {
+		(so_data.fg || []).forEach(row => row.item_code && item_codes.add(row.item_code));
+		(so_data.sfg || []).forEach(row => row.production_item && item_codes.add(row.production_item));
+	});
+	if (mode === 'Parallel' && parallel_data) {
+		Object.values(parallel_data || {}).forEach(so_data => {
+			(so_data.fg || []).forEach(row => row.item_code && item_codes.add(row.item_code));
+			(so_data.sfg_chain || []).forEach(row => row.item_code && item_codes.add(row.item_code));
+		});
+	}
+	return Array.from(item_codes);
+}
+
+function _collect_rows_missing_machine_defaults(frm, parallel_data) {
+	const rows = [];
+	(frm.doc.po_items || []).forEach(row => {
+		if (row.bom_no) rows.push(row);
+	});
+	(frm.doc.sub_assembly_items || []).forEach(row => {
+		if (row.bom_no) rows.push(row);
+	});
+	if (parallel_data) {
+		Object.values(parallel_data || {}).forEach(so_data => {
+			(so_data.fg || []).forEach(row => {
+				if (row.bom_no) rows.push(row);
+			});
+			(so_data.sfg_chain || []).forEach(row => {
+				if (row.bom_no) rows.push(row);
+			});
+		});
+	}
+	return rows;
+}
+
+function _hydrate_machine_defaults(frm, parallel_data) {
+	const missing_rows = _collect_rows_missing_machine_defaults(frm, parallel_data);
+	const bom_nos = Array.from(new Set(missing_rows.map(row => row.bom_no).filter(Boolean)));
+	const pending = bom_nos.filter(bom_no => !_bom_capacity_cache[bom_no]);
+	if (!pending.length) {
+		let changed = false;
+		missing_rows.forEach(row => {
+			const details = _bom_capacity_cache[row.bom_no];
+			if (!details) return;
+			if (!row.custom_workstations_csv && details.workstations_csv) {
+				row.custom_workstations_csv = details.workstations_csv;
+				changed = true;
+			}
+			if (!row.tool && details.tool) {
+				row.tool = details.tool;
+				changed = true;
+			}
+			row.tools = details.tools || row.tools || [];
+			row.tool_load_qty = details.tool_load_qty || row.tool_load_qty || 0;
+			row.pm_days = details.pm_days || row.pm_days || 0;
+			row.machine_count = details.machine_count || _parse_csv_list(row.custom_workstations_csv || details.workstations_csv).length;
+			row.spm = details.spm || row.spm || 0;
+		});
+		return Promise.resolve(changed);
+	}
+
+	return Promise.all(pending.map(bom_no => get_bom_details(bom_no))).then(results => {
+		results.forEach(details => {
+			if (details?.bom_no) {
+				_bom_capacity_cache[details.bom_no] = details;
+			}
+		});
+		return _hydrate_machine_defaults(frm, parallel_data);
+	});
+}
+
+function _parse_csv_list(csv_value) {
+	if (!csv_value) return [];
+	return String(csv_value)
+		.split(',')
+		.map(value => value.trim())
+		.filter(Boolean);
+}
+
+function _machine_button_label(csv_value) {
+	const values = _parse_csv_list(csv_value);
+	if (!values.length) return 'Select';
+	return values.join(', ');
+}
+
+function _machine_button_html(csv_value) {
+	const values = _parse_csv_list(csv_value);
+	const title = values.join(', ');
+	return `<button type="button"
+		class="bpp-machine-trigger"
+		title="${frappe.utils.escape_html(title || 'Select Workstations')}"
+		style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:4px 8px;font-size:12px;color:#334155;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+		${frappe.utils.escape_html(_machine_button_label(csv_value))}
+	</button>`;
+}
+
+function _machine_summary_html(batchsize, csv_value) {
+	const count = _parse_csv_list(csv_value).length;
+	const spm = Number(batchsize || 0) * count;
+	return `<div style="margin-top:6px;font-size:11px;color:#475569;white-space:nowrap;">
+		<span>Machines: <strong>${count}</strong></span>
+		<span style="margin-left:8px;">SPM: <strong>${spm}</strong></span>
+	</div>`;
+}
+
+function _get_selected_tool_row(tools, selected_tool) {
+	const rows = Array.isArray(tools) ? tools : [];
+	return rows.find(row => (row?.tool || '') === (selected_tool || '')) || null;
+}
+
+function _effective_spm_value(data) {
+	if (!data) return 0;
+	const direct_spm = Number(data.spm || 0);
+	if (direct_spm > 0) return direct_spm;
+	const base_batchsize = Number(data.batchsize || 0);
+	const machine_count = Number(data.machine_count || _parse_csv_list(data.custom_workstations_csv).length || 0);
+	return base_batchsize * machine_count;
+}
+
+function _find_bpp_row(frm, row_name, row_type) {
+	return row_type === 'fg'
+		? (frm.doc.po_items || []).find(item => item.name === row_name || item.row_name === row_name)
+		: (frm.doc.sub_assembly_items || []).find(item => item.name === row_name || item.row_name === row_name);
+}
+
+function _machine_display_html(csv_value, batchsize, fallback_csv = '') {
+	const effective_csv = csv_value || fallback_csv || '';
+	const values = _parse_csv_list(effective_csv);
+	const label = values.length ? values.join(', ') : 'Select';
+	return `<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;min-width:300px;max-width:420px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+		${frappe.utils.escape_html(label)}
+	</div>`;
+}
+
+function _get_workstation_options(txt) {
+	return frappe.call({
+		method: 'frappe.desk.search.search_link',
+		args: {
+			doctype: 'Workstation',
+			txt: txt || '',
+			page_length: 50
+		}
+	}).then(r => (r.message || []).map(option => option.value || option.name || option));
+}
+
+class WorkstationPopupEditor {
+	init(params) {
+		this.params = params;
+		this.eGui = document.createElement('div');
+		this.eGui.style.cssText = 'min-width:280px;max-width:340px;padding:12px;background:#fff;border:1px solid #CBD5E1;border-radius:10px;box-shadow:0 10px 25px rgba(15,23,42,.15);';
+
+		this.summary = document.createElement('div');
+		this.summary.style.marginBottom = '10px';
+		this.eGui.appendChild(this.summary);
+
+		this.controlHost = document.createElement('div');
+		this.eGui.appendChild(this.controlHost);
+
+		const footer = document.createElement('div');
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:10px;';
+		this.applyBtn = document.createElement('button');
+		this.applyBtn.type = 'button';
+		this.applyBtn.textContent = 'Apply';
+		this.applyBtn.style.cssText = 'border:1px solid #16A34A;background:#16A34A;color:#fff;border-radius:4px;padding:5px 10px;font-size:12px;';
+		footer.appendChild(this.applyBtn);
+		this.eGui.appendChild(footer);
+
+		this.applyBtn.addEventListener('click', async () => {
+			const selected_csv = this.getValue();
+			const frm = this.params.frm;
+			const row_name = this.params.row_name;
+			const row_type = this.params.row_type || 'sfg';
+			const machine_count = _parse_csv_list(selected_csv).length;
+			const spm = Number(this.params.base_batchsize || 0) * machine_count;
+			if (frm && row_name) {
+				const row = _find_bpp_row(frm, row_name, row_type);
+				if (row) {
+					row.custom_workstations_csv = selected_csv;
+					row.machine_count = machine_count;
+					row.spm = spm;
+					_mark_bom_form_dirty(frm);
+					if (row.doctype && row.name) {
+						await frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv);
+					}
+					if (row_type === 'sfg') {
+						frm.refresh_field('sub_assembly_items');
+					} else if (row_type === 'fg') {
+						frm.refresh_field('po_items');
+					}
+				}
+			}
+			_sync_parallel_schedule_override(frm, row_name, row_type, {
+				custom_workstations_csv: selected_csv,
+				machine_count,
+				spm
+			});
+			if (this.params.data) {
+				this.params.data.custom_workstations_csv = selected_csv;
+				this.params.data.machine_count = machine_count;
+				this.params.data.spm = spm;
+			}
+			if (this.params.api) {
+				this.params.api.refreshCells({ force: true });
+			}
+			this.params.stopEditing();
+		});
+		this.control = frappe.ui.form.make_control({
+			parent: this.controlHost,
+			df: {
+				fieldtype: 'MultiSelectList',
+				placeholder: __('Select Workstations'),
+				get_data(txt) {
+					return _get_workstation_options(txt);
+				},
+				change: () => this.renderSummary()
+			},
+			render_input: true
+		});
+		this.control.refresh();
+		const selected = _parse_csv_list(params.value || '');
+		if (selected.length) {
+			this.control.set_value(selected);
+		}
+		this.renderSummary();
+	}
+
+	renderSummary() {
+		const selected = this.control?.get_value() || [];
+		this.summary.innerHTML = _machine_summary_html(this.params.base_batchsize || 0, selected.join(','));
+	}
+
+	getGui() {
+		return this.eGui;
+	}
+
+	afterGuiAttached() {
+		if (this.control?.$input) {
+			this.control.$input.focus();
+		}
+	}
+
+	getValue() {
+		return (this.control?.get_value() || []).join(',');
+	}
+
+	isPopup() {
+		return true;
+	}
+
+	getPopupPosition() {
+		return 'under';
+	}
+}
+
+function _close_fg_workstation_popover() {
+	$('.bpp-fg-machine-editor-host').empty().hide();
+}
+
+function _open_workstation_selector(frm, row, row_type, context = {}) {
+	if (!row?.bom_no || row_type !== 'fg') {
+		if (!row?.bom_no) {
+			frappe.msgprint(__('Please select a BOM first.'));
+		}
+		return;
+	}
+
+	const row_name = row.name || row.row_name;
+	const wrapper = $(context.wrapper || document);
+	const host = wrapper.find(`.bpp-fg-machine-editor-host[data-row-name="${row_name}"]`).get(0);
+	if (!host) return;
+
+	_close_fg_workstation_popover();
+
+	get_bom_details(row.bom_no, row.custom_workstations_csv || '', row.tool || '').then(details => {
+		const selected_values = _parse_csv_list(
+			row.custom_workstations_csv || details.selected_workstations_csv || details.workstations_csv
+		);
+		host.style.display = 'block';
+		host.innerHTML = '';
+
+		const summary = document.createElement('div');
+		summary.style.marginBottom = '10px';
+		host.appendChild(summary);
+
+		const controlHost = document.createElement('div');
+		host.appendChild(controlHost);
+
+		const footer = document.createElement('div');
+		footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:10px;';
+		const cancelBtn = document.createElement('button');
+		cancelBtn.type = 'button';
+		cancelBtn.textContent = 'Cancel';
+		cancelBtn.style.cssText = 'border:1px solid #CBD5E1;background:#fff;color:#334155;border-radius:4px;padding:5px 10px;font-size:12px;';
+		const applyBtn = document.createElement('button');
+		applyBtn.type = 'button';
+		applyBtn.textContent = 'Apply';
+		applyBtn.style.cssText = 'border:1px solid #16A34A;background:#16A34A;color:#fff;border-radius:4px;padding:5px 10px;font-size:12px;';
+		footer.appendChild(cancelBtn);
+		footer.appendChild(applyBtn);
+		host.appendChild(footer);
+
+		const control = frappe.ui.form.make_control({
+			parent: controlHost,
+			df: {
+				fieldtype: 'MultiSelectList',
+				placeholder: __('Select Workstations'),
+				get_data(txt) {
+					return _get_workstation_options(txt);
+				},
+				change() {
+					renderSummary();
+				}
+			},
+			render_input: true
+		});
+		control.refresh();
+		if (selected_values.length) {
+			control.set_value(selected_values);
+		}
+
+		function positionEditor() {
+			host.style.top = 'calc(100% + 6px)';
+			host.style.bottom = 'auto';
+			const hostRect = host.getBoundingClientRect();
+			const belowSpace = window.innerHeight - trigger.getBoundingClientRect().bottom;
+			if (belowSpace < hostRect.height + 12) {
+				host.style.top = 'auto';
+				host.style.bottom = 'calc(100% + 6px)';
+			}
+		}
+
+		function renderSummary() {
+			const count = (control.get_value() || []).length;
+			const batchsize = Number(details.batchsize || 0);
+			const spm = batchsize * count;
+			summary.innerHTML = `
+				<div style="margin-bottom:0;padding:10px 12px;border:1px solid #DBEAFE;background:#EFF6FF;border-radius:6px;font-size:12px;color:#1E3A8A;">
+					<strong>${frappe.utils.escape_html(row.bom_no)}</strong>
+					<span style="margin-left:10px;">Batch Size: <strong>${batchsize}</strong></span>
+					<span style="margin-left:10px;">Machines: <strong>${count}</strong></span>
+					<span style="margin-left:10px;">SPM: <strong>${spm}</strong></span>
+				</div>
+			`;
+		}
+
+		applyBtn.addEventListener('click', () => {
+			const selected = control.get_value() || [];
+			if (!selected.length) {
+				frappe.msgprint(__('Select at least one workstation.'));
+				return;
+			}
+			const selected_csv = selected.join(',');
+			frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv).then(() => {
+				_close_fg_workstation_popover();
+				_handle_workstation_change(frm, row.name, row_type, selected_csv, context);
+			});
+		});
+		cancelBtn.addEventListener('click', () => _close_fg_workstation_popover());
+
+		renderSummary();
+		positionEditor();
+		if (control.$input) {
+			control.$input.focus();
+		}
+	});
+}
+
+function _get_bom_options(item_code, current_bom) {
+	const options = (_bom_options_cache[item_code] || []).slice();
+	if (current_bom && !options.includes(current_bom)) {
+		options.unshift(current_bom);
+	}
+	return options;
+}
+
+function _render_bom_select_options(item_code, selected_bom) {
+	const options = _get_bom_options(item_code, selected_bom);
+	return options.map(bom_no => {
+		const selected = bom_no === selected_bom ? ' selected' : '';
+		return `<option value="${frappe.utils.escape_html(bom_no)}"${selected}>${frappe.utils.escape_html(bom_no)}</option>`;
+	}).join('');
+}
+
+function _render_tool_select_options(tools, selected_tool) {
+	const rows = Array.isArray(tools) ? tools : [];
+	if (!rows.length) {
+		return `<option value="">${selected_tool ? frappe.utils.escape_html(selected_tool) : 'No Tool'}</option>`;
+	}
+	return rows.map(row => {
+		const tool = row?.tool || '';
+		const selected = tool === selected_tool ? ' selected' : '';
+		return `<option value="${frappe.utils.escape_html(tool)}"${selected}>${frappe.utils.escape_html(tool || 'No Tool')}</option>`;
+	}).join('');
+}
+
+function _bind_fg_bom_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-bom-select').off('change').on('change', function() {
+		const row_name = $(this).data('row-name');
+		const new_bom = $(this).val();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || !new_bom || row.bom_no === new_bom) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'bom_no', new_bom).then(() => {
+			_handle_bom_change(frm, row.name, new_bom, 'fg', { wrapper });
+		});
+	});
+}
+
+function _bind_fg_tool_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-tool-select').each(function() {
+		const row_name = $(this).data('row-name');
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row?.bom_no) return;
+		get_bom_details(row.bom_no, row.custom_workstations_csv || '', row.tool || '').then(details => {
+			this.innerHTML = _render_tool_select_options(details?.tools || [], details?.tool || row.tool || '');
+			this.value = details?.tool || row.tool || '';
+			this.disabled = !(details?.tools || []).length;
+			this.title = details?.tool_load_qty
+				? `Load Qty: ${details.tool_load_qty}${details?.pm_days ? ` | PM Days: ${details.pm_days}` : ''}`
+				: '';
+			if (!row.tool && details?.tool) {
+				row.tool = details.tool;
+				row.tool_load_qty = details.tool_load_qty || 0;
+				row.pm_days = details.pm_days || 0;
+			}
+		});
+	});
+
+	$(wrapper).find('.bpp-fg-tool-select').off('change').on('change', function() {
+		const row_name = $(this).data('row-name');
+		const new_tool = $(this).val();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || row.tool === new_tool) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'tool', new_tool).then(() => {
+			_handle_tool_change(frm, row.name, 'fg', new_tool, { wrapper });
+		}).catch(() => {
+			_handle_tool_change(frm, row.name, 'fg', new_tool, { wrapper });
+		});
+	});
+}
+
+function _bind_fg_machine_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-machine-trigger').each(function() {
+		const row_name = $(this).data('row-name');
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row) return;
+		get_bom_details(row.bom_no, row.custom_workstations_csv || '', row.tool || '').then(details => {
+			const selected_csv = row.custom_workstations_csv || details.selected_workstations_csv || details.workstations_csv || '';
+			if (!row.custom_workstations_csv && selected_csv) {
+				row.custom_workstations_csv = selected_csv;
+				row.machine_count = details.machine_count || _parse_csv_list(selected_csv).length;
+				row.spm = details.spm || _effective_spm_value({
+					batchsize: details.batchsize || 0,
+					custom_workstations_csv: selected_csv,
+					machine_count: details.machine_count || 0
+				});
+			}
+			this.title = _machine_button_label(selected_csv);
+			this.innerHTML = _machine_display_html(selected_csv, details.batchsize || 0);
+		});
+	});
+	$(wrapper).find('.bpp-fg-machine-trigger').off('click keydown').on('click', function() {
+		const row_name = $(this).data('row-name');
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row) return;
+		_open_workstation_selector(frm, row, 'fg', { wrapper });
+	}).on('keydown', function(e) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		$(this).trigger('click');
+	});
+}
+
+function _clear_parallel_schedule(frm) {
+	if (frm.doc.custom_batch_schedule) {
+		frm.set_value('custom_batch_schedule', '');
+	}
+	frm.dirty();
+}
+
+function _on_par_bom_changed(frm, params, par_data) {
+	if (!params.data?._is_group || params.oldValue === params.newValue) return;
+
+	const sfg_row = _find_bpp_row(frm, params.data._row_name, 'sfg');
+	if (!sfg_row) return;
+	const fieldname = params.colDef.field;
+
+	if (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool') {
+		_mark_bom_form_dirty(frm);
+		sfg_row[fieldname] = params.newValue;
+		params.data[fieldname] = params.newValue;
+	}
+
+	if (fieldname === 'bom_no') {
+		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'bom_no', params.newValue).then(() => {
+			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+		}).catch(() => {
+			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+		});
+		return;
+	}
+
+	if (fieldname === 'tool') {
+		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'tool', params.newValue).then(() => {
+			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		}).catch(() => {
+			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		});
+		return;
+	}
+
+	if (fieldname === 'custom_workstations_csv') {
+		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'custom_workstations_csv', params.newValue).then(() => {
+			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		}).catch(() => {
+			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		});
+	}
+}
+
+function get_bom_details(bom_no, selected_workstations_csv = null, selected_tool = null) {
+	return new Promise(resolve => {
+		if (!bom_no) {
+			resolve({
+				bom_no: '',
+				batchsize: 0,
+				workstations: [],
+				workstations_csv: '',
+				selected_workstations_csv: '',
+				machine_count: 0,
+				spm: 0,
+				tool: '',
+				tool_load_qty: 0,
+				pm_days: 0,
+				tools: []
+			});
+			return;
+		}
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_bom_spm_details',
+			args: { bom_no, selected_workstations_csv, selected_tool },
+			callback: function(r) {
+				resolve(r.message || {});
+			}
+		});
+	});
+}
+
+function get_bom_spm(bom_no, selected_workstations_csv = null) {
+	return get_bom_details(bom_no, selected_workstations_csv).then(details => details?.spm || 0);
+}
+
+function _recalculate_parallel_schedule(frm) {
+	const html_field = frm.fields_dict.production_items_html;
+	if (!html_field || !html_field.$wrapper) {
+		_bom_recalc_inflight = false;
+		return;
+	}
+
+	const so_map = _build_so_map(frm);
+	frappe.show_alert({ message: __('Recalculating parallel schedule…'), indicator: 'blue' });
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.calculate_parallel_batch_schedule',
+		args: { docname: frm.doc.name },
+		callback(r) {
+			if (!r.message) {
+				_bom_recalc_inflight = false;
+				return;
+			}
+			const json_str = JSON.stringify(r.message);
+			frm.set_value('custom_batch_schedule', json_str);
+			frappe.show_alert({ message: __('Parallel schedule updated'), indicator: 'green' });
+			_render_all_grids(frm, so_map, 'Parallel', html_field.$wrapper, r.message);
+			_bom_recalc_inflight = false;
+		}
+	});
+}
+
+function _run_bom_change_recalculation(frm) {
+	const mode = frm.doc.custom_planning_mode || 'Sequential';
+	const scope = frm._bom_change_scope || 'existing';
+	frappe.show_alert({ message: __('Updating BOM calculations…'), indicator: 'blue' });
+	frappe.call({
+		method: scope === 'fg'
+			? 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.generate_production_plan_items'
+			: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.recalculate_existing_schedule',
+		args: { docname: frm.doc.name, planning_mode: mode },
+		callback(r) {
+			if (!r.message) {
+				_bom_recalc_inflight = false;
+				return;
+			}
+			frm._bom_changed = false;
+			frm._bom_change_scope = null;
+			frm.reload_doc().then(() => {
+				if (mode === 'Parallel') {
+					const html_field = frm.fields_dict.production_items_html;
+					let schedule = null;
+					try {
+						schedule = frm.doc.custom_batch_schedule ? JSON.parse(frm.doc.custom_batch_schedule) : null;
+					} catch (e) {}
+					frappe.show_alert({ message: __('Parallel schedule updated'), indicator: 'green' });
+					if (html_field && html_field.$wrapper) {
+						_render_all_grids(frm, _build_so_map(frm), 'Parallel', html_field.$wrapper, schedule);
+					}
+				} else {
+					frappe.show_alert({ message: __('Sequential schedule updated'), indicator: 'green' });
+				}
+				_bom_recalc_inflight = false;
+			});
+		}
+	});
+}
+
+function _mark_bom_form_dirty(frm) {
+	frm._bom_changed = true;
+	frm.doc.__unsaved = 1;
+	frm.dirty();
+	if (typeof frm.refresh_header === 'function') {
+		frm.refresh_header();
+	}
+}
+
+function _handle_bom_change(frm, row_name, bom_no, row_type, context = {}) {
+	_mark_bom_form_dirty(frm);
+
+	if (row_type === 'fg') {
+		frm._bom_change_scope = 'fg';
+	} else if (frm._bom_change_scope !== 'fg') {
+		frm._bom_change_scope = 'existing';
+	}
+
+	const row = _find_bpp_row(frm, row_name, row_type);
+	if (row) {
+		row.bom_no = bom_no;
+		row.tool = '';
+	}
+
+	get_bom_details(bom_no).then(details => {
+		const selected_csv = details?.selected_workstations_csv || details?.workstations_csv || '';
+		const updates = [];
+		if (row && (row.custom_workstations_csv || '') !== selected_csv) {
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv));
+		}
+		if (row && (row.tool || '') !== (details?.tool || '')) {
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool', details?.tool || ''));
+		}
+		if (row) {
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool_load_qty', details?.tool_load_qty || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'pm_days', details?.pm_days || 0));
+		}
+
+		Promise.all(updates).then(() => {
+			if (row_type === 'fg') {
+				_sync_fg_bom_selection(frm, row_name, bom_no, details?.spm || 0);
+			}
+			_sync_parallel_schedule_override(frm, row_name, row_type, {
+				bom_no,
+				tool: details?.tool || '',
+				custom_workstations_csv: selected_csv,
+				machine_count: details?.machine_count || 0,
+				spm: details?.spm || 0,
+				batchsize: details?.batchsize || 0,
+				tool_load_qty: details?.tool_load_qty || 0,
+				pm_days: details?.pm_days || 0,
+				tools: details?.tools || []
+			});
+			_apply_bom_details_to_context(row_name, details, context);
+			if (context.wrapper) {
+				_bind_fg_tool_selects(frm, context.wrapper);
+				_bind_fg_machine_selects(frm, context.wrapper);
+			}
+		});
+	});
+}
+
+function _handle_workstation_change(frm, row_name, row_type, selected_csv, context = {}) {
+	_mark_bom_form_dirty(frm);
+
+	// Machine changes only affect capacity/SPM, never the BOM tree structure.
+	// Force existing-row recalculation so a prior FG BOM change scope doesn't
+	// accidentally regenerate rows and restore old workstation CSV.
+	frm._bom_change_scope = 'existing';
+
+	const row = _find_bpp_row(frm, row_name, row_type);
+	if (row) {
+		row.custom_workstations_csv = selected_csv;
+	}
+	const bom_no = row?.bom_no;
+	if (!bom_no) return;
+
+	get_bom_details(bom_no, selected_csv, row?.tool || '').then(details => {
+		const updates = [];
+		if (row) {
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool_load_qty', details?.tool_load_qty || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'pm_days', details?.pm_days || 0));
+		}
+		Promise.all(updates).then(() => {
+		if (row_type === 'fg') {
+			_sync_fg_bom_selection(frm, row_name, bom_no, details?.spm || 0);
+		}
+		_sync_parallel_schedule_override(frm, row_name, row_type, {
+			tool: details?.tool || row?.tool || '',
+			custom_workstations_csv: details?.selected_workstations_csv || details?.workstations_csv || '',
+			machine_count: details?.machine_count || 0,
+			spm: details?.spm || 0,
+			batchsize: details?.batchsize || 0,
+			tool_load_qty: details?.tool_load_qty || 0,
+			pm_days: details?.pm_days || 0,
+			tools: details?.tools || []
+		});
+		_apply_bom_details_to_context(row_name, details, context);
+		});
+	});
+}
+
+function _handle_tool_change(frm, row_name, row_type, selected_tool, context = {}) {
+	_mark_bom_form_dirty(frm);
+	frm._bom_change_scope = 'existing';
+
+	const row = _find_bpp_row(frm, row_name, row_type);
+	if (row) {
+		row.tool = selected_tool;
+	}
+	const bom_no = row?.bom_no;
+	if (!bom_no) return;
+
+	get_bom_details(bom_no, row?.custom_workstations_csv || '', selected_tool).then(details => {
+		const updates = [];
+		if (row) {
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool', details?.tool || selected_tool || ''));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool_load_qty', details?.tool_load_qty || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'pm_days', details?.pm_days || 0));
+		}
+		Promise.all(updates).then(() => {
+			_sync_parallel_schedule_override(frm, row_name, row_type, {
+				tool: details?.tool || selected_tool || '',
+				tool_load_qty: details?.tool_load_qty || 0,
+				pm_days: details?.pm_days || 0,
+				tools: details?.tools || []
+			});
+			_apply_bom_details_to_context(row_name, details, context);
+			if (context.wrapper) {
+				_bind_fg_tool_selects(frm, context.wrapper);
+			}
+		});
+	});
+}
+
+function _apply_bom_details_to_context(row_name, details, context = {}) {
+	const spm = details?.spm || 0;
+	const batchsize = details?.batchsize || 0;
+	const selected_csv = details?.selected_workstations_csv || details?.workstations_csv || '';
+	const machine_count = details?.machine_count || 0;
+	const tool = details?.tool || '';
+	const tool_load_qty = details?.tool_load_qty || 0;
+	const pm_days = details?.pm_days || 0;
+	const tools = details?.tools || [];
+
+	if (context.params?.data) {
+		context.params.data.batchsize = batchsize;
+		context.params.data.spm = spm;
+		context.params.data.custom_workstations_csv = selected_csv;
+		context.params.data.machine_count = machine_count;
+		context.params.data.tool = tool;
+		context.params.data.tool_load_qty = tool_load_qty;
+		context.params.data.pm_days = pm_days;
+		context.params.data.tools = tools;
+		if (context.par_data?.sfg_chain) {
+			const chain_row = context.par_data.sfg_chain.find(item => item.row_name === row_name);
+			if (chain_row) {
+				chain_row.batchsize = batchsize;
+				chain_row.spm = spm;
+				chain_row.custom_workstations_csv = selected_csv;
+				chain_row.machine_count = machine_count;
+				chain_row.tool = tool;
+				chain_row.tool_load_qty = tool_load_qty;
+				chain_row.pm_days = pm_days;
+				chain_row.tools = tools;
+			}
+		}
+		context.params.api.refreshCells({ force: true });
+	}
+
+	if (!context.params && context.grid_api) {
+		context.grid_api.forEachNode(node => {
+			const match = node.data?._row_name === row_name || node.data?.name === row_name;
+			if (!match) return;
+			node.data.batchsize = batchsize;
+			node.data.spm = spm;
+			node.data.custom_workstations_csv = selected_csv;
+			node.data.machine_count = machine_count;
+			node.data.tool = tool;
+			node.data.tool_load_qty = tool_load_qty;
+			node.data.pm_days = pm_days;
+			node.data.tools = tools;
+		});
+		context.grid_api.refreshCells({ force: true });
+	}
+
+	if (context.wrapper) {
+		const toolSelect = $(context.wrapper).find(`.bpp-fg-tool-select[data-row-name="${row_name}"]`).get(0);
+		if (toolSelect) {
+			toolSelect.innerHTML = _render_tool_select_options(tools, tool);
+			toolSelect.value = tool || '';
+			toolSelect.disabled = !tools.length;
+			toolSelect.title = tool_load_qty
+				? `Load Qty: ${tool_load_qty}${pm_days ? ` | PM Days: ${pm_days}` : ''}`
+				: '';
+		}
+		const trigger = $(context.wrapper).find(`.bpp-fg-machine-trigger[data-row-name="${row_name}"]`).get(0);
+		if (trigger) {
+			trigger.title = _machine_button_label(selected_csv);
+			trigger.innerHTML = _machine_display_html(selected_csv, batchsize);
+		}
+	}
+}
+
+function _sync_fg_bom_selection(frm, fg_row_name, bom_no, spm = 0) {
+	const fg_row = _find_bpp_row(frm, fg_row_name, 'fg');
+	if (!fg_row || !fg_row.sales_order_item) return;
+
+	const selection_row = (frm.doc.bom_selections || []).find(item => item.sales_order_item === fg_row.sales_order_item);
+	if (!selection_row) return;
+
+	frappe.model.set_value(selection_row.doctype, selection_row.name, 'bom_no', bom_no);
+	frappe.model.set_value(selection_row.doctype, selection_row.name, 'spm', spm || 0);
+}
+
 
 function _th_style(align) {
 	return `padding:8px 12px; font-size:11px; font-weight:700; color:#1E40AF;
@@ -860,11 +1957,11 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		{ headerName: 'Order By', field: _par ? 'start_date' : 'custom_start_date',
 		  width: 110, editable: true,
 		  cellStyle: { color: '#0F5132', fontWeight: '600' },
-		  valueFormatter: p => p.value ? p.value.toString().split(' ')[0] : '' },
+		  valueFormatter: p => _format_bpp_date(p.value, '') },
 		{ headerName: 'Receive By', field: _par ? 'end_date' : 'schedule_date',
 		  width: 110, editable: true,
 		  cellStyle: { color: '#842029', fontWeight: '600' },
-		  valueFormatter: p => p.value ? p.value.toString().split(' ')[0] : '' },
+		  valueFormatter: p => _format_bpp_date(p.value, '') },
 		{ headerName: 'Supplier', field: _par ? 'supplier' : 'custom_supplier', width: 150 },
 	];
 
@@ -887,5 +1984,13 @@ function _badge(text, color) {
 		${text}</span>`;
 }
 
+function _format_bpp_date(value, empty_value = '—') {
+	if (!value) return empty_value;
 
+	const date_part = String(value).split(' ')[0];
+	const parts = date_part.split('-');
+	if (parts.length !== 3) return date_part;
 
+	const [year, month, day] = parts;
+	return `${day}-${month}-${year}`;
+}

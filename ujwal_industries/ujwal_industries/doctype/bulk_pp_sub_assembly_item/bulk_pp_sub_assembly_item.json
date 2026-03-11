@@ -15,6 +15,10 @@
   "column_break_1",
   "qty",
   "bom_no",
+  "tool",
+  "tool_load_qty",
+  "pm_days",
+  "custom_workstations_csv",
   "bom_level",
   "type_of_manufacturing",
   "supplier",
@@ -99,6 +103,32 @@
    "in_list_view": 1,
    "label": "Bom No",
    "options": "BOM"
+  },
+  {
+   "fieldname": "tool",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Tool",
+   "options": "Asset"
+  },
+  {
+   "fieldname": "tool_load_qty",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Tool Load Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pm_days",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "PM Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_workstations_csv",
+   "fieldtype": "Small Text",
+   "label": "Selected Workstations"
   },
   {
    "columns": 1,
@@ -242,7 +272,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-04 18:40:00.000000",
+ "modified": "2026-03-10 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk PP Sub Assembly Item",
