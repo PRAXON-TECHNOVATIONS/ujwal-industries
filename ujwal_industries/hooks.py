@@ -226,8 +226,7 @@ doc_events = {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
     },
 	"BOM":{
-  		"on_update_after_submit": "ujwal_industries.overrides.bom.on_update_validate_default_tool",
-  		"validate": "ujwal_industries.overrides.bom.validate_default_tool",
+  		"on_update_after_submit": "ujwal_industries.overrides.bom.validate_default_tool",
 		"validate": "ujwal_industries.overrides.bom.validate_bom"
 	},
  	"Asset Maintenance": {
@@ -404,3 +403,6 @@ from ujwal_industries.overrides.bom import apply_bom_overrides
 
 apply_work_order_overrides()
 apply_bom_overrides()
+
+
+
