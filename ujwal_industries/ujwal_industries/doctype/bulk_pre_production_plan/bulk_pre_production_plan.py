@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+import json
 from frappe import _, msgprint
 from frappe.model.document import Document
 from frappe.utils import getdate, get_datetime, add_to_date, add_days, now_datetime, flt, cint
@@ -12,7 +13,6 @@ from datetime import datetime, timedelta
 # Import helper functions from production_plan overrides
 from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_get_allow_backdated_setting,
-	_calculate_production_minutes,
 	_to_datetime,
 	_subtract_minutes_from_datetime,
 	get_subcontract_lead_time,
@@ -49,6 +49,382 @@ def get_default_supplier_for_item(item_code: str, company: str) -> str | None:
 		"supplier"
 	)
 	return result
+
+
+def _get_default_bom_for_item(item_code: str) -> str | None:
+	"""Return the active default BOM for an item."""
+	return frappe.db.get_value(
+		"BOM",
+		{
+			"item": item_code,
+			"is_active": 1,
+			"is_default": 1,
+			"docstatus": 1,
+		},
+		"name",
+	)
+
+
+def _get_bom_spm(bom_no: str | None) -> int:
+	"""Default SPM = first operation batch size x default workstation count."""
+	return cint(_get_bom_spm_details_map(bom_no).get("spm") or 0)
+
+
+def _parse_csv_list(csv_value: str | None) -> list[str]:
+	"""Split a CSV string into non-empty trimmed values."""
+	if not csv_value:
+		return []
+	return [value.strip() for value in str(csv_value).split(",") if value and value.strip()]
+
+
+def _join_csv_list(values: list[str]) -> str:
+	"""Join workstation values back to a CSV string."""
+	return ",".join(_parse_csv_list(",".join(values or [])))
+
+
+def _normalise_bom_tool_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+	"""Normalise BOM tool rows from custom_tool_details."""
+	result: list[dict[str, Any]] = []
+	for row in rows or []:
+		result.append({
+			"tool": (row or {}).get("tool") or "",
+			"tool_load_qty": cint((row or {}).get("tool_load_quantity") or (row or {}).get("tool_load_qty") or 0),
+			"operation": (row or {}).get("operation") or "",
+			"is_default": cint((row or {}).get("is_default") or 0),
+			"pm_days": cint((row or {}).get("pm_days") or (row or {}).get("custom_required_maintenance_days") or 0),
+		})
+	return result
+
+
+def _get_bom_tool_rows(bom_no: str | None) -> list[dict[str, Any]]:
+	"""Return tool rows configured on a BOM."""
+	if not bom_no:
+		return []
+
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			td.tool,
+			td.tool_load_quantity,
+			td.operation,
+			td.is_default,
+			COALESCE(asset.custom_required_maintenance_days, 0) AS pm_days
+		FROM `tabTool Child Table` td
+		LEFT JOIN `tabAsset` asset ON asset.name = td.tool
+		WHERE td.parent = %(bom_no)s
+		ORDER BY td.is_default DESC, td.idx ASC
+		""",
+		{"bom_no": bom_no},
+		as_dict=True,
+	)
+	return _normalise_bom_tool_rows(rows)
+
+
+def _get_bom_fallback_lot_capacity(bom_no: str | None) -> int:
+	"""Return BOM fixed lot capacity when tools are not configured."""
+	if not bom_no:
+		return 0
+	return cint(
+		frappe.db.sql(
+			"""
+			SELECT MAX(custom_fixed_lot_capacity)
+			FROM `tabBOM Operation`
+			WHERE parent = %(bom_no)s
+			""",
+			{"bom_no": bom_no},
+		)[0][0]
+		or 0
+	)
+
+
+def _resolve_bom_tool_info(
+	tool_rows: list[dict[str, Any]] | None,
+	selected_tool: str | None = None,
+	fallback_lot_capacity: int = 0,
+) -> dict[str, Any]:
+	"""Resolve effective tool/load/PM details for a row."""
+	tools = _normalise_bom_tool_rows(tool_rows)
+	selected_tool = (selected_tool or "").strip()
+	chosen = None
+
+	if selected_tool:
+		chosen = next((row for row in tools if row.get("tool") == selected_tool), None)
+
+	if not chosen and tools:
+		chosen = next((row for row in tools if cint(row.get("is_default")) == 1), None) or tools[0]
+
+	if chosen:
+		return {
+			"tool": chosen.get("tool") or "",
+			"tool_load_qty": cint(chosen.get("tool_load_qty") or 0),
+			"pm_days": cint(chosen.get("pm_days") or 0),
+			"operation": chosen.get("operation") or "",
+			"tools": tools,
+			"has_tool_rows": 1,
+		}
+
+	return {
+		"tool": "",
+		"tool_load_qty": cint(fallback_lot_capacity or 0),
+		"pm_days": 0,
+		"operation": "",
+		"tools": tools,
+		"has_tool_rows": 0,
+	}
+
+
+def _get_bom_spm_details_map(
+	bom_no: str | None,
+	selected_workstations_csv: str | None = None,
+	selected_tool: str | None = None,
+) -> dict[str, Any]:
+	"""Return first-operation batch size, workstation defaults, and effective SPM."""
+	if not bom_no:
+		return {
+			"bom_no": "",
+			"batchsize": 0,
+			"workstations_csv": "",
+			"workstations": [],
+			"selected_workstations_csv": "",
+			"machine_count": 0,
+			"spm": 0,
+			"tool": "",
+			"tool_load_qty": 0,
+			"pm_days": 0,
+			"tools": [],
+		}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT custom_batchsize, custom_workstations_csv
+		FROM `tabBOM Operation`
+		WHERE parent = %(bom_no)s
+		ORDER BY idx ASC
+		LIMIT 1
+		""",
+		{"bom_no": bom_no},
+		as_dict=True,
+	)
+	row = rows[0] if rows else {}
+	batchsize = cint((row or {}).get("custom_batchsize") or 0)
+	default_workstations = _parse_csv_list((row or {}).get("custom_workstations_csv"))
+	selected_workstations = _parse_csv_list(selected_workstations_csv)
+	effective_workstations = selected_workstations or default_workstations
+	machine_count = len(effective_workstations)
+	if batchsize and machine_count <= 0:
+		machine_count = 1
+	spm = batchsize * machine_count if batchsize else 0
+	tool_info = _resolve_bom_tool_info(
+		_get_bom_tool_rows(bom_no),
+		selected_tool=selected_tool,
+		fallback_lot_capacity=_get_bom_fallback_lot_capacity(bom_no),
+	)
+
+	return {
+		"bom_no": bom_no,
+		"batchsize": batchsize,
+		"workstations_csv": _join_csv_list(default_workstations),
+		"workstations": default_workstations,
+		"selected_workstations_csv": _join_csv_list(effective_workstations),
+		"machine_count": machine_count,
+		"spm": spm,
+		"tool": tool_info.get("tool") or "",
+		"tool_load_qty": cint(tool_info.get("tool_load_qty") or 0),
+		"pm_days": cint(tool_info.get("pm_days") or 0),
+		"tools": tool_info.get("tools") or [],
+	}
+
+
+def _get_row_spm_details(
+	row: Any,
+	bom_no: str | None,
+	bom_ops_map: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+	"""Return effective workstation CSV and SPM for a Bulk Pre FG/SFG row."""
+	ops = (bom_ops_map or {}).get(bom_no or "", [])
+	if ops:
+		first_op = ops[0]
+		batchsize = cint(first_op.get("custom_batchsize") or 0)
+		default_workstations = _parse_csv_list(first_op.get("custom_workstations_csv"))
+	else:
+		return _get_bom_spm_details_map(
+			bom_no,
+			getattr(row, "custom_workstations_csv", "") or None,
+			getattr(row, "tool", "") or None,
+		)
+
+	selected_workstations = _parse_csv_list(getattr(row, "custom_workstations_csv", "") or None)
+	effective_workstations = selected_workstations or default_workstations
+	machine_count = len(effective_workstations)
+	if batchsize and machine_count <= 0:
+		machine_count = 1
+	spm = batchsize * machine_count if batchsize else 0
+
+	return {
+		"bom_no": bom_no or "",
+		"batchsize": batchsize,
+		"workstations_csv": _join_csv_list(default_workstations),
+		"workstations": default_workstations,
+		"selected_workstations_csv": _join_csv_list(effective_workstations),
+		"machine_count": machine_count,
+		"spm": spm,
+	}
+
+
+def _calculate_row_production_minutes(
+	row: Any,
+	qty: float,
+	bom_time_cache: dict[str, list[dict[str, Any]]],
+) -> float:
+	"""Calculate production minutes using selected/default workstation count for the row."""
+	bom_no = getattr(row, "bom_no", None)
+	if not bom_no or bom_no not in bom_time_cache:
+		return 0.0
+
+	operations = bom_time_cache[bom_no]
+	if not operations:
+		return 0.0
+
+	machine_count = _get_row_spm_details(row, bom_no, bom_time_cache).get("machine_count") or 1
+	total_minutes = 0.0
+
+	for op in operations:
+		time_in_mins = float(op.get("time_in_mins") or 0)
+		batchsize = float(op.get("custom_batchsize") or 0)
+		effective_spm = batchsize * machine_count if batchsize > 0 else 0
+
+		if effective_spm <= 0:
+			effective_spm = 1
+
+		total_minutes += (time_in_mins / effective_spm) * float(qty or 0)
+
+	return total_minutes
+
+
+def _ensure_default_workstations_on_doc(doc: Document) -> None:
+	"""Backfill missing workstation CSV on FG/SFG rows from the BOM first operation."""
+	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
+		if not getattr(row, "bom_no", None) or getattr(row, "custom_workstations_csv", None):
+			continue
+		details = _get_bom_spm_details_map(row.bom_no)
+		if details.get("workstations_csv"):
+			row.custom_workstations_csv = details.get("workstations_csv")
+
+
+def _ensure_default_tools_on_doc(doc: Document) -> None:
+	"""Backfill missing tool/load/PM values from the BOM default tool."""
+	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
+		if not getattr(row, "bom_no", None):
+			continue
+		details = _get_bom_spm_details_map(row.bom_no, selected_tool=getattr(row, "tool", "") or None)
+		if details.get("tool") and not getattr(row, "tool", None):
+			row.tool = details.get("tool")
+		row.tool_load_qty = cint(details.get("tool_load_qty") or 0)
+		row.pm_days = cint(details.get("pm_days") or 0)
+
+
+def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
+	"""Apply UI-edited BOM/workstation/tool selections from custom_batch_schedule back to child rows."""
+	if not getattr(doc, "custom_batch_schedule", None):
+		return
+
+	try:
+		schedule = json.loads(doc.custom_batch_schedule)
+	except Exception:
+		return
+
+	fg_map = {row.name: row for row in doc.get("po_items") or [] if getattr(row, "name", None)}
+	sfg_map = {row.name: row for row in doc.get("sub_assembly_items") or [] if getattr(row, "name", None)}
+
+	for so_data in (schedule or {}).values():
+		for fg_data in so_data.get("fg") or []:
+			row = fg_map.get((fg_data or {}).get("row_name"))
+			if not row:
+				continue
+			if fg_data.get("bom_no"):
+				row.bom_no = fg_data.get("bom_no")
+			if fg_data.get("custom_workstations_csv"):
+				row.custom_workstations_csv = fg_data.get("custom_workstations_csv")
+			if "tool" in fg_data:
+				row.tool = fg_data.get("tool") or ""
+
+		for sfg_data in so_data.get("sfg_chain") or []:
+			row = sfg_map.get((sfg_data or {}).get("row_name"))
+			if not row:
+				continue
+			if sfg_data.get("bom_no"):
+				row.bom_no = sfg_data.get("bom_no")
+			if sfg_data.get("custom_workstations_csv"):
+				row.custom_workstations_csv = sfg_data.get("custom_workstations_csv")
+			if "tool" in sfg_data:
+				row.tool = sfg_data.get("tool") or ""
+
+
+def _get_selected_bom_map(doc: Document, so_name: str) -> dict[str, str]:
+	"""Map Sales Order Item row name to user-selected BOM."""
+	selected_boms: dict[str, str] = {}
+
+	for row in doc.get("bom_selections") or []:
+		if row.sales_order == so_name and row.sales_order_item and row.bom_no:
+			selected_boms[row.sales_order_item] = row.bom_no
+
+	return selected_boms
+
+
+def _get_existing_fg_workstation_map(doc: Document, so_name: str) -> dict[str, dict[str, str]]:
+	"""Map SO item row name to selected FG overrides plus the BOM it belonged to."""
+	result: dict[str, dict[str, str]] = {}
+	for row in doc.get("po_items") or []:
+		if row.sales_order != so_name or not row.sales_order_item:
+			continue
+		if getattr(row, "custom_workstations_csv", None) or getattr(row, "tool", None):
+			result[row.sales_order_item] = {
+				"bom_no": getattr(row, "bom_no", "") or "",
+				"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
+				"tool": getattr(row, "tool", "") or "",
+			}
+	return result
+
+
+def _get_existing_sfg_workstation_map(doc: Document, so_name: str) -> dict[tuple[str, str, int, str], dict[str, str]]:
+	"""Map SFG identity to selected workstation/tool overrides so regenerate can retain them."""
+	result: dict[tuple[str, str, int, str], dict[str, str]] = {}
+	for row in doc.get("sub_assembly_items") or []:
+		if row.sales_order != so_name:
+			continue
+		key = (
+			getattr(row, "fg_item_code", "") or "",
+			getattr(row, "production_item", "") or "",
+			cint(getattr(row, "bom_level", 0) or 0),
+			getattr(row, "bom_no", "") or "",
+		)
+		result[key] = {
+			"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
+			"tool": getattr(row, "tool", "") or "",
+		}
+	return result
+
+
+def _get_item_default_warehouse_map(item_codes: list[str], company: str) -> dict[str, str]:
+	"""Return company-specific Item Default.default_warehouse by item."""
+	item_codes = list(dict.fromkeys([item_code for item_code in (item_codes or []) if item_code]))
+	if not item_codes or not company:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT parent AS item_code, default_warehouse
+		FROM `tabItem Default`
+		WHERE
+			parent IN %(items)s
+			AND company = %(company)s
+			AND default_warehouse IS NOT NULL
+			AND default_warehouse != ''
+		""",
+		{"items": item_codes, "company": company},
+		as_dict=True,
+	)
+	return {row.item_code: row.default_warehouse for row in rows}
 
 
 class BulkPreProductionPlan(Document):
@@ -474,6 +850,130 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 		]
 	}
 
+
+@frappe.whitelist()
+def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | None = None) -> list[dict[str, Any]]:
+	"""Return SO item rows with BOM/SPM for item-level user selection."""
+	sales_orders = frappe.parse_json(sales_orders) if isinstance(sales_orders, str) else sales_orders
+	sales_orders = [so for so in (sales_orders or []) if so]
+
+	if not sales_orders:
+		return []
+
+	existing_bom_map: dict[str, str] = {}
+	if docname:
+		doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+		existing_bom_map = {
+			row.sales_order_item: row.bom_no
+			for row in doc.get("bom_selections") or []
+			if row.sales_order_item and row.bom_no
+		}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			soi.name AS sales_order_item,
+			soi.parent AS sales_order,
+			soi.item_code,
+			soi.item_name,
+			soi.qty,
+			soi.stock_uom,
+			soi.bom_no
+		FROM `tabSales Order Item` soi
+		WHERE
+			soi.parent IN %(sales_orders)s
+			AND soi.docstatus = 1
+		ORDER BY soi.parent, soi.idx
+		""",
+		{"sales_orders": sales_orders},
+		as_dict=True,
+	)
+
+	for row in rows:
+		row.bom_no = (
+			existing_bom_map.get(row.sales_order_item)
+			or row.bom_no
+			or _get_default_bom_for_item(row.item_code)
+		)
+		row.spm = _get_bom_spm(row.bom_no)
+
+	return rows
+
+
+@frappe.whitelist()
+def get_bom_spm_details(
+	bom_no: str,
+	selected_workstations_csv: str | None = None,
+	selected_tool: str | None = None,
+) -> dict[str, Any]:
+	"""Return BOM-derived SPM + tool details for the UI."""
+	return _get_bom_spm_details_map(bom_no, selected_workstations_csv, selected_tool)
+
+
+@frappe.whitelist()
+def get_active_boms_for_items(item_codes: str | list[str]) -> dict[str, list[str]]:
+	"""Return active BOM names grouped by item."""
+	item_codes = frappe.parse_json(item_codes) if isinstance(item_codes, str) else item_codes
+	item_codes = list(dict.fromkeys([item for item in (item_codes or []) if item]))
+
+	if not item_codes:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT item, name
+		FROM `tabBOM`
+		WHERE
+			item IN %(item_codes)s
+			AND is_active = 1
+			AND docstatus = 1
+		ORDER BY item, is_default DESC, name ASC
+		""",
+		{"item_codes": item_codes},
+		as_dict=True,
+	)
+
+	result: dict[str, list[str]] = {}
+	for row in rows:
+		result.setdefault(row.item, []).append(row.name)
+
+	return result
+
+
+@frappe.whitelist()
+def recalculate_existing_schedule(docname: str, planning_mode: str | None = None) -> dict[str, Any]:
+	"""Recalculate dates/schedule using existing FG/SFG rows without regenerating items."""
+	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	mode = planning_mode or doc.custom_planning_mode or "Sequential"
+	_apply_parallel_schedule_overrides_to_doc(doc)
+	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_tools_on_doc(doc)
+
+	selected_sos = [row.sales_order for row in doc.sales_orders if row.is_selected and row.sales_order]
+	if not selected_sos:
+		selected_sos = list({row.sales_order for row in doc.po_items if getattr(row, "sales_order", None)})
+
+	for so_name in selected_sos:
+		calculate_dates_for_sales_order(doc, so_name)
+
+	doc.flags.ignore_mandatory = True
+	doc.save()
+	doc.flags.ignore_mandatory = False
+
+	if mode == "Parallel":
+		schedule = calculate_parallel_batch_schedule(docname)
+		doc.reload()
+		doc.custom_batch_schedule = json.dumps(schedule)
+		doc.flags.ignore_mandatory = True
+		doc.save()
+		doc.flags.ignore_mandatory = False
+		return schedule
+
+	return {
+		"status": "ok",
+		"planning_mode": mode,
+	}
+
 @frappe.whitelist()
 def get_tool_days(bom):
     bom_doc = frappe.get_doc("BOM", bom)
@@ -508,6 +1008,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	Returns dict keyed by SO name.
 	"""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	_apply_parallel_schedule_overrides_to_doc(doc)
+	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_tools_on_doc(doc)
 
 	shift_config = _get_effective_shift_config()
 	holidays = _get_holiday_set(shift_config.get("holiday_list"))
@@ -535,7 +1038,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		for row in rows["sfg"]
 		if getattr(row, "bom_no", None)
 	})
-	bom_tool_map = _fetch_bom_tool_map(all_bom_nos)     # bom_no → {tool_load_qty, pm_days}
+	bom_tool_map = _fetch_bom_tool_map(all_bom_nos)     # bom_no → {tools, default_tool, fallback_lot_capacity}
 	bom_ops_map  = _fetch_bom_ops_map(all_bom_nos)      # bom_no → [{operation, custom_batchsize}]
 
 	# Batch-fetch item GRN processing days
@@ -554,6 +1057,20 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	lead_map = _fetch_default_lead_time_map(              # item_code → lead_time_days
 		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)],
 		doc.company
+	)
+	target_warehouse_map = _get_item_default_warehouse_map(
+		list({
+			row.item_code
+			for rows in so_map.values()
+			for row in rows["fg"]
+			if getattr(row, "item_code", None)
+		} | {
+			row.production_item
+			for rows in so_map.values()
+			for row in rows["sfg"]
+			if getattr(row, "production_item", None)
+		}),
+		doc.company,
 	)
 
 	shift_minutes = _get_shift_working_minutes(shift_config)
@@ -587,20 +1104,28 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			item_code  = sfg.production_item
 			sales_qty  = flt(sfg.qty)
 
-			tool_info     = bom_tool_map.get(bom_no, {})
+			tool_info = _resolve_bom_tool_info(
+				(bom_tool_map.get(bom_no) or {}).get("tools"),
+				selected_tool=getattr(sfg, "tool", "") or None,
+				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
+			)
+			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
 			pm_days       = int(tool_info.get("pm_days", 0))
 			grn_days      = int(grn_map.get(item_code, 0))
 
-			# Batchsize from first operation on this BOM
-			ops = bom_ops_map.get(bom_no, [])
-			batchsize = int(ops[0]["custom_batchsize"]) if ops else 0
+			spm_details = _get_row_spm_details(sfg, bom_no, bom_ops_map)
+			base_batchsize = cint(spm_details.get("batchsize") or 0)
+			effective_spm = cint(spm_details.get("spm") or 0)
+			machine_count = cint(spm_details.get("machine_count") or 0)
 
 			# per_shift_qty
-			per_shift_qty = batchsize * shift_minutes if batchsize and shift_minutes else 0
+			per_shift_qty = effective_spm * shift_minutes if effective_spm and shift_minutes else 0
 
-			# Split into batches
-			batches = _split_batches(sales_qty, tool_load_qty)
+			# Split into batches.
+			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
+			split_qty = tool_load_qty or per_shift_qty
+			batches = _split_batches(sales_qty, split_qty)
 
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
@@ -646,13 +1171,21 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			sfg_chain_out.append({
 				"item_code":        item_code,
 				"bom_no":           bom_no,
+				"tool":             selected_tool,
+				"tools":            tool_info.get("tools") or [],
 				"bom_level":        sfg.bom_level or 0,
 				"qty":              sales_qty,
-				"batchsize":        batchsize,
+				"batchsize":        base_batchsize,
+				"spm":              effective_spm,
+				"machine_count":    machine_count,
+				"custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
 				"per_shift_qty":    per_shift_qty,
 				"tool_load_qty":    tool_load_qty,
 				"pm_days":          pm_days,
 				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
+				"target_warehouse": (
+					getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, "")
+				),
 				"supplier":         sfg.supplier or "",
 				"row_name":         sfg.name,
 				"batches":          batch_rows,
@@ -723,7 +1256,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
 		for fg in items["fg"]:
 			fg_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
-			prod_minutes = _calculate_production_minutes(fg.bom_no, flt(fg.planned_qty), _fg_bom_cache)
+			prod_minutes = _calculate_row_production_minutes(fg, flt(fg.planned_qty), _fg_bom_cache)
+			tool_details = _get_bom_spm_details_map(fg.bom_no, selected_tool=getattr(fg, "tool", "") or None)
 			if prod_minutes and prod_minutes > 0:
 				fg_end = shift_aware_forward_schedule(fg_start, prod_minutes, shift_config)
 			else:
@@ -731,8 +1265,18 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
+				"bom_no":                  fg.bom_no or "",
+				"tool":                    tool_details.get("tool") or "",
+				"tools":                   tool_details.get("tools") or [],
+				"tool_load_qty":           cint(tool_details.get("tool_load_qty") or 0),
+				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
 				"planned_qty":             flt(fg.planned_qty),
+				"manufacturing_type":      fg.manufacturing_type or "In House",
+				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
+				"target_warehouse": (
+					getattr(fg, "target_warehouse", "") or target_warehouse_map.get(fg.item_code, "")
+				),
 				"planned_start_date":      str(fg_start),
 				"custom_planned_end_date": str(fg_end),
 				"row_name":                fg.name,
@@ -805,77 +1349,86 @@ def _get_shift_working_minutes(shift_config: dict) -> int:
 	return max(int((shift_td - lunch_td).total_seconds() // 60), 1)
 
 
-def _split_batches(total_qty: float, tool_load_qty: int) -> list[float]:
-	"""Split total_qty into batches of tool_load_qty. Last batch = remainder."""
-	if tool_load_qty <= 0:
+def _split_batches(total_qty: float, batch_qty: int | float) -> list[float]:
+	"""Split total_qty into batches of batch_qty. Last batch = remainder."""
+	if batch_qty <= 0:
 		return [total_qty]
-	n = math.ceil(total_qty / tool_load_qty)
-	remainder = total_qty - tool_load_qty * (n - 1)
-	return [float(tool_load_qty)] * (n - 1) + [float(remainder)]
+	n = math.ceil(total_qty / batch_qty)
+	remainder = total_qty - batch_qty * (n - 1)
+	return [float(batch_qty)] * (n - 1) + [float(remainder)]
 
 
 def _fetch_bom_tool_map(bom_nos: list[str]) -> dict[str, dict]:
 	"""
-	Returns {bom_no: {tool_load_qty, pm_days}} using:
-	  - Primary:  Tool Child Table (is_default=1) → tool_load_quantity + Asset.custom_required_maintenance_days
-	  - Fallback: BOM Operation.custom_fixed_lot_capacity (when no tool details defined), pm_days = 0
+	Returns {bom_no: {tools, default_tool, fallback_lot_capacity}} using:
+	  - Tool Child Table rows for user-selectable tool overrides
+	  - Fallback lot capacity from BOM Operations when tools are absent
 	"""
 	if not bom_nos:
 		return {}
 
-	# Primary: Tool Child Table with is_default=1
 	rows = frappe.db.sql("""
 		SELECT
-			td.parent             AS bom_no,
-			td.tool_load_quantity AS tool_load_qty,
-			td.tool               AS asset_name
+			td.parent AS bom_no,
+			td.tool,
+			td.tool_load_quantity,
+			td.operation,
+			td.is_default,
+			COALESCE(asset.custom_required_maintenance_days, 0) AS pm_days
 		FROM `tabTool Child Table` td
+		LEFT JOIN `tabAsset` asset ON asset.name = td.tool
 		WHERE td.parent IN %(bom_nos)s
-		  AND td.is_default = 1
+		ORDER BY td.parent, td.is_default DESC, td.idx ASC
 	""", {"bom_nos": bom_nos}, as_dict=True)
 
 	result: dict[str, dict] = {}
 	for r in rows:
-		pm_days = 0
-		if r.asset_name:
-			pm_days = cint(frappe.db.get_value("Asset", r.asset_name, "custom_required_maintenance_days") or 0)
-		result[r.bom_no] = {
-			"tool_load_qty": cint(r.tool_load_qty or 0),
-			"pm_days":       pm_days,
-		}
+		entry = result.setdefault(r.bom_no, {
+			"tools": [],
+			"default_tool": "",
+			"fallback_lot_capacity": 0,
+		})
+		tool_row = _normalise_bom_tool_rows([r])[0]
+		entry["tools"].append(tool_row)
+		if cint(r.is_default) == 1 and not entry["default_tool"]:
+			entry["default_tool"] = r.tool or ""
 
-	# Fallback: BOMs with no tool details → use custom_fixed_lot_capacity from BOM Operations
-	missing = [b for b in bom_nos if b not in result]
-	if missing:
-		fallback_rows = frappe.db.sql("""
-			SELECT parent AS bom_no, MAX(custom_fixed_lot_capacity) AS lot_capacity
-			FROM `tabBOM Operation`
-			WHERE parent IN %(bom_nos)s
-			  AND custom_fixed_lot_capacity > 0
-			GROUP BY parent
-		""", {"bom_nos": missing}, as_dict=True)
-		for r in fallback_rows:
-			result[r.bom_no] = {
-				"tool_load_qty": cint(r.lot_capacity or 0),
-				"pm_days":       0,   # no PM when using fixed lot capacity
-			}
+	# Fallback lot capacity for every BOM
+	fallback_rows = frappe.db.sql("""
+		SELECT parent AS bom_no, MAX(custom_fixed_lot_capacity) AS lot_capacity
+		FROM `tabBOM Operation`
+		WHERE parent IN %(bom_nos)s
+		  AND custom_fixed_lot_capacity > 0
+		GROUP BY parent
+	""", {"bom_nos": bom_nos}, as_dict=True)
+	for r in fallback_rows:
+		entry = result.setdefault(r.bom_no, {
+			"tools": [],
+			"default_tool": "",
+			"fallback_lot_capacity": 0,
+		})
+		entry["fallback_lot_capacity"] = cint(r.lot_capacity or 0)
 
 	return result
 
 
 def _fetch_bom_ops_map(bom_nos: list[str]) -> dict[str, list[dict]]:
-	"""Returns {bom_no: [{operation, custom_batchsize}]} sorted by idx."""
+	"""Returns BOM ops keyed by BOM, including batch size and workstation CSV."""
 	if not bom_nos:
 		return {}
 	rows = frappe.db.sql("""
-		SELECT parent AS bom_no, operation, custom_batchsize, idx
+		SELECT parent AS bom_no, operation, custom_batchsize, custom_workstations_csv, idx
 		FROM `tabBOM Operation`
 		WHERE parent IN %(bom_nos)s
 		ORDER BY parent, idx
 	""", {"bom_nos": bom_nos}, as_dict=True)
 	result: dict[str, list[dict]] = {}
 	for r in rows:
-		result.setdefault(r.bom_no, []).append({"operation": r.operation, "custom_batchsize": cint(r.custom_batchsize or 0)})
+		result.setdefault(r.bom_no, []).append({
+			"operation": r.operation,
+			"custom_batchsize": cint(r.custom_batchsize or 0),
+			"custom_workstations_csv": r.custom_workstations_csv or "",
+		})
 	return result
 
 
@@ -937,6 +1490,16 @@ def generate_production_plan_items(docname: str, planning_mode: str | None = Non
 		frappe.throw(_("Please select at least one Sales Order"))
 
 	# Clear existing items
+	existing_fg_ws_map = {
+		row.sales_order: _get_existing_fg_workstation_map(doc, row.sales_order)
+		for row in doc.sales_orders if row.sales_order
+	}
+	existing_sfg_ws_map = {
+		row.sales_order: _get_existing_sfg_workstation_map(doc, row.sales_order)
+		for row in doc.sales_orders if row.sales_order
+	}
+	doc.flags.existing_fg_workstation_maps = existing_fg_ws_map
+	doc.flags.existing_sfg_workstation_maps = existing_sfg_ws_map
 	doc.po_items = []
 	doc.sub_assembly_items = []
 	doc.mr_items = []
@@ -998,6 +1561,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	"""
 	# Get the warehouse for this sales order from sales_orders table
 	so_warehouse = None
+	selected_boms = _get_selected_bom_map(doc, so_name)
 	for so_row in doc.sales_orders:
 		if so_row.sales_order == so_name:
 			so_warehouse = so_row.for_warehouse
@@ -1006,13 +1570,15 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	# Get Sales Order items
 	so_items = frappe.db.sql("""
 		SELECT
+			soi.name AS sales_order_item,
 			soi.item_code,
 			soi.qty,
 			soi.stock_uom,
 			soi.warehouse,
 			soi.delivery_date,
 			so.delivery_date as so_delivery_date,
-			i.is_sub_contracted_item
+			i.is_sub_contracted_item,
+			soi.bom_no
 		FROM
 			`tabSales Order Item` soi
 		INNER JOIN
@@ -1027,18 +1593,33 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	po_count = 0
 	sfg_count = 0
 	mr_count = 0
+	target_warehouse_map = _get_item_default_warehouse_map([item.item_code for item in so_items], doc.company)
+	existing_fg_ws_map = (getattr(doc.flags, "existing_fg_workstation_maps", {}) or {}).get(so_name, {})
 
 	# Process each SO item
 	for item in so_items:
-		# Get default BOM for item
-		bom = frappe.db.get_value("BOM", {
-			"item": item.item_code,
-			"is_active": 1,
-			"is_default": 1
-		}, "name")
+		bom = (
+			selected_boms.get(item.sales_order_item)
+			or item.bom_no
+			or _get_default_bom_for_item(item.item_code)
+		)
 
 		if not bom:
 			continue
+
+		bom_spm_details = _get_bom_spm_details_map(bom)
+		existing_fg_ws = existing_fg_ws_map.get(item.sales_order_item) or {}
+		existing_fg_csv = (
+			existing_fg_ws.get("custom_workstations_csv")
+			if existing_fg_ws.get("bom_no") == bom
+			else ""
+		)
+		existing_fg_tool = (
+			existing_fg_ws.get("tool")
+			if existing_fg_ws.get("bom_no") == bom
+			else ""
+		)
+		tool_details = _get_bom_spm_details_map(bom, selected_tool=existing_fg_tool or None)
 
 		# Add to po_items (FG items)
 		delivery_date = item.delivery_date or item.so_delivery_date
@@ -1053,11 +1634,22 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 
 		doc.append('po_items', {
 			'sales_order': so_name,
+			'sales_order_item': item.sales_order_item,
 			'item_code': item.item_code,
 			'bom_no': bom,
+			'tool': tool_details.get('tool') or '',
+			'tool_load_qty': cint(tool_details.get('tool_load_qty') or 0),
+			'pm_days': cint(tool_details.get('pm_days') or 0),
+			'custom_workstations_csv': (
+				existing_fg_csv
+				or bom_spm_details.get('selected_workstations_csv')
+				or bom_spm_details.get('workstations_csv')
+				or ''
+			),
 			'planned_qty': item.qty,
 			'stock_uom': item.stock_uom,
 			'warehouse': warehouse,
+			'target_warehouse': target_warehouse_map.get(item.item_code),
 			'planned_start_date': delivery_date,
 			'manufacturing_type': manufacturing_type
 		})
@@ -1152,11 +1744,27 @@ def get_sub_assembly_items_from_bom(
 		ORDER BY
 			bi.idx
 	""", {'bom': bom}, as_dict=True)
+	target_warehouse_map = _get_item_default_warehouse_map(
+		[bom_item.item_code for bom_item in bom_items],
+		doc.company,
+	)
+	existing_sfg_ws_map = (getattr(doc.flags, "existing_sfg_workstation_maps", {}) or {}).get(so_name, {})
 
 	for bom_item in bom_items:
 		required_qty = bom_item.qty_per_unit * qty
 
 		if bom_item.item_bom_no:
+			sfg_key = (
+				fg_item or "",
+				bom_item.item_code,
+				cint(level or 0),
+				bom_item.item_bom_no or "",
+			)
+			existing_sfg = existing_sfg_ws_map.get(sfg_key) or {}
+			tool_details = _get_bom_spm_details_map(
+				bom_item.item_bom_no,
+				selected_tool=existing_sfg.get("tool") or None,
+			)
 			# Sub assembly item — use actual required_qty (qty_per_unit × parent qty)
 			doc.append('sub_assembly_items', {
 				'sales_order': so_name,
@@ -1164,11 +1772,19 @@ def get_sub_assembly_items_from_bom(
 				'production_item': bom_item.item_code,
 				'parent_item_code': parent_item,
 				'bom_no': bom_item.item_bom_no,
+				'tool': tool_details.get('tool') or '',
+				'tool_load_qty': cint(tool_details.get('tool_load_qty') or 0),
+				'pm_days': cint(tool_details.get('pm_days') or 0),
+				'custom_workstations_csv': (
+					existing_sfg.get("custom_workstations_csv")
+					or _get_bom_spm_details_map(bom_item.item_bom_no).get('selected_workstations_csv')
+				),
 				'bom_level': level,
 				'qty': required_qty,
 				'stock_uom': bom_item.stock_uom,
 				'schedule_date': delivery_date,
-				'type_of_manufacturing': 'Subcontract' if bom_item.is_sub_contracted_item else 'In House'
+				'type_of_manufacturing': 'Subcontract' if bom_item.is_sub_contracted_item else 'In House',
+				'fg_warehouse': target_warehouse_map.get(bom_item.item_code),
 			})
 			sfg_count += 1
 
@@ -1299,12 +1915,12 @@ def _apply_item_default_warehouses(doc: "Document", so_name: str) -> None:
 
 
 def _fetch_bom_operations_cache(bom_nos: list[str]) -> dict[str, list[dict[str, Any]]]:
-	"""Batch fetch BOM operations for a list of BOMs. Returns cache for _calculate_production_minutes."""
+	"""Batch fetch BOM operations for row-level production minute calculations."""
 	if not bom_nos:
 		return {}
 
 	operations_data = frappe.db.sql("""
-		SELECT parent as bom_no, time_in_mins, custom_batchsize, operation, idx
+		SELECT parent as bom_no, time_in_mins, custom_batchsize, custom_workstations_csv, operation, idx
 		FROM `tabBOM Operation`
 		WHERE parent IN %(bom_nos)s
 		ORDER BY parent, idx
@@ -1352,7 +1968,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 
 		# planned_start_date was initialised to the SO delivery_date
 		delivery_dt = get_datetime(fg_row.planned_start_date)
-		prod_minutes = _calculate_production_minutes(fg_row.bom_no, flt(fg_row.planned_qty), fg_bom_cache)
+		prod_minutes = _calculate_row_production_minutes(fg_row, flt(fg_row.planned_qty), fg_bom_cache)
 
 		if prod_minutes > 0:
 			calculated_start = _backward_schedule(delivery_dt, prod_minutes, shift_config)
@@ -1461,8 +2077,8 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 
 		else:
 			# In House — shift-aware backward schedule
-			prod_mins = _calculate_production_minutes(
-				sfg_row.bom_no, flt(sfg_row.qty), sfg_bom_cache
+			prod_mins = _calculate_row_production_minutes(
+				sfg_row, flt(sfg_row.qty), sfg_bom_cache
 			) if sfg_row.bom_no else 0.0
 
 			if prod_mins > 0:
@@ -1515,8 +2131,8 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 					if getdate(this_end) > getdate(fg_start):
 						po_item.planned_start_date = str(this_end)
 						item_start_map[("", po_item.item_code)] = get_datetime(this_end)
-						fg_prod_mins = _calculate_production_minutes(
-							po_item.bom_no, flt(po_item.planned_qty), fg_bom_cache_for_cascade
+						fg_prod_mins = _calculate_row_production_minutes(
+							po_item, flt(po_item.planned_qty), fg_bom_cache_for_cascade
 						)
 						if fg_prod_mins > 0:
 							po_item.custom_planned_end_date = str(
@@ -1726,8 +2342,8 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 
 		if max_sfg_end and max_sfg_end > get_datetime(fg_row.planned_start_date):
 			fg_row.planned_start_date = max_sfg_end
-			fg_prod_mins_s4 = _calculate_production_minutes(
-				fg_row.bom_no, flt(fg_row.planned_qty), fg_bom_cache_for_cascade
+			fg_prod_mins_s4 = _calculate_row_production_minutes(
+				fg_row, flt(fg_row.planned_qty), fg_bom_cache_for_cascade
 			)
 			if fg_prod_mins_s4 > 0:
 				fg_row.custom_planned_end_date = str(
@@ -1867,16 +2483,16 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 			INSERT INTO `tabProduction Plan Item`
 			(name, creation, modified, modified_by, owner, docstatus, parent, parenttype, parentfield, idx,
 			 item_code, bom_no, planned_qty, planned_start_date, custom_planned_end_date,
-			 sales_order, sales_order_item, warehouse, description, stock_uom, product_bundle_item,
+			 sales_order, sales_order_item, warehouse, target_warehouse, description, stock_uom, product_bundle_item,
 			 custom_manufacturing_type)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 		""", (
 			frappe.generate_hash(length=10),
 			now, now, user, user, 0,
 			pp_name, "Production Plan", "po_items", idx,
 			fg.item_code, fg.bom_no, fg.planned_qty, fg.planned_start_date,
 			getattr(fg, 'custom_planned_end_date', None),
-			fg.sales_order, fg.sales_order_item, fg.warehouse,
+			fg.sales_order, fg.sales_order_item, fg.warehouse, getattr(fg, 'target_warehouse', None),
 			fg.description, fg.stock_uom, fg.product_bundle_item,
 			getattr(fg, 'manufacturing_type', 'In House')
 		))
@@ -1888,9 +2504,9 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 				INSERT INTO `tabProduction Plan Sub Assembly Item`
 				(name, creation, modified, modified_by, owner, docstatus, parent, parenttype, parentfield, idx,
 				 production_item, bom_no, qty, schedule_date,
-				 type_of_manufacturing, supplier, stock_uom, description,
+				 type_of_manufacturing, supplier, fg_warehouse, stock_uom, description,
 				 custom_schedule_end_date, parent_item_code)
-				VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+				VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 			""", (
 				frappe.generate_hash(length=10),
 				now, now, user, user, 0,
@@ -1901,6 +2517,7 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 				getattr(sfg, 'schedule_date', None),
 				getattr(sfg, 'type_of_manufacturing', None),
 				getattr(sfg, 'supplier', None),
+				getattr(sfg, 'fg_warehouse', None),
 				getattr(sfg, 'stock_uom', None),
 				getattr(sfg, 'description', None),
 				getattr(sfg, "custom_schedule_end_date", None),

@@ -19,6 +19,8 @@
   "get_sales_orders",
   "start_pre_production",
   "sales_orders",
+  "bom_selection_section",
+  "bom_selections",
   "section_break_production_items",
   "custom_planning_mode",
   "production_items_html",
@@ -104,6 +106,19 @@
    "label": "Sales Orders",
    "no_copy": 1,
    "options": "Bulk PP Sales Order"
+  },
+  {
+   "depends_on": "eval: doc.bom_selections && doc.bom_selections.length > 0",
+   "fieldname": "bom_selection_section",
+   "fieldtype": "Section Break",
+   "label": "Item BOM Selection"
+  },
+  {
+   "fieldname": "bom_selections",
+   "fieldtype": "Table",
+   "label": "Sales Order Items",
+   "no_copy": 1,
+   "options": "Bulk PP BOM Selection"
   },
   {
    "collapsible": 0,
