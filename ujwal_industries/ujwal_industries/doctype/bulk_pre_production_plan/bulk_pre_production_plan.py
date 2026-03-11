@@ -875,6 +875,8 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 		return []
 
 	existing_bom_map: dict[str, str] = {}
+	existing_spm_map: dict[str, int] = {}
+	fg_workstation_map: dict[str, str] = {}
 	if docname:
 		doc = frappe.get_doc("Bulk Pre Production Plan", docname)
 		existing_bom_map = {
@@ -882,6 +884,14 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			for row in doc.get("bom_selections") or []
 			if row.sales_order_item and row.bom_no
 		}
+		existing_spm_map = {
+			row.sales_order_item: cint(row.spm)
+			for row in doc.get("bom_selections") or []
+			if row.sales_order_item and cint(row.spm)
+		}
+		for fg_row in doc.get("po_items") or []:
+			if getattr(fg_row, "sales_order_item", None) and getattr(fg_row, "custom_workstations_csv", None):
+				fg_workstation_map[fg_row.sales_order_item] = fg_row.custom_workstations_csv
 
 	rows = frappe.db.sql(
 		"""
@@ -909,7 +919,15 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			or row.bom_no
 			or _get_default_bom_for_item(row.item_code)
 		)
-		row.spm = _get_bom_spm(row.bom_no)
+		# Use the saved FG custom workstations to compute SPM so that
+		# machine-count changes are reflected correctly on reload.
+		fg_csv = fg_workstation_map.get(row.sales_order_item)
+		if fg_csv:
+			row.spm = cint(_get_bom_spm_details_map(row.bom_no, fg_csv).get("spm") or 0)
+		elif existing_spm_map.get(row.sales_order_item):
+			row.spm = existing_spm_map[row.sales_order_item]
+		else:
+			row.spm = _get_bom_spm(row.bom_no)
 
 	return rows
 

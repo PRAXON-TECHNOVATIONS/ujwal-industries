@@ -2,7 +2,7 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
-	refresh: function(frm) {
+	refresh: function (frm) {
 
 		set_bom_selection_query(frm);
 
@@ -13,17 +13,17 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
-			setTimeout(function() { setup_production_tabs(frm); }, 200);
+			setTimeout(function () { setup_production_tabs(frm); }, 200);
 		}
 	},
-	after_save: function(frm) {
+	after_save: function (frm) {
 		if (!frm._bom_changed || _bom_recalc_inflight) return;
 
 		_bom_recalc_inflight = true;
 		_run_bom_change_recalculation(frm);
 	},
 
-	get_sales_orders: function(frm) {
+	get_sales_orders: function (frm) {
 		if (!frm.doc.from_delivery_date || !frm.doc.to_delivery_date) {
 			frappe.msgprint(__('Please set From Delivery Date and To Delivery Date'));
 			return;
@@ -41,13 +41,13 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 				to_delivery_date: frm.doc.to_delivery_date,
 				company: frm.doc.company
 			},
-			callback: function(r) {
+			callback: function (r) {
 				if (r.message && r.message.sales_orders) {
 					// Clear existing sales orders
 					frm.clear_table('sales_orders');
 
 					// Add fetched sales orders to the child table
-					r.message.sales_orders.forEach(function(so) {
+					r.message.sales_orders.forEach(function (so) {
 						var row = frm.add_child('sales_orders');
 						row.sales_order = so.sales_order;
 						row.customer = so.customer;
@@ -72,7 +72,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		});
 	},
 
-	start_pre_production: function(frm) {
+	start_pre_production: function (frm) {
 		if (!frm.doc.sales_orders || frm.doc.sales_orders.length === 0) {
 			frappe.msgprint(__('No Sales Orders found. Please fetch Sales Orders first.'));
 			return;
@@ -107,7 +107,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 // Child table events for Sales Orders
 frappe.ui.form.on('Bulk PP Sales Order', {
-	before_sales_orders_remove: function(frm, cdt, cdn) {
+	before_sales_orders_remove: function (frm, cdt, cdn) {
 		// Store the sales order before it's removed
 		const row = locals[cdt][cdn];
 		if (row && row.sales_order) {
@@ -119,7 +119,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 		}
 	},
 
-	sales_orders_remove: function(frm, cdt, cdn) {
+	sales_orders_remove: function (frm, cdt, cdn) {
 		// Process cleanup after the row is removed
 		if (!frm._so_to_cleanup || frm._so_to_cleanup.length === 0) return;
 
@@ -135,7 +135,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 
 
 frappe.ui.form.on('Bulk PP BOM Selection', {
-	bom_no: function(frm, cdt, cdn) {
+	bom_no: function (frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		if (!row || !row.bom_no) {
 			frappe.model.set_value(cdt, cdn, 'spm', 0);
@@ -145,7 +145,7 @@ frappe.ui.form.on('Bulk PP BOM Selection', {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_bom_spm_details',
 			args: { bom_no: row.bom_no },
-			callback: function(r) {
+			callback: function (r) {
 				frappe.model.set_value(cdt, cdn, 'spm', r.message?.spm || 0);
 			}
 		});
@@ -156,7 +156,7 @@ frappe.ui.form.on('Bulk PP BOM Selection', {
 function set_bom_selection_query(frm) {
 	if (!frm.fields_dict.bom_selections) return;
 
-	frm.fields_dict.bom_selections.grid.get_field('bom_no').get_query = function(doc, cdt, cdn) {
+	frm.fields_dict.bom_selections.grid.get_field('bom_no').get_query = function (doc, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		return {
 			filters: {
@@ -183,11 +183,11 @@ function load_bom_selections(frm) {
 			sales_orders: sales_orders,
 			docname: frm.doc.name
 		},
-		callback: function(r) {
+		callback: function (r) {
 			const rows = r.message || [];
 			frm.clear_table('bom_selections');
 
-			rows.forEach(function(item) {
+			rows.forEach(function (item) {
 				const row = frm.add_child('bom_selections');
 				row.sales_order = item.sales_order;
 				row.sales_order_item = item.sales_order_item;
@@ -330,15 +330,15 @@ function setup_production_tabs(frm) {
 				<button id="bpp-mode-seq" style="
 					padding:5px 14px; border:none; border-radius:4px; font-size:12px; font-weight:600;
 					cursor:pointer; transition:all .15s;
-					background:${mode==='Sequential'?'#2563EB':'transparent'};
-					color:${mode==='Sequential'?'#fff':'#94A3B8'};">
+					background:${mode === 'Sequential' ? '#2563EB' : 'transparent'};
+					color:${mode === 'Sequential' ? '#fff' : '#94A3B8'};">
 					Sequential
 				</button>
 				<button id="bpp-mode-par" style="
 					padding:5px 14px; border:none; border-radius:4px; font-size:12px; font-weight:600;
 					cursor:pointer; transition:all .15s;
-					background:${mode==='Parallel'?'#7C3AED':'transparent'};
-					color:${mode==='Parallel'?'#fff':'#94A3B8'};">
+					background:${mode === 'Parallel' ? '#7C3AED' : 'transparent'};
+					color:${mode === 'Parallel' ? '#fff' : '#94A3B8'};">
 					⚡ Parallel
 				</button>
 			</div>
@@ -357,13 +357,13 @@ function setup_production_tabs(frm) {
 	so_list.forEach((so_data, idx) => {
 		const active = idx === 0 ? 'active' : '';
 		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
-		const del_date = frappe.format(so_row.delivery_date, {fieldtype:'Date'});
+		const del_date = frappe.format(so_row.delivery_date, { fieldtype: 'Date' });
 		tabs_li += `
 			<li class="nav-item">
 				<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
 					href="#bpp-so-${idx}" role="tab"
 					style="padding:8px 18px; font-size:12px; cursor:pointer;
-					border-radius:6px 6px 0 0; font-weight:600; color:${active?'#1E3A5F':'#64748B'};">
+					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};">
 					<i class="fa fa-file-text-o" style="margin-right:4px; font-size:11px;"></i>
 					${so_data.so_name}
 					<span style="display:block; font-size:10px; font-weight:400; color:#94A3B8; margin-top:1px;">
@@ -372,7 +372,7 @@ function setup_production_tabs(frm) {
 				</a>
 			</li>`;
 		tabs_content += `
-			<div class="tab-pane fade ${active==='active'?'show active':''}" id="bpp-so-${idx}" role="tabpanel">
+			<div class="tab-pane fade ${active === 'active' ? 'show active' : ''}" id="bpp-so-${idx}" role="tabpanel">
 				<div class="bpp-grid-wrap" data-so="${so_data.so_name}"
 					style="margin-top:0; padding:0;"></div>
 			</div>`;
@@ -391,7 +391,7 @@ function setup_production_tabs(frm) {
 	`);
 
 	// Tab click
-	html_field.$wrapper.find('#bppTabs .nav-link').on('click', function(e) {
+	html_field.$wrapper.find('#bppTabs .nav-link').on('click', function (e) {
 		e.preventDefault();
 		html_field.$wrapper.find('#bppTabs .nav-link').removeClass('active')
 			.css({ color: '#64748B', borderBottom: 'none', background: 'transparent' });
@@ -403,26 +403,26 @@ function setup_production_tabs(frm) {
 	});
 
 	// Mode buttons
-	html_field.$wrapper.find('#bpp-mode-seq').on('click', function() {
+	html_field.$wrapper.find('#bpp-mode-seq').on('click', function () {
 		frm.set_value('custom_planning_mode', 'Sequential');
-		$(this).css({background:'#2563EB', color:'#fff'});
-		html_field.$wrapper.find('#bpp-mode-par').css({background:'transparent', color:'#94A3B8'});
+		$(this).css({ background: '#2563EB', color: '#fff' });
+		html_field.$wrapper.find('#bpp-mode-par').css({ background: 'transparent', color: '#94A3B8' });
 		_render_all_grids(frm, so_map, 'Sequential', html_field.$wrapper);
 	});
-	html_field.$wrapper.find('#bpp-mode-par').on('click', function() {
+	html_field.$wrapper.find('#bpp-mode-par').on('click', function () {
 		frm.set_value('custom_planning_mode', 'Parallel');
-		$(this).css({background:'#7C3AED', color:'#fff'});
-		html_field.$wrapper.find('#bpp-mode-seq').css({background:'transparent', color:'#94A3B8'});
+		$(this).css({ background: '#7C3AED', color: '#fff' });
+		html_field.$wrapper.find('#bpp-mode-seq').css({ background: 'transparent', color: '#94A3B8' });
 		_render_all_grids(frm, so_map, 'Parallel', html_field.$wrapper);
 	});
 
 	// Calculate button
-	html_field.$wrapper.find('#bpp-calc-btn').on('click', function() {
+	html_field.$wrapper.find('#bpp-calc-btn').on('click', function () {
 		_on_calculate_click(frm, so_map, html_field.$wrapper);
 	});
 
 	// Initial render
-	frappe.require(_AG_ASSETS, function() {
+	frappe.require(_AG_ASSETS, function () {
 		_ag_loaded = true;
 		_render_all_grids(frm, so_map, mode, html_field.$wrapper);
 	});
@@ -483,7 +483,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 
 function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	if (!_ag_loaded) {
-		frappe.require(_AG_ASSETS, function() {
+		frappe.require(_AG_ASSETS, function () {
 			_ag_loaded = true;
 			_render_all_grids(frm, so_map, mode, $wrapper, parallel_data);
 		});
@@ -505,13 +505,13 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	}
 
 	// Destroy existing grid instances
-	Object.values(_grids).forEach(g => { try { g.destroy(); } catch(e) {} });
+	Object.values(_grids).forEach(g => { try { g.destroy(); } catch (e) { } });
 	_grids = {};
 
 	// For parallel mode, try stored JSON if no fresh data passed
 	let par_data = parallel_data || null;
 	if (mode === 'Parallel' && !par_data && frm.doc.custom_batch_schedule) {
-		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch(e) {}
+		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
 
 	_hydrate_machine_defaults(frm, par_data).then(changed => {
@@ -558,9 +558,9 @@ function _render_sequential_grid(frm, so_data, container) {
 	container.appendChild(sfg_label);
 
 	// Color palette per unique bom_level — level 0 first (direct child of FG)
-	const _level_colors = ['#D1FAE5','#FEF9C3','#EDE9FE','#FFE4E6','#E0F2FE','#FFF7ED'];
-	const _level_border  = ['#059669','#CA8A04','#7C3AED','#E11D48','#0284C7','#EA580C'];
-	const _bom_levels = [...new Set((so_data.sfg || []).map(r => r.bom_level))].sort((a,b) => a-b);
+	const _level_colors = ['#D1FAE5', '#FEF9C3', '#EDE9FE', '#FFE4E6', '#E0F2FE', '#FFF7ED'];
+	const _level_border = ['#059669', '#CA8A04', '#7C3AED', '#E11D48', '#0284C7', '#EA580C'];
+	const _bom_levels = [...new Set((so_data.sfg || []).map(r => r.bom_level))].sort((a, b) => a - b);
 
 	const sfg_el = document.createElement('div');
 	sfg_el.className = 'ag-theme-alpine';
@@ -568,61 +568,78 @@ function _render_sequential_grid(frm, so_data, container) {
 	container.appendChild(sfg_el);
 
 	const sfg_cols = [
-		{ headerName: 'Lvl', field: 'bom_level', width: 52, pinned: 'left',
-		  sort: 'asc',
-		  cellRenderer: p => {
-			const li = _bom_levels.indexOf(p.value);
-			const bg = _level_border[li % _level_border.length];
-			return `<span style="display:inline-block;width:22px;height:22px;line-height:22px;
+		{
+			headerName: 'Lvl', field: 'bom_level', width: 52, pinned: 'left',
+			sort: 'asc',
+			cellRenderer: p => {
+				const li = _bom_levels.indexOf(p.value);
+				const bg = _level_border[li % _level_border.length];
+				return `<span style="display:inline-block;width:22px;height:22px;line-height:22px;
 				text-align:center;border-radius:50%;background:${bg};color:#fff;
 				font-size:11px;font-weight:700;">${p.value}</span>`;
-		  }
+			}
 		},
-		{ headerName: 'Item Code',   field: 'production_item', width: 140, pinned: 'left',
-		  cellRenderer: p => `<strong>${p.value || ''}</strong>` },
-		{ headerName: 'Mfg Type',    field: 'type_of_manufacturing', width: 110,
-		  cellRenderer: p => _badge(p.value || 'In House', p.value === 'In House' ? '#16a34a' : '#d97706') },
-		{ headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
-		  cellRenderer: p => p.value || '—' },
-		{ headerName: 'Qty',         field: 'qty',            width: 90,  type: 'numericColumn',
-		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '' },
-		{ headerName: 'Start Date',  field: 'schedule_date',  width: 130, editable: true,
-		  cellStyle: { color: '#0F5132', fontWeight: '600' },
-		  valueFormatter: p => _format_bpp_date(p.value) },
-		{ headerName: 'End Date',    field: 'custom_schedule_end_date', width: 130, editable: true,
-		  cellStyle: { color: '#842029', fontWeight: '600' },
-		  valueFormatter: p => _format_bpp_date(p.value) },
-		{ headerName: 'Supplier',    field: 'supplier',       width: 150, editable: true },
+		{
+			headerName: 'Item Code', field: 'production_item', width: 140, pinned: 'left',
+			cellRenderer: p => `<strong>${p.value || ''}</strong>`
+		},
+		{
+			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 110,
+			cellRenderer: p => _badge(p.value || 'In House', p.value === 'In House' ? '#16a34a' : '#d97706')
+		},
+		{
+			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
+			cellRenderer: p => p.value || '—'
+		},
+		{
+			headerName: 'Qty', field: 'qty', width: 90, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
+			cellStyle: { color: '#0F5132', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{
+			headerName: 'End Date', field: 'custom_schedule_end_date', width: 130, editable: true,
+			cellStyle: { color: '#842029', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{ headerName: 'Supplier', field: 'supplier', width: 150, editable: true },
 		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
-		{ headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
-		  cellEditor: 'agSelectCellEditor',
-		  cellEditorParams: p => ({
-			values: _get_bom_options(p.data?.production_item, p.value)
-		  }),
-		  valueFormatter: p => p.value || '',
-		  cellRenderer: p => p.value ? `<code style="font-size:10px;color:#6b7280;background:#f1f5f9;padding:1px 5px;border-radius:3px;">${p.value}</code>` : '' },
-		{ headerName: 'Tool', field: 'tool', width: 190, editable: true,
-		  cellEditor: 'agSelectCellEditor',
-		  cellEditorParams: p => ({
-			values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-		  }),
-		  cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
+		{
+			headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: _get_bom_options(p.data?.production_item, p.value)
+			}),
+			valueFormatter: p => p.value || '',
+			cellRenderer: p => p.value ? `<code style="font-size:10px;color:#6b7280;background:#f1f5f9;padding:1px 5px;border-radius:3px;">${p.value}</code>` : ''
 		},
-		{ headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false, filter: false,
-		  editable: true,
-		  cellEditor: WorkstationPopupEditor,
-		  cellEditorPopup: true,
-		  cellEditorParams: p => ({
-			base_batchsize: p.data?.batchsize || 0,
-			frm,
-			row_type: 'sfg',
-			row_name: p.data?.name || p.data?._row_name || ''
-		  }),
-		  cellRenderer: p => _machine_display_html(
-			p.value,
-			p.data?.batchsize || 0,
-			_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
-		  )
+		{
+			headerName: 'Tool', field: 'tool', width: 190, editable: true,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+			}),
+			cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
+		},
+		{
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false, filter: false,
+			editable: true,
+			cellEditor: WorkstationPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				base_batchsize: p.data?.batchsize || 0,
+				frm,
+				row_type: 'sfg',
+				row_name: p.data?.name || p.data?._row_name || ''
+			}),
+			cellRenderer: p => _machine_display_html(
+				p.value,
+				p.data?.batchsize || 0,
+				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+			)
 		},
 	];
 
@@ -717,7 +734,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	const total_batches = (par_data.sfg_chain || []).reduce((s, sfg) => s + (sfg.batches || []).length, 0);
 	const sfg_label = document.createElement('div');
 	sfg_label.innerHTML = _section_header(
-		`SFG Batch Schedule — Parallel Pipeline <span style="font-size:11px;font-weight:400;opacity:.7;">(${(par_data.sfg_chain||[]).length} SFGs · ${total_batches} batches)</span>`,
+		`SFG Batch Schedule — Parallel Pipeline <span style="font-size:11px;font-weight:400;opacity:.7;">(${(par_data.sfg_chain || []).length} SFGs · ${total_batches} batches)</span>`,
 		'#6D28D9', '#F5F3FF', 'fa-sitemap');
 	container.appendChild(sfg_label);
 
@@ -726,58 +743,58 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	const chain_display = (par_data.sfg_chain || []).slice().reverse();
 
 	// Custom expand/collapse — AG Grid Community doesn't support masterDetail
-	const sfg_colors = ['#2563eb','#d97706','#16a34a','#9333ea','#dc2626','#0891b2'];
-	const _expanded  = {};   // item_code → bool
+	const sfg_colors = ['#2563eb', '#d97706', '#16a34a', '#9333ea', '#dc2626', '#0891b2'];
+	const _expanded = {};   // item_code → bool
 
 	// Timeline window from all batch dates
 	const _all_bt = [];
-	chain_display.forEach(sfg => (sfg.batches||[]).forEach(b => {
+	chain_display.forEach(sfg => (sfg.batches || []).forEach(b => {
 		if (b.start_date) _all_bt.push(new Date(b.start_date).getTime());
-		if (b.end_date)   _all_bt.push(new Date(b.end_date).getTime());
+		if (b.end_date) _all_bt.push(new Date(b.end_date).getTime());
 	}));
-	const t_min  = _all_bt.length ? Math.min(..._all_bt) : Date.now();
-	const t_max  = _all_bt.length ? Math.max(..._all_bt) : Date.now() + 86400000;
+	const t_min = _all_bt.length ? Math.min(..._all_bt) : Date.now();
+	const t_max = _all_bt.length ? Math.max(..._all_bt) : Date.now() + 86400000;
 	const t_span = t_max - t_min || 1;
 
 	function _build_rows() {
 		const rows = [];
 		chain_display.forEach((sfg, idx) => {
 			const batches = sfg.batches || [];
-			const is_exp  = !!_expanded[sfg.item_code];
+			const is_exp = !!_expanded[sfg.item_code];
 			rows.push({
-				_is_group:     true,
-				_expanded:     is_exp,
-				_sfg_idx:      idx,
-				_row_name:     sfg.row_name,
-				item_code:     sfg.item_code,
-				bom_no:        sfg.bom_no,
-				tool:          sfg.tool || '',
-				tools:         sfg.tools || [],
+				_is_group: true,
+				_expanded: is_exp,
+				_sfg_idx: idx,
+				_row_name: sfg.row_name,
+				item_code: sfg.item_code,
+				bom_no: sfg.bom_no,
+				tool: sfg.tool || '',
+				tools: sfg.tools || [],
 				custom_workstations_csv: sfg.custom_workstations_csv || '',
-				type:          sfg.type_of_manufacturing,
+				type: sfg.type_of_manufacturing,
 				target_warehouse: sfg.target_warehouse || '',
-				supplier:      sfg.supplier,
+				supplier: sfg.supplier,
 				total_batches: batches.length,
-				total_qty:     batches.reduce((s, b) => s + (b.qty||0), 0),
+				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				per_shift_qty: sfg.per_shift_qty || 0,
-				batchsize:     sfg.batchsize || 0,
-				spm:           sfg.spm || 0,
-				start_date:    batches[0]?.start_date || '',
-				end_date:      batches[batches.length-1]?.end_date || '',
+				batchsize: sfg.batchsize || 0,
+				spm: sfg.spm || 0,
+				start_date: batches[0]?.start_date || '',
+				end_date: batches[batches.length - 1]?.end_date || '',
 			});
 			if (is_exp) {
 				batches.forEach(b => rows.push({
-					_is_group:     false,
-					_sfg_idx:      idx,
-					item_code:     sfg.item_code,
-					batch_label:   `${b.batch}/${b.total}`,
-					qty:           b.qty,
-					mfg_days:      b.mfg_days,
-					grn_days:      b.grn_days,
-					pm_days:       b.pm_days,
+					_is_group: false,
+					_sfg_idx: idx,
+					item_code: sfg.item_code,
+					batch_label: `${b.batch}/${b.total}`,
+					qty: b.qty,
+					mfg_days: b.mfg_days,
+					grn_days: b.grn_days,
+					pm_days: b.pm_days,
 					holiday_count: b.holiday_count || 0,
-					start_date:    b.start_date,
-					end_date:      b.end_date,
+					start_date: b.start_date,
+					end_date: b.end_date,
 				}));
 			}
 		});
@@ -790,7 +807,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		const e = new Date(p.data.end_date).getTime();
 		const lp = ((s - t_min) / t_span * 100).toFixed(1);
 		const wp = Math.max(((e - s) / t_span * 100), 0.8).toFixed(1);
-		const cl = sfg_colors[(p.data._sfg_idx||0) % sfg_colors.length];
+		const cl = sfg_colors[(p.data._sfg_idx || 0) % sfg_colors.length];
 		return `<div style="position:relative;width:100%;height:20px;background:#f3f4f6;border-radius:3px;overflow:hidden;">
 			<div style="position:absolute;left:${lp}%;width:${wp}%;height:100%;background:${cl};border-radius:3px;opacity:${opacity};"></div>
 		</div>`;
@@ -798,115 +815,134 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	const par_cols = [
 		// Chevron toggle
-		{ headerName: '', field: '_expanded', width: 36, pinned: 'left', sortable: false,
-		  cellStyle: { padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
-		  cellRenderer: p => {
-			if (!p.data?._is_group) return '';
-			return `<span style="font-size:15px;color:#6b7280;user-select:none;">${p.data._expanded ? '▾' : '▸'}</span>`;
-		  },
-		  onCellClicked: p => {
-			if (!p.data?._is_group) return;
-			_expanded[p.data.item_code] = !_expanded[p.data.item_code];
-			par_grid.setGridOption('rowData', _build_rows());
-		  }
+		{
+			headerName: '', field: '_expanded', width: 36, pinned: 'left', sortable: false,
+			cellStyle: { padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				return `<span style="font-size:15px;color:#6b7280;user-select:none;">${p.data._expanded ? '▾' : '▸'}</span>`;
+			},
+			onCellClicked: p => {
+				if (!p.data?._is_group) return;
+				_expanded[p.data.item_code] = !_expanded[p.data.item_code];
+				par_grid.setGridOption('rowData', _build_rows());
+			}
 		},
-		{ headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
-		  cellRenderer: p => {
-			if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
-			return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
-		  }
+		{
+			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
 		},
-		{ headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
-		  cellEditor: 'agSelectCellEditor',
-		  cellEditorParams: p => ({
-			values: _get_bom_options(p.data?.item_code, p.value)
-		  }),
-		  cellRenderer: p => (!p.data?._is_group) ? '' :
-			(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		{
+			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: _get_bom_options(p.data?.item_code, p.value)
+			}),
+			cellRenderer: p => (!p.data?._is_group) ? '' :
+				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
 		},
-		{ headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
-		  cellEditor: 'agSelectCellEditor',
-		  cellEditorParams: p => ({
-			values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-		  }),
-		  cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
+		{
+			headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+			}),
+			cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
 		},
-		{ headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
-		  editable: p => !!p.data?._is_group,
-		  cellEditor: WorkstationPopupEditor,
-		  cellEditorPopup: true,
-		  cellEditorParams: p => ({
-			base_batchsize: p.data?.batchsize || 0,
-			frm,
-			row_type: 'sfg',
-			row_name: p.data?._row_name || p.data?.name || ''
-		  }),
-		  cellRenderer: p => p.data?._is_group ? _machine_display_html(
-			p.value,
-			p.data?.batchsize || 0,
-			_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
-		  ) : ''
+		{
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
+			editable: p => !!p.data?._is_group,
+			cellEditor: WorkstationPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				base_batchsize: p.data?.batchsize || 0,
+				frm,
+				row_type: 'sfg',
+				row_name: p.data?._row_name || p.data?.name || ''
+			}),
+			cellRenderer: p => p.data?._is_group ? _machine_display_html(
+				p.value,
+				p.data?.batchsize || 0,
+				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+			) : ''
 		},
-		{ headerName: 'Batches', field: 'total_batches', width: 72,
-		  cellRenderer: p => {
-			if (!p.data?._is_group) return '';
-			const cl = sfg_colors[(p.data._sfg_idx||0) % sfg_colors.length];
-			return `<span style="background:${cl}22;color:${cl};border:1px solid ${cl}55;border-radius:12px;padding:1px 8px;font-size:11px;font-weight:700;">${p.value}</span>`;
-		  }
+		{
+			headerName: 'Batches', field: 'total_batches', width: 72,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				const cl = sfg_colors[(p.data._sfg_idx || 0) % sfg_colors.length];
+				return `<span style="background:${cl}22;color:${cl};border:1px solid ${cl}55;border-radius:12px;padding:1px 8px;font-size:11px;font-weight:700;">${p.value}</span>`;
+			}
 		},
-		{ headerName: 'Qty', width: 95, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
-		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		{
+			headerName: 'Qty', width: 95, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
-		{ headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
-		  cellRenderer: p => p.value != null ? String(p.value) : ''
+		{
+			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		{ headerName: 'GRN Days', width: 82, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-		  cellRenderer: p => p.value != null ? String(p.value) : ''
+		{
+			headerName: 'GRN Days', width: 82, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		{ headerName: 'PM Days', width: 78, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-		  cellRenderer: p => p.value != null ? String(p.value) : ''
+		{
+			headerName: 'PM Days', width: 78, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		{ headerName: 'Holi.', width: 58, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
-		  cellStyle: p => (p.value > 0) ? { color:'#dc2626', fontWeight:'bold' } : {},
-		  cellRenderer: p => p.value != null ? String(p.value) : ''
+		{
+			headerName: 'Holi.', width: 58, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
+			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		{ headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
-		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		{
+			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
-		{ headerName: 'SPM', width: 80, type: 'numericColumn',
-		  valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
-		  cellRenderer: p => p.value != null ? String(p.value) : ''
+		{
+			headerName: 'SPM', width: 80, type: 'numericColumn',
+			valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		{ headerName: 'Start Date', field: 'start_date', width: 105,
-		  valueFormatter: p => _format_bpp_date(p.value, ''),
-		  cellStyle: p => p.data?._is_group ? { color:'#059669', fontWeight:'600' } : { color:'#059669' }
+		{
+			headerName: 'Start Date', field: 'start_date', width: 105,
+			valueFormatter: p => _format_bpp_date(p.value, ''),
+			cellStyle: p => p.data?._is_group ? { color: '#059669', fontWeight: '600' } : { color: '#059669' }
 		},
-		{ headerName: 'End Date', field: 'end_date', width: 105,
-		  valueFormatter: p => _format_bpp_date(p.value, ''),
-		  cellStyle: p => p.data?._is_group ? { color:'#dc2626', fontWeight:'600' } : { color:'#dc2626' }
+		{
+			headerName: 'End Date', field: 'end_date', width: 105,
+			valueFormatter: p => _format_bpp_date(p.value, ''),
+			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
-		{ headerName: 'Type', field: 'type', width: 108,
-		  cellRenderer: p => {
-			if (!p.data?._is_group) return '';
-			return p.value === 'Subcontract'
-				? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
-				: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
-		  }
+		{
+			headerName: 'Type', field: 'type', width: 108,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				return p.value === 'Subcontract'
+					? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
+					: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
+			}
 		},
-		{ headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
-		  cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
+		{
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
-		{ headerName: 'Supplier', field: 'supplier', width: 130,
-		  cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
+		{
+			headerName: 'Supplier', field: 'supplier', width: 130,
+			cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
 		},
-		{ headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
-		  cellRenderer: p => _tl_bar(p, p.data?._is_group ? '0.85' : '0.45')
+		{
+			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
+			cellRenderer: p => _tl_bar(p, p.data?._is_group ? '0.85' : '0.45')
 		},
 	];
 
@@ -916,13 +952,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	container.appendChild(sfg_el);
 
 	const par_grid = agGrid.createGrid(sfg_el, {
-		columnDefs:    par_cols,
-		rowData:       _build_rows(),
+		columnDefs: par_cols,
+		rowData: _build_rows(),
 		defaultColDef: { resizable: true, sortable: false },
-		getRowHeight:  p => p.data?._is_group ? 40 : 34,
-		headerHeight:  40,
-		domLayout:     'autoHeight',
-		getRowStyle:   p => p.data?._is_group
+		getRowHeight: p => p.data?._is_group ? 40 : 34,
+		headerHeight: 40,
+		domLayout: 'autoHeight',
+		getRowStyle: p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
 		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
@@ -943,7 +979,7 @@ function _on_par_cell_changed(frm, params, par_data) {
 		const so_name = params.data._row_name ? _find_so_for_row(schedule, params.data._row_name) : null;
 		// simplified: mark dirty so user can save
 		frm.dirty();
-	} catch(e) {}
+	} catch (e) { }
 }
 
 
@@ -965,8 +1001,14 @@ function _sync_parallel_schedule_override(frm, row_name, row_type, patch = {}) {
 		const row = collection.find(item => item.row_name === row_name);
 		if (!row) return;
 		Object.assign(row, patch || {});
-		frm.doc.custom_batch_schedule = JSON.stringify(schedule);
-	} catch (e) {}
+		const jsonStr = JSON.stringify(schedule);
+		if (frm.doc.doctype && frm.doc.name) {
+			frappe.model.set_value(frm.doc.doctype, frm.doc.name, 'custom_batch_schedule', jsonStr);
+		} else {
+			frm.doc.custom_batch_schedule = jsonStr;
+			frm.dirty();
+		}
+	} catch (e) { }
 }
 
 
@@ -981,9 +1023,9 @@ function _fg_section_html(fg_items, so_name) {
 		const mfg_type = item.manufacturing_type || item.custom_manufacturing_type || 'In House';
 		const badge_color = mfg_type === 'In House' ? '#059669' : '#2563EB';
 		const start = _format_bpp_date(item.planned_start_date);
-		const end   = _format_bpp_date(item.custom_planned_end_date);
-		const qty   = Number(item.planned_qty || item.qty || 0).toLocaleString('en-IN');
-	return `
+		const end = _format_bpp_date(item.custom_planned_end_date);
+		const qty = Number(item.planned_qty || item.qty || 0).toLocaleString('en-IN');
+		return `
 		<tr style="background:#fff; border-bottom:1px solid #EFF6FF;">
 			<td style="padding:10px 14px; font-weight:700; color:#1E293B; font-size:13px; white-space:nowrap;">
 				<span style="display:inline-flex;align-items:center;gap:6px;">
@@ -1052,8 +1094,8 @@ function _fg_section_html(fg_items, so_name) {
 
 	return `
 		${_section_header(
-			`Finished Goods <span style="font-size:11px;font-weight:400;opacity:.7;">(${fg_items.length})</span>`,
-			'#1E40AF', '#EFF6FF', 'fa-cube')}
+		`Finished Goods <span style="font-size:11px;font-weight:400;opacity:.7;">(${fg_items.length})</span>`,
+		'#1E40AF', '#EFF6FF', 'fa-cube')}
 		<div style="background:#fff; border:1px solid #BFDBFE; border-left:4px solid #1E40AF;
 			border-radius:0 0 6px 6px; margin-top:0; margin-bottom:16px; overflow:visible;">
 			<table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -1129,11 +1171,15 @@ function _hydrate_machine_defaults(frm, parallel_data) {
 				row.tool = details.tool;
 				changed = true;
 			}
+			const effectiveCsv = row.custom_workstations_csv || details.workstations_csv || '';
+			const machineCount = _parse_csv_list(effectiveCsv).length || details.machine_count || 0;
+			const batchsize = Number(details.batchsize || row.batchsize || 0);
 			row.tools = details.tools || row.tools || [];
+			row.batchsize = batchsize || row.batchsize || 0;
 			row.tool_load_qty = details.tool_load_qty || row.tool_load_qty || 0;
 			row.pm_days = details.pm_days || row.pm_days || 0;
-			row.machine_count = details.machine_count || _parse_csv_list(row.custom_workstations_csv || details.workstations_csv).length;
-			row.spm = details.spm || row.spm || 0;
+			row.machine_count = machineCount;
+			row.spm = batchsize > 0 ? batchsize * machineCount : (details.spm || row.spm || 0);
 		});
 		return Promise.resolve(changed);
 	}
@@ -1206,8 +1252,10 @@ function _machine_display_html(csv_value, batchsize, fallback_csv = '') {
 	const effective_csv = csv_value || fallback_csv || '';
 	const values = _parse_csv_list(effective_csv);
 	const label = values.length ? values.join(', ') : 'Select';
-	return `<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;min-width:300px;max-width:420px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-		${frappe.utils.escape_html(label)}
+	return `<div style="height:100%;display:flex;align-items:center;">
+		<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;min-width:300px;max-width:420px;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-sizing:border-box;">
+			${frappe.utils.escape_html(label)}
+		</div>
 	</div>`;
 }
 
@@ -1260,6 +1308,8 @@ class WorkstationPopupEditor {
 					_mark_bom_form_dirty(frm);
 					if (row.doctype && row.name) {
 						await frappe.model.set_value(row.doctype, row.name, 'custom_workstations_csv', selected_csv);
+						await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+						await frappe.model.set_value(row.doctype, row.name, 'machine_count', machine_count);
 					}
 					if (row_type === 'sfg') {
 						frm.refresh_field('sub_assembly_items');
@@ -1473,7 +1523,7 @@ function _render_tool_select_options(tools, selected_tool) {
 }
 
 function _bind_fg_bom_selects(frm, wrapper) {
-	$(wrapper).find('.bpp-fg-bom-select').off('change').on('change', function() {
+	$(wrapper).find('.bpp-fg-bom-select').off('change').on('change', function () {
 		const row_name = $(this).data('row-name');
 		const new_bom = $(this).val();
 		const row = _find_bpp_row(frm, row_name, 'fg');
@@ -1486,7 +1536,7 @@ function _bind_fg_bom_selects(frm, wrapper) {
 }
 
 function _bind_fg_tool_selects(frm, wrapper) {
-	$(wrapper).find('.bpp-fg-tool-select').each(function() {
+	$(wrapper).find('.bpp-fg-tool-select').each(function () {
 		const row_name = $(this).data('row-name');
 		const row = _find_bpp_row(frm, row_name, 'fg');
 		if (!row?.bom_no) return;
@@ -1505,7 +1555,7 @@ function _bind_fg_tool_selects(frm, wrapper) {
 		});
 	});
 
-	$(wrapper).find('.bpp-fg-tool-select').off('change').on('change', function() {
+	$(wrapper).find('.bpp-fg-tool-select').off('change').on('change', function () {
 		const row_name = $(this).data('row-name');
 		const new_tool = $(this).val();
 		const row = _find_bpp_row(frm, row_name, 'fg');
@@ -1520,7 +1570,7 @@ function _bind_fg_tool_selects(frm, wrapper) {
 }
 
 function _bind_fg_machine_selects(frm, wrapper) {
-	$(wrapper).find('.bpp-fg-machine-trigger').each(function() {
+	$(wrapper).find('.bpp-fg-machine-trigger').each(function () {
 		const row_name = $(this).data('row-name');
 		const row = _find_bpp_row(frm, row_name, 'fg');
 		if (!row) return;
@@ -1539,12 +1589,12 @@ function _bind_fg_machine_selects(frm, wrapper) {
 			this.innerHTML = _machine_display_html(selected_csv, details.batchsize || 0);
 		});
 	});
-	$(wrapper).find('.bpp-fg-machine-trigger').off('click keydown').on('click', function() {
+	$(wrapper).find('.bpp-fg-machine-trigger').off('click keydown').on('click', function () {
 		const row_name = $(this).data('row-name');
 		const row = _find_bpp_row(frm, row_name, 'fg');
 		if (!row) return;
 		_open_workstation_selector(frm, row, 'fg', { wrapper });
-	}).on('keydown', function(e) {
+	}).on('keydown', function (e) {
 		if (e.key !== 'Enter' && e.key !== ' ') return;
 		e.preventDefault();
 		$(this).trigger('click');
@@ -1619,7 +1669,7 @@ function get_bom_details(bom_no, selected_workstations_csv = null, selected_tool
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_bom_spm_details',
 			args: { bom_no, selected_workstations_csv, selected_tool },
-			callback: function(r) {
+			callback: function (r) {
 				resolve(r.message || {});
 			}
 		});
@@ -1678,7 +1728,7 @@ function _run_bom_change_recalculation(frm) {
 					let schedule = null;
 					try {
 						schedule = frm.doc.custom_batch_schedule ? JSON.parse(frm.doc.custom_batch_schedule) : null;
-					} catch (e) {}
+					} catch (e) { }
 					frappe.show_alert({ message: __('Parallel schedule updated'), indicator: 'green' });
 					if (html_field && html_field.$wrapper) {
 						_render_all_grids(frm, _build_so_map(frm), 'Parallel', html_field.$wrapper, schedule);
@@ -1728,6 +1778,8 @@ function _handle_bom_change(frm, row_name, bom_no, row_type, context = {}) {
 		if (row) {
 			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool_load_qty', details?.tool_load_qty || 0));
 			updates.push(frappe.model.set_value(row.doctype, row.name, 'pm_days', details?.pm_days || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'spm', details?.spm || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'machine_count', details?.machine_count || 0));
 		}
 
 		Promise.all(updates).then(() => {
@@ -1774,22 +1826,24 @@ function _handle_workstation_change(frm, row_name, row_type, selected_csv, conte
 		if (row) {
 			updates.push(frappe.model.set_value(row.doctype, row.name, 'tool_load_qty', details?.tool_load_qty || 0));
 			updates.push(frappe.model.set_value(row.doctype, row.name, 'pm_days', details?.pm_days || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'spm', details?.spm || 0));
+			updates.push(frappe.model.set_value(row.doctype, row.name, 'machine_count', details?.machine_count || 0));
 		}
 		Promise.all(updates).then(() => {
-		if (row_type === 'fg') {
-			_sync_fg_bom_selection(frm, row_name, bom_no, details?.spm || 0);
-		}
-		_sync_parallel_schedule_override(frm, row_name, row_type, {
-			tool: details?.tool || row?.tool || '',
-			custom_workstations_csv: details?.selected_workstations_csv || details?.workstations_csv || '',
-			machine_count: details?.machine_count || 0,
-			spm: details?.spm || 0,
-			batchsize: details?.batchsize || 0,
-			tool_load_qty: details?.tool_load_qty || 0,
-			pm_days: details?.pm_days || 0,
-			tools: details?.tools || []
-		});
-		_apply_bom_details_to_context(row_name, details, context);
+			if (row_type === 'fg') {
+				_sync_fg_bom_selection(frm, row_name, bom_no, details?.spm || 0);
+			}
+			_sync_parallel_schedule_override(frm, row_name, row_type, {
+				tool: details?.tool || row?.tool || '',
+				custom_workstations_csv: details?.selected_workstations_csv || details?.workstations_csv || '',
+				machine_count: details?.machine_count || 0,
+				spm: details?.spm || 0,
+				batchsize: details?.batchsize || 0,
+				tool_load_qty: details?.tool_load_qty || 0,
+				pm_days: details?.pm_days || 0,
+				tools: details?.tools || []
+			});
+			_apply_bom_details_to_context(row_name, details, context);
 		});
 	});
 }
@@ -1943,31 +1997,41 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 
 	const _par = prefix === 'par';
 	const mr_cols = [
-		{ headerName: 'Item Code', field: 'item_code', width: 130,
-		  cellRenderer: p => `<strong>${p.value || ''}</strong>` },
-		{ headerName: 'Item Name', field: 'item_name', width: 160,
-		  cellRenderer: p => `<span style="color:#64748b;font-size:11px;">${p.data ? (p.data.item_name || p.data.description || '') : ''}</span>` },
-		{ headerName: 'Qty', field: _par ? 'qty' : 'quantity', width: 90, type: 'numericColumn',
-		  valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '' },
+		{
+			headerName: 'Item Code', field: 'item_code', width: 130,
+			cellRenderer: p => `<strong>${p.value || ''}</strong>`
+		},
+		{
+			headerName: 'Item Name', field: 'item_name', width: 160,
+			cellRenderer: p => `<span style="color:#64748b;font-size:11px;">${p.data ? (p.data.item_name || p.data.description || '') : ''}</span>`
+		},
+		{
+			headerName: 'Qty', field: _par ? 'qty' : 'quantity', width: 90, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
 		{ headerName: 'UOM', field: 'uom', width: 65 },
 		...(_par ? [
-			{ headerName: 'GRN Days',  field: 'grn_days',  width: 80, type: 'numericColumn' },
+			{ headerName: 'GRN Days', field: 'grn_days', width: 80, type: 'numericColumn' },
 			{ headerName: 'Lead Days', field: 'lead_days', width: 85, type: 'numericColumn' },
 		] : []),
-		{ headerName: 'Order By', field: _par ? 'start_date' : 'custom_start_date',
-		  width: 110, editable: true,
-		  cellStyle: { color: '#0F5132', fontWeight: '600' },
-		  valueFormatter: p => _format_bpp_date(p.value, '') },
-		{ headerName: 'Receive By', field: _par ? 'end_date' : 'schedule_date',
-		  width: 110, editable: true,
-		  cellStyle: { color: '#842029', fontWeight: '600' },
-		  valueFormatter: p => _format_bpp_date(p.value, '') },
+		{
+			headerName: 'Order By', field: _par ? 'start_date' : 'custom_start_date',
+			width: 110, editable: true,
+			cellStyle: { color: '#0F5132', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value, '')
+		},
+		{
+			headerName: 'Receive By', field: _par ? 'end_date' : 'schedule_date',
+			width: 110, editable: true,
+			cellStyle: { color: '#842029', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value, '')
+		},
 		{ headerName: 'Supplier', field: _par ? 'supplier' : 'custom_supplier', width: 150 },
 	];
 
 	agGrid.createGrid(mr_el, {
-		columnDefs:    mr_cols,
-		rowData:       mr_items,
+		columnDefs: mr_cols,
+		rowData: mr_items,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		rowHeight: 36,
 		headerHeight: 40,
