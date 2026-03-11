@@ -654,7 +654,10 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
 
     if not doc.get("sub_assembly_items"):
         return
-
+    
+    if doc.custom_parallel_planning == 1:
+        return
+    
     # ── FG row collection: item_code → list of po_item rows ─────────────────
     # Used in Pass 2 Case A to check whether an SFG's parent is an FG item.
     # Per-chain keying (via production_plan_item) ensures each chain only pushes

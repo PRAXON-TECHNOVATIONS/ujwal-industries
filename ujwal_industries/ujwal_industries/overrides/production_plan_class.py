@@ -159,3 +159,50 @@ class CustomProductionPlan(ProductionPlan):
             po.flags.ignore_validate = True
             po.insert()
             purchase_orders.append(po.name)
+
+    def create_work_order(self, item):
+        from erpnext.manufacturing.doctype.work_order.work_order import OverProductionError
+
+        if flt(item.get("qty")) <= 0:
+            return
+
+        wo = frappe.new_doc("Work Order")
+        wo.update(item)
+        wo.planned_start_date = item.get("planned_start_date") or item.get("schedule_date")
+
+        if item.get("warehouse"):
+            wo.fg_warehouse = item.get("warehouse")
+
+        wo.set_work_order_operations()
+        
+        if 'production_plan_item' in item:
+            row_data = frappe.get_doc("Production Plan Item", item.get('production_plan_item'))
+        else:
+            row_data = frappe.get_doc("Production Plan Sub Assembly Item", item.get('production_plan_sub_assembly_item'))
+
+        if row_data.custom_workstation:
+            final_operation =[]
+            for k in wo.operations:
+                op_dict = k.__dict__
+                workstation_list = row_data.custom_workstation.split(',')
+                idx=1
+                for j in workstation_list:
+                    temp = op_dict.copy()
+                    temp['workstation'] = j
+                    temp['idx'] = idx
+                    idx += 1
+                    final_operation.append(temp)
+            
+            wo.operations = []
+            for rec in final_operation:
+                wo.append('operations', rec)
+
+        wo.set_required_items()
+
+        try:
+            wo.flags.ignore_mandatory = True
+            wo.flags.ignore_validate = True
+            wo.insert()
+            return wo.name
+        except OverProductionError:
+            pass

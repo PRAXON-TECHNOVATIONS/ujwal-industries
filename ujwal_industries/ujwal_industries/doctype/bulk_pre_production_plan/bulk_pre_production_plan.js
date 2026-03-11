@@ -3,6 +3,21 @@
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
 	refresh: function(frm) {
+
+		// cur_frm.add_custom_button(__('Create Production Plan'), function() {
+		// 	frappe.call({
+        //             method: "ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_document",
+        //             args: {
+        //                 bulk_pp_name: frm.doc.name,
+        //             },
+        //             callback: function(r) {
+        //                 if(!r.exc) {
+        //                     frappe.msgprint("Created Succesfully !")
+        //                 }
+        //             }
+        //     });
+		// })
+
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
 			setTimeout(function() { setup_production_tabs(frm); }, 200);
@@ -731,6 +746,7 @@ function _find_so_for_row(schedule, row_name) {
 // ---------------------------------------------------------------------------
 
 function _fg_section_html(fg_items) {
+	console.log(".....fg_items....",fg_items)
 	if (!fg_items || !fg_items.length) return '';
 	const rows = fg_items.map(item => {
 		const mfg_type = item.manufacturing_type || item.custom_manufacturing_type || 'In House';

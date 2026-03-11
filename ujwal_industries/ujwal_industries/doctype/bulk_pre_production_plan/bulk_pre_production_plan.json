@@ -106,7 +106,6 @@
    "options": "Bulk PP Sales Order"
   },
   {
-   "collapsible": 0,
    "depends_on": "eval: doc.po_items && doc.po_items.length > 0",
    "fieldname": "section_break_production_items",
    "fieldtype": "Section Break",
@@ -231,8 +230,13 @@
  "icon": "fa fa-calendar",
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
- "links": [],
- "modified": "2026-02-04 20:15:28.301262",
+ "links": [
+  {
+   "link_doctype": "Production Plan",
+   "link_fieldname": "custom_bulk_pre_production_plan"
+  }
+ ],
+ "modified": "2026-03-10 19:44:38.580527",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",
