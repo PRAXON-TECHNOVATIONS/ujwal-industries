@@ -1357,10 +1357,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				# Start date
 				if b_idx == 0:
 					if fg_idx == 0:
-						# Deepest SFG, first batch → wait until materials ready
-						start_dt = actual_deepest_start
+						# First FG, first batch → starts when top SFG batch-0 ends
+						start_dt = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
 					else:
-						# Parallel chain: start when prev SFG batch-0 ended
+						# Multiple FGs: start when prev FG batch-0 ended
 						start_dt = get_datetime(prev_fg_row0_end)
 				else:
 					# Within same SFG: pm_days gap after batch end, then +1 to start
@@ -1389,6 +1389,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"end_date":      str(end_dt),
 				})
     
+			# Update prev_fg_row0_end for next FG in chain
+			if batch_rows:
+				prev_fg_row0_end = batch_rows[0]["end_date"]
+
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
 				"bom_no":                  fg.bom_no or "",
@@ -1404,8 +1408,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"target_warehouse": (
 					getattr(fg, "target_warehouse", "") or target_warehouse_map.get(fg.item_code, "")
 				),
-				"planned_start_date":      str(fg_start),
-				"custom_planned_end_date": str(fg_end),
+				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(fg_start),
+				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(fg_end),
 				"row_name":                fg.name,
 				"batches":                batch_rows,
 			})

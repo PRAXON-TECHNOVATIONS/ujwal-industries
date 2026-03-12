@@ -181,21 +181,29 @@ class CustomProductionPlan(ProductionPlan):
             row_data = frappe.get_doc("Production Plan Sub Assembly Item", item.get('production_plan_sub_assembly_item'))
 
         if row_data.custom_workstation:
-            final_operation =[]
-            for k in wo.operations:
-                op_dict = k.__dict__
-                workstation_list = row_data.custom_workstation.split(',')
-                idx=1
-                for j in workstation_list:
-                    temp = op_dict.copy()
-                    temp['workstation'] = j
-                    temp['idx'] = idx
-                    idx += 1
-                    final_operation.append(temp)
-            
-            wo.operations = []
-            for rec in final_operation:
-                wo.append('operations', rec)
+            workstation_list = [ws.strip() for ws in row_data.custom_workstation.split(',') if ws.strip()]
+
+            if workstation_list:
+                final_operation = []
+                row_count = len(workstation_list)
+                idx = 1
+
+                for operation_row in wo.operations:
+                    base_time = flt(operation_row.time_in_mins)
+                    split_time = base_time if operation_row.fixed_time else base_time / row_count
+                    op_dict = operation_row.as_dict()
+
+                    for workstation in workstation_list:
+                        temp = op_dict.copy()
+                        temp['workstation'] = workstation
+                        temp['time_in_mins'] = split_time
+                        temp['idx'] = idx
+                        idx += 1
+                        final_operation.append(temp)
+
+                wo.operations = []
+                for rec in final_operation:
+                    wo.append('operations', rec)
 
         wo.set_required_items()
 
