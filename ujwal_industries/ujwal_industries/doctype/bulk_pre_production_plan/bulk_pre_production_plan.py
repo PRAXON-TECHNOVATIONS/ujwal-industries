@@ -1051,6 +1051,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 	shift_config = _get_effective_shift_config()
 	holidays = _get_holiday_set(shift_config.get("holiday_list"))
+	print("...............holidays.........",holidays)
 	allow_backdated = _get_allow_backdated_setting()
 	today_dt = _current_shift_datetime(shift_config)
 
@@ -1206,6 +1207,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					1 for h in holidays
 					if getdate(start_dt) < h <= getdate(end_dt)
 				)
+				holiday_dates = [
+					str(h) for h in holidays
+					if getdate(start_dt) < h <= getdate(end_dt)
+				]
+				holiday_count = len(holiday_dates)
+    
 				batch_rows.append({
 					"batch":         b_idx + 1,
 					"total":         len(batches),
@@ -1214,6 +1221,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"grn_days":      grn_days,
 					"pm_days":       0 if is_last_batch else pm_days,
 					"holiday_count": holiday_count,
+					"holiday_hover" : holiday_dates, 
 					"start_date":    str(start_dt),
 					"end_date":      str(end_dt),
 				})
@@ -1377,6 +1385,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					1 for h in holidays
 					if getdate(start_dt) < h <= getdate(end_dt)
 				)
+    
+				holiday_dates = [
+					str(h) for h in holidays
+					if getdate(start_dt) < h <= getdate(end_dt)
+				]
+				holiday_count = len(holiday_dates)
+				
 				batch_rows.append({
 					"batch":         b_idx + 1,
 					"total":         len(batches),
@@ -1385,6 +1400,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"grn_days":      grn_days,
 					"pm_days":       0 if is_last_batch else pm_days,
 					"holiday_count": holiday_count,
+					"holiday_hover": holiday_dates, 
 					"start_date":    str(start_dt),
 					"end_date":      str(end_dt),
 				})
