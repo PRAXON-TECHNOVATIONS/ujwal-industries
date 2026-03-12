@@ -1161,6 +1161,26 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		return datetime.combine(dt.date(), datetime.min.time()) + _shift_end_td
 
 	for so_name, items in so_map.items():
+		so_mr_item_codes = list({
+			row.item_code
+			for row in items["mr"]
+			if getattr(row, "item_code", None)
+		})
+		sfg_bom_links: dict[str, set[str]] = {}
+		sfg_bom_nos = list({
+			row.bom_no
+			for row in items["sfg"]
+			if getattr(row, "bom_no", None)
+		})
+		if sfg_bom_nos and so_mr_item_codes:
+			linked_rm_rows = frappe.db.sql("""
+				SELECT parent AS bom_no, item_code
+				FROM `tabBOM Item`
+				WHERE parent IN %(boms)s AND item_code IN %(items)s
+			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
+			for link in linked_rm_rows:
+				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
+
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, effective_spm, per_shift_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
@@ -1168,12 +1188,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			for b_idx, batch_qty in enumerate(batches_qty):
 				mfg_days_b = math.ceil(batch_qty / per_shift_qty) if per_shift_qty > 0 else 1
 				if b_idx == 0:
-					start_dt = _snap_start(start_dt_b0)
+					start_dt = get_datetime(start_dt_b0)
 				else:
 					prev_end = get_datetime(batch_rows[b_idx - 1]["end_date"])
-					# b0 has no maintenance — gap from b0→b1 is just 1 day; pm_days applies from b1 onward
-					gap_days = (pm_days if b_idx > 1 else 0) + 1
-					start_dt = _snap_start(_working_day_add(prev_end, gap_days, holidays))
+					# Next batch starts exactly when the previous batch ends; only PM days
+					# and holidays are allowed to push the date forward.
+					start_dt = _working_day_add(prev_end, pm_days, holidays)
 				batch_prod_mins = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days_b * shift_minutes)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
@@ -1258,9 +1278,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			for b_idx, batch_qty in enumerate(batches[1:], start=1):
 				mfg_days_bn = math.ceil(batch_qty / per_shift_qty) if per_shift_qty > 0 else 1
 				prev_end    = get_datetime(batch_rows[b_idx - 1]["end_date"])
-				# b0 has no maintenance — gap from b0→b1 is 1 day; pm_days applies from b1 onward
-				gap_days    = (pm_days if b_idx > 1 else 0) + 1
-				start_dt    = _snap_start(_working_day_add(prev_end, gap_days, holidays))
+				start_dt    = _working_day_add(prev_end, pm_days, holidays)
 				bp_mins     = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days_bn * shift_minutes)
 				mfg_end_dt  = shift_aware_forward_schedule(start_dt, bp_mins, shift_config)
 				is_last     = (b_idx == len(batches) - 1)
@@ -1295,9 +1313,17 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# sfg_chain_bwd[-1] = deepest (last processed), sfg_chain_bwd[0] = level 0
 		sfg_chain_out: list[dict] = []
 		fg_start_override: "datetime | None" = None
+		deepest_sfg_has_linked_rm = bool(
+			sfg_chain_bwd
+			and sfg_bom_links.get(sfg_chain_bwd[-1].get("bom_no") or "")
+		)
 
-		if sfg_chain_bwd and get_datetime(sfg_chain_bwd[-1]["batches"][0]["start_date"]) < today_dt:
-			# Forward cascade: deepest starts today, each subsequent SFG starts at prev batch[0].end
+		if sfg_chain_bwd and (
+			get_datetime(sfg_chain_bwd[-1]["batches"][0]["start_date"]) < today_dt
+			or not deepest_sfg_has_linked_rm
+		):
+			# If the deepest SFG has no BOM-linked RM rows in this SO, do not hold it
+			# for MR timing; start it from the current shift start instead.
 			new_start = _snap_start(today_dt)
 			for sfg_data in reversed(sfg_chain_bwd):   # deepest → level 0
 				ic_f  = sfg_data["item_code"]
@@ -1312,9 +1338,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
 				sfg_chain_out.append(entry)               # deepest first in output
-				new_start = _snap_start(get_datetime(br_f[0]["end_date"]))
+				new_start = get_datetime(br_f[0]["end_date"])
 			# FG must be pushed to after the level-0 SFG's batch[0].end
-			fg_start_override = _snap_start(get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"]))
+			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 		else:
 			# No backdate: reverse bwd list so output is deepest-first
 			sfg_chain_out = list(reversed(sfg_chain_bwd))
@@ -1399,9 +1425,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
 				sfg_chain_rebuilt.append(entry)
-				new_start = _snap_start(get_datetime(br_f[0]["end_date"]))
+				new_start = get_datetime(br_f[0]["end_date"])
 			sfg_chain_out = sfg_chain_rebuilt
-			fg_start_override = _snap_start(get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"]))
+			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
 
 		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
@@ -1466,12 +1492,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 						# Multiple FGs: start when prev FG batch-0 ended
 						start_dt = get_datetime(prev_fg_row0_end)
 				else:
-					# Within same SFG: pm_days gap after batch end, then +1 to start
-					# (pm_days maintenance days pass, batch begins the day after)
+					# Next FG batch starts exactly when the previous batch ends; only PM days
+					# and holidays are allowed to push the date forward.
 					prev_end = get_datetime(batch_rows[b_idx - 1]["end_date"])
-					start_dt = _working_day_add(prev_end, pm_days + 1, holidays)
+					start_dt = _working_day_add(prev_end, pm_days, holidays)
 
-				start_dt = _snap_start(start_dt)
 				batch_prod_mins = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days * shift_minutes)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_start after grn_days
