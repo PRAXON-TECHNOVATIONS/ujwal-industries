@@ -491,7 +491,6 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	}
 
 	const item_codes = _collect_bom_item_codes(so_map, mode, parallel_data);
-	console.log("...........so_map........",so_map)
 	const missing_item_codes = item_codes.filter(item_code => !_bom_options_cache[item_code]);
 	if (missing_item_codes.length) {
 		frappe.call({
@@ -511,7 +510,6 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 
 	// For parallel mode, try stored JSON if no fresh data passed
 	let par_data = parallel_data || null;
-	// console.log("...........par_data........",par_data)
 	if (mode === 'Parallel' && !par_data && frm.doc.custom_batch_schedule) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
@@ -733,7 +731,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 
 
-	// console.log("....par_data.......",par_data)
 
 	const total_batche = (par_data.fg || []).reduce((s, fg) => s + (fg.batches || []).length, 0);
 	const f_g_label = document.createElement('div');
@@ -797,6 +794,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
 					holiday_count: b.holiday_count || 0,
+					holiday_dates: b.holiday_hover || [],
 					start_date: b.start_date,
 					end_date: b.end_date,
 				}));
@@ -904,11 +902,38 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
+		// {
+		// 	headerName: 'Holi.', width: 58, type: 'numericColumn',
+		// 	valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+		// 	cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
+		// 	cellRenderer: p => p.value != null ? String(p.value) : ''
+		// },
+
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
 			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
-			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+
+			cellStyle: p => (p.value > 0)
+				? { color: '#dc2626', fontWeight: 'bold', cursor: 'help' }
+				: {},
+
+			cellRenderer: p => {
+				if (p.data?._is_group) return '';
+
+				const count = p.data?.holiday_count || 0;
+				const dates = p.data?.holiday_dates || [];
+
+				if (!count) return '';
+
+				const formatted_dates = dates.map(d => {
+					const [y, m, d2] = d.split('-');
+					return `${d2}-${m}-${y}`;
+				});
+
+				const tooltip = "Holi Dates :\n" + formatted_dates.join('\n');
+
+				return `<span title="${tooltip}">${count}</span>`;
+			}
 		},
 		{
 			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
@@ -1006,6 +1031,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		const rows = [];
 		chain_display.forEach((sfg, idx) => {
 			const batches = sfg.batches || [];
+			console.log(".........batches......sfg......",batches)
 			const is_exp = !!_expanded[sfg.item_code];
 			rows.push({
 				_is_group: true,
@@ -1039,6 +1065,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
 					holiday_count: b.holiday_count || 0,
+					holiday_dates: b.holiday_hover || [],
 					start_date: b.start_date,
 					end_date: b.end_date,
 				}));
@@ -1150,12 +1177,40 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
+		// {
+		// 	headerName: 'Holi.', width: 58, type: 'numericColumn',
+		// 	valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+		// 	cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
+		// 	cellRenderer: p => p.value != null ? String(p.value) : ''
+		// },
+
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
 			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
-			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+
+			cellStyle: p => (p.value > 0)
+				? { color: '#dc2626', fontWeight: 'bold', cursor: 'help' }
+				: {},
+
+			cellRenderer: p => {
+				if (p.data?._is_group) return '';
+
+				const count = p.data?.holiday_count || 0;
+				const dates = p.data?.holiday_dates || [];
+
+				if (!count) return '';
+
+				const formatted_dates = dates.map(d => {
+					const [y, m, d2] = d.split('-');
+					return `${d2}-${m}-${y}`;
+				});
+
+				const tooltip = "Holi Dates :\n" + formatted_dates.join('\n');
+
+				return `<span title="${tooltip}">${count}</span>`;
+			}
 		},
+
 		{
 			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
 			valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
