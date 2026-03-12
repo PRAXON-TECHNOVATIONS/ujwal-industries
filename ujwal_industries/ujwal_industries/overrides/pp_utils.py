@@ -517,7 +517,7 @@ def _net_working_minutes(
 
 
 def _prev_working_date(d: Any, holidays: set[Any]) -> Any:
-    """Step back one calendar day, skipping any dates present in `holidays`."""
+    """Step back one calendar day, skipping holidays (Sat/Sun are working days)."""
     prev = getdate(d) - timedelta(days=1)
     while prev in holidays:
         prev -= timedelta(days=1)
@@ -525,7 +525,7 @@ def _prev_working_date(d: Any, holidays: set[Any]) -> Any:
 
 
 def _next_working_date(d: Any, holidays: set[Any]) -> Any:
-    """Step forward one calendar day, skipping any dates present in `holidays`."""
+    """Step forward one calendar day, skipping holidays (Sat/Sun are working days)."""
     nxt = getdate(d) + timedelta(days=1)
     while nxt in holidays:
         nxt += timedelta(days=1)
