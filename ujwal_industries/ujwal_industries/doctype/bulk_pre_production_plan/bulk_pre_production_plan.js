@@ -1050,7 +1050,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		const rows = [];
 		chain_display.forEach((sfg, idx) => {
 			const batches = sfg.batches || [];
-			console.log(".........batches......sfg......",batches)
 			const is_exp = !!_expanded[sfg.item_code];
 			rows.push({
 				_is_group: true,
