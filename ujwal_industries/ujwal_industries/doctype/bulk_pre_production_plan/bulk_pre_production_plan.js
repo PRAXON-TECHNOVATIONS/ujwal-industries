@@ -914,27 +914,38 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
 
 			cellStyle: p => (p.value > 0)
-				? { color: '#dc2626', fontWeight: 'bold', cursor: 'help' }
+				? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }
 				: {},
 
 			cellRenderer: p => {
 				if (p.data?._is_group) return '';
 
 				const count = p.data?.holiday_count || 0;
+				if (!count) return '';
+
+				return `<span class="holi-click">${count}</span>`;
+			},
+
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Holi.' || p.data?._is_group) return;
+
 				const dates = p.data?.holiday_dates || [];
 
-				if (!count) return '';
+				if (!dates.length) return;
 
 				const formatted_dates = dates.map(d => {
 					const [y, m, d2] = d.split('-');
 					return `${d2}-${m}-${y}`;
 				});
 
-				const tooltip = "Holi Dates :\n" + formatted_dates.join('\n');
-
-				return `<span title="${tooltip}">${count}</span>`;
+				frappe.msgprint({
+					title: 'Holiday Dates',
+					message: formatted_dates.join('<br>'),
+					indicator: 'red'
+				});
 			}
 		},
+
 		{
 			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
 			valueGetter: p => p.data?._is_group ? p.data.per_shift_qty : null,
@@ -1189,25 +1200,35 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
 
 			cellStyle: p => (p.value > 0)
-				? { color: '#dc2626', fontWeight: 'bold', cursor: 'help' }
+				? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }
 				: {},
 
 			cellRenderer: p => {
 				if (p.data?._is_group) return '';
 
 				const count = p.data?.holiday_count || 0;
+				if (!count) return '';
+
+				return `<span class="holi-click">${count}</span>`;
+			},
+
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Holi.' || p.data?._is_group) return;
+
 				const dates = p.data?.holiday_dates || [];
 
-				if (!count) return '';
+				if (!dates.length) return;
 
 				const formatted_dates = dates.map(d => {
 					const [y, m, d2] = d.split('-');
 					return `${d2}-${m}-${y}`;
 				});
 
-				const tooltip = "Holi Dates :\n" + formatted_dates.join('\n');
-
-				return `<span title="${tooltip}">${count}</span>`;
+				frappe.msgprint({
+					title: 'Holiday Dates',
+					message: formatted_dates.join('<br>'),
+					indicator: 'red'
+				});
 			}
 		},
 
