@@ -143,6 +143,7 @@
   {
    "fieldname": "custom_batch_schedule",
    "fieldtype": "Long Text",
+   "hidden": 1,
    "label": "Batch Schedule JSON"
   },
   {
@@ -251,7 +252,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-03-11 19:08:21.465991",
+ "modified": "2026-03-13 18:01:12.593699",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",

@@ -1078,7 +1078,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 	shift_config = _get_effective_shift_config()
 	holidays = _get_holiday_set(shift_config.get("holiday_list"))
-	print("...............holidays.........",holidays)
 	allow_backdated = _get_allow_backdated_setting()
 	today_dt = _current_shift_datetime(shift_config)
 
@@ -1195,15 +1194,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					# and holidays are allowed to push the date forward.
 					start_dt = _working_day_add(prev_end, pm_days, holidays)
 				batch_prod_mins = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days_b * shift_minutes)
+				if start_dt.date() in holidays:
+					start_dt = start_dt + timedelta(days=1)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
 				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays))
 				holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+				holiday_dates = [str(h) for h in holidays if getdate(start_dt) < h <= getdate(end_dt)]
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches_qty), "qty": batch_qty,
 					"mfg_days": mfg_days_b, "grn_days": grn_days,
 					"pm_days": 0 if (is_last or b_idx == 0) else pm_days,
 					"holiday_count": holiday_count,
+					"holiday_hover": holiday_dates, 
 					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
 				})
 			return batch_rows
@@ -1285,11 +1288,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				end_dt      = _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays)) \
 				              if grn_days > 0 else mfg_end_dt
 				hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+				holiday_dates = [str(h) for h in holidays if getdate(start_dt) < h <= getdate(end_dt)]
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches), "qty": batch_qty,
 					"mfg_days": mfg_days_bn, "grn_days": grn_days,
 					"pm_days": 0 if is_last else pm_days,
 					"holiday_count": hc,
+					"holiday_hover": holiday_dates, 
 					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
 				})
 
