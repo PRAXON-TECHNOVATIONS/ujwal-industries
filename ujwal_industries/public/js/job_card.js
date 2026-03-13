@@ -14,78 +14,78 @@ frappe.ui.form.on("Job Card", {
 		}
 	},
 
-	setup: function(frm){
-        get_filtered_tools(frm);
-    },
- 
-    operation: function(frm) {
-        frm.set_value("tool", null);
-    },
- 
-    bom_no: function(frm) {
-        frm.set_value("tool", null);
-    },
+	setup: function (frm) {
+		get_filtered_tools(frm);
+	},
 
-	custom_tool_name: function(frm) {
+	operation: function (frm) {
+		frm.set_value("tool", null);
+	},
+
+	bom_no: function (frm) {
+		frm.set_value("tool", null);
+	},
+
+	custom_tool_name: function (frm) {
 		//  1. Check if Tool Is on Maintanance Period 
 		//  2. Pop Option to Add Reson for changes Tool 
-        if (frm.doc.custom_tool_name) {
+		if (frm.doc.custom_tool_name) {
 
-            frappe.call({
-                method: "ujwal_industries.ujwal_industries.overrides.job_card.check_tool_maintenance",
-                args: {
-                    tool: frm.doc.custom_tool_name
-                },
-                callback: function(r) {
-                    if (r.message) {
+			frappe.call({
+				method: "ujwal_industries.ujwal_industries.overrides.job_card.check_tool_maintenance",
+				args: {
+					tool: frm.doc.custom_tool_name
+				},
+				callback: function (r) {
+					if (r.message) {
 						//  1. Check if Tool Is on Maintanance Period 
-                        frappe.msgprint(r.message);
-                        frm.set_value("custom_tool_name", null);
-                    }
-					else{
+						frappe.msgprint(r.message);
+						frm.set_value("custom_tool_name", null);
+					}
+					else {
 						//  2. Check If Privious Tool added then Pop Option to Add Reson for changes Tool
-						if(frm.doc.custom_previous_tool){
+						if (frm.doc.custom_previous_tool) {
 							frappe.run_serially([
 								() => {
 
-										frm.set_value("custom_reason_for_tool_change", '');
-										let old_tool = frm.doc.custom_previous_tool;
+									frm.set_value("custom_reason_for_tool_change", '');
+									let old_tool = frm.doc.custom_previous_tool;
 
-										let d = new frappe.ui.Dialog({
-											title: "Reason for Tool Change",
-											fields: [
-												{
-													label: "Reason",
-													fieldname: "reason",
-													fieldtype: "Small Text",
-													reqd: 1
-												}
-											],
-											primary_action_label: "Submit",
-											primary_action(values) {
-												frm.set_value("custom_reason_for_tool_change", values.reason);
+									let d = new frappe.ui.Dialog({
+										title: "Reason for Tool Change",
+										fields: [
+											{
+												label: "Reason",
+												fieldname: "reason",
+												fieldtype: "Small Text",
+												reqd: 1
+											}
+										],
+										primary_action_label: "Submit",
+										primary_action(values) {
+											frm.set_value("custom_reason_for_tool_change", values.reason);
 
-												frappe.call({
+											frappe.call({
 												method: "ujwal_industries.ujwal_industries.overrides.job_card.create_tool_maintenance",
 												args: {
 													tool: old_tool,
 													reason: values.reason
 												},
-												callback: function(res) {
+												callback: function (res) {
 													if (res && res.message) {
 														frappe.msgprint({
-														title: "Success",
-														message: "<b>Tool Maintenance Created Successfully</b>",
-														indicator: "green"
+															title: "Success",
+															message: "<b>Tool Maintenance Created Successfully</b>",
+															indicator: "green"
 														});
 													}
 												},
 											});
 
-												d.hide();
-											}
-										});
-										d.show();
+											d.hide();
+										}
+									});
+									d.show();
 								},
 
 
@@ -94,12 +94,12 @@ frappe.ui.form.on("Job Card", {
 
 								}
 							])
+						}
 					}
-					}
-                }
-            });
-        }
-    },
+				}
+			});
+		}
+	},
 });
 
 function render_tool_summary(frm) {
@@ -156,7 +156,7 @@ function render_tool_summary(frm) {
 }
 
 frappe.ui.form.on("Job Card", {
-	refresh: function(frm) {
+	refresh: function (frm) {
 		// Set Qty To Manufacture as Read Only
 		frm.set_df_property("for_quantity", "read_only", 1);
 		// Display downtime alerts if any exist
@@ -166,12 +166,12 @@ frappe.ui.form.on("Job Card", {
 		hide_button(frm);
 	},
 
-	onload: function(frm) {
+	onload: function (frm) {
 		// Also setup on load for initial subscription
 		setup_realtime_workstation_status(frm);
 	},
 
-	prepare_timer_buttons: function(frm) {
+	prepare_timer_buttons: function (frm) {
 		// Call the original prepare_timer_buttons first
 		// This is a workaround since we can't call super() in Frappe
 		_original_prepare_timer_buttons(frm);
@@ -179,7 +179,7 @@ frappe.ui.form.on("Job Card", {
 		//  CHECK DOWNTIME
 		const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
 
-		if (has_active_downtime){
+		if (has_active_downtime) {
 			// Remove Start Job Button
 			frm.page.remove_inner_button(__("Start Job"));
 			// Remove Resume Job Button
@@ -203,8 +203,9 @@ frappe.ui.form.on("Job Card", {
 	},
 });
 
-function hide_button(frm){
-	if(!frm.doc.custom_tool_name){
+function hide_button(frm) {
+	const requires_tool = frm.doc.__onload && frm.doc.__onload.operation_requires_tool;
+	if (requires_tool && !frm.doc.custom_tool_name) {
 		frm.page.remove_inner_button(__("Start Job"));
 		frm.page.remove_inner_button(__("Resume Job"));
 		hide_job_card_timer(frm);
@@ -212,19 +213,19 @@ function hide_button(frm){
 }
 
 function hide_job_card_timer(frm) {
-    // Hide stopwatch shown in page header
-    $(frm.page.wrapper)
-        .find(".page-actions .custom-actions .stopwatch")
-        .closest(".custom-actions")
-        .hide();
+	// Hide stopwatch shown in page header
+	$(frm.page.wrapper)
+		.find(".page-actions .custom-actions .stopwatch")
+		.closest(".custom-actions")
+		.hide();
 }
 
 function hide_job_card_timer(frm) {
-    // Hide stopwatch shown in page header
-    $(frm.page.wrapper)
-        .find(".page-actions .custom-actions .stopwatch")
-        .closest(".custom-actions")
-        .hide();
+	// Hide stopwatch shown in page header
+	$(frm.page.wrapper)
+		.find(".page-actions .custom-actions .stopwatch")
+		.closest(".custom-actions")
+		.hide();
 }
 
 /**
@@ -270,7 +271,7 @@ function pause_job_with_reason(frm, pause_reason) {
 			args: args
 		},
 		freeze: true,
-		callback: function(r) {
+		callback: function (r) {
 			if (!r.exc) {
 				frm.reload_doc();
 				frm.trigger("make_dashboard");
@@ -444,7 +445,7 @@ function setup_realtime_workstation_status(frm) {
 		return;
 	}
 
-	frappe.realtime.on("workstation_status_changed", function(data) {
+	frappe.realtime.on("workstation_status_changed", function (data) {
 		// Check if this update is for our workstation
 		if (data.workstation === frm.doc.workstation) {
 			handle_workstation_status_change(frm, data);
@@ -513,18 +514,18 @@ function show_workstation_problem_alert(frm, workstation) {
 	}, 10);
 }
 
-function get_filtered_tools(frm){
-    frm.set_query("custom_tool_name", function(doc) {
-        if (!doc.bom_no) {
-            return {};
-        }
- 
-        return {
-            query: "ujwal_industries.ujwal_industries.overrides.job_card.get_filtered_tools",
-            filters: {
-                bom: doc.bom_no,
-                operation: doc.operation || " "
-            }
-        };
-    });
+function get_filtered_tools(frm) {
+	frm.set_query("custom_tool_name", function (doc) {
+		if (!doc.bom_no) {
+			return {};
+		}
+
+		return {
+			query: "ujwal_industries.ujwal_industries.overrides.job_card.get_filtered_tools",
+			filters: {
+				bom: doc.bom_no,
+				operation: doc.operation || " "
+			}
+		};
+	});
 }
