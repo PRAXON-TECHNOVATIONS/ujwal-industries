@@ -48,7 +48,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 					// Add fetched sales orders to the child table
 					r.message.sales_orders.forEach(function (so) {
-						var row = frm.add_child('sales_orders');
+						var row = frappe.model.add_child(frm.doc, 'Bulk PP Sales Order', 'sales_orders');
 						row.sales_order = so.sales_order;
 						row.customer = so.customer;
 						row.delivery_date = so.delivery_date;
@@ -85,23 +85,28 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			return;
 		}
 
-		const planning_mode = frm.doc.custom_planning_mode || 'Sequential';
-
-		frappe.show_alert({ message: __('Generating production plan…'), indicator: 'blue' });
-
-		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.generate_production_plan_items',
-			args: { docname: frm.doc.name, planning_mode: planning_mode },
-			callback(r) {
-				if (r.message) {
-					frm.reload_doc();
-					frappe.show_alert({
-						message: __('Pre Production Plan generated successfully!'),
-						indicator: 'green'
-					});
+		const _do_generate = () => {
+			frappe.show_alert({ message: __('Generating production plan…'), indicator: 'blue' });
+			frappe.call({
+				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.generate_production_plan_items',
+				args: { docname: frm.doc.name },
+				callback(r) {
+					if (r.message) {
+						frm.reload_doc();
+						frappe.show_alert({
+							message: __('Pre Production Plan generated successfully!'),
+							indicator: 'green'
+						});
+					}
 				}
-			}
-		});
+			});
+		};
+
+		if (frm.is_new()) {
+			frm.save().then(_do_generate);
+		} else {
+			_do_generate();
+		}
 	}
 });
 
@@ -181,14 +186,14 @@ function load_bom_selections(frm) {
 		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_order_item_bom_rows',
 		args: {
 			sales_orders: sales_orders,
-			docname: frm.doc.name
+			docname: frm.is_new() ? null : frm.doc.name
 		},
 		callback: function (r) {
 			const rows = r.message || [];
 			frm.clear_table('bom_selections');
 
 			rows.forEach(function (item) {
-				const row = frm.add_child('bom_selections');
+				const row = frappe.model.add_child(frm.doc, 'Bulk PP BOM Selection', 'bom_selections');
 				row.sales_order = item.sales_order;
 				row.sales_order_item = item.sales_order_item;
 				row.item_code = item.item_code;
@@ -463,17 +468,18 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 			}
 		});
 	} else {
-		// Parallel: call new API, store JSON, re-render
+		// Parallel: recalculate full schedule + apply dates to child rows
 		frappe.show_alert({ message: __('Calculating parallel batch schedule…'), indicator: 'blue' });
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.calculate_parallel_batch_schedule',
-			args: { docname: frm.doc.name },
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.recalculate_existing_schedule',
+			args: { docname: frm.doc.name, planning_mode: 'Parallel' },
 			callback(r) {
 				if (r.message) {
-					const json_str = JSON.stringify(r.message);
-					frm.set_value('custom_batch_schedule', json_str);
 					frappe.show_alert({ message: __('Parallel batch schedule calculated'), indicator: 'green' });
-					_render_all_grids(frm, so_map, 'Parallel', $wrapper, r.message);
+					frm.reload_doc().then(() => {
+						const schedule = JSON.parse(frm.doc.custom_batch_schedule || '{}');
+						_render_all_grids(frm, _build_so_map(frm), 'Parallel', $wrapper, schedule);
+					});
 				}
 			}
 		});
@@ -796,6 +802,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					holiday_count: b.holiday_count || 0,
 					holiday_dates: b.holiday_hover || [],
 					start_date: b.start_date,
+					mfg_end_date: b.mfg_end_date,
 					end_date: b.end_date,
 				}));
 			}
@@ -957,13 +964,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 		{
-			headerName: 'Start Date', field: 'start_date', width: 105,
-			valueFormatter: p => _format_bpp_date(p.value, ''),
+			headerName: 'Start Date', field: 'start_date', width: 130,
+			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#059669', fontWeight: '600' } : { color: '#059669' }
 		},
 		{
-			headerName: 'End Date', field: 'end_date', width: 105,
-			valueFormatter: p => _format_bpp_date(p.value, ''),
+			headerName: 'End Date', width: 130,
+			valueGetter: p => p.data?.end_date,
+			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
 		{
@@ -1078,6 +1086,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					holiday_count: b.holiday_count || 0,
 					holiday_dates: b.holiday_hover || [],
 					start_date: b.start_date,
+					mfg_end_date: b.mfg_end_date,
 					end_date: b.end_date,
 				}));
 			}
@@ -1243,13 +1252,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 		{
-			headerName: 'Start Date', field: 'start_date', width: 105,
-			valueFormatter: p => _format_bpp_date(p.value, ''),
+			headerName: 'Start Date', field: 'start_date', width: 130,
+			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#059669', fontWeight: '600' } : { color: '#059669' }
 		},
 		{
-			headerName: 'End Date', field: 'end_date', width: 105,
-			valueFormatter: p => _format_bpp_date(p.value, ''),
+			headerName: 'End Date', width: 130,
+			valueGetter: p => p.data?.end_date,
+			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
 		{
@@ -2439,15 +2449,25 @@ function _badge(text, color) {
 		${text}</span>`;
 }
 
-function _format_bpp_date(value, empty_value = '—') {
+function _format_bpp_date(value, empty_value = '—', show_time = false) {
 	if (!value) return empty_value;
 
-	const date_part = String(value).split(' ')[0];
+	const str = String(value);
+	const date_part = str.split(' ')[0];
 	const parts = date_part.split('-');
 	if (parts.length !== 3) return date_part;
 
 	const [year, month, day] = parts;
-	return `${day}-${month}-${year}`;
+	const date_str = `${day}-${month}-${year}`;
+
+	if (show_time) {
+		const time_raw = str.split(' ')[1] || '';
+		if (time_raw) {
+			const [h, m] = time_raw.split(':');
+			return `${date_str} ${h}:${m}`;
+		}
+	}
+	return date_str;
 }
 
 
