@@ -1200,7 +1200,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				is_last    = (b_idx == len(batches_qty) - 1)
 				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays))
 				holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
-				holiday_dates = [str(h) for h in holidays if getdate(start_dt) < h <= getdate(end_dt)]
+    
+				holiday_dates =[]
+				for h in holidays:
+					if getdate(start_dt) < h <= getdate(end_dt):
+						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+      
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches_qty), "qty": batch_qty,
 					"mfg_days": mfg_days_b, "grn_days": grn_days,
@@ -1288,7 +1294,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				end_dt      = _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays)) \
 				              if grn_days > 0 else mfg_end_dt
 				hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
-				holiday_dates = [str(h) for h in holidays if getdate(start_dt) < h <= getdate(end_dt)]
+    
+				holiday_dates =[]
+				for h in holidays:
+					if getdate(start_dt) < h <= getdate(end_dt):
+						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+      
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches), "qty": batch_qty,
 					"mfg_days": mfg_days_bn, "grn_days": grn_days,
@@ -1514,12 +1526,16 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					if getdate(start_dt) < h <= getdate(end_dt)
 				)
     
-				holiday_dates = [
-					str(h) for h in holidays
-					if getdate(start_dt) < h <= getdate(end_dt)
-				]
-				holiday_count = len(holiday_dates)
-				
+				# holiday_dates = [
+				# 	str(h) for h in holidays
+				# 	if getdate(start_dt) < h <= getdate(end_dt)
+				# ]
+				holiday_dates =[]
+				for h in holidays:
+					if getdate(start_dt) < h <= getdate(end_dt):
+						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+    
 				batch_rows.append({
 					"batch":         b_idx + 1,
 					"total":         len(batches),

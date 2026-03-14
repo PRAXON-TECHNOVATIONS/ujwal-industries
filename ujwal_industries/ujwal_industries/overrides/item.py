@@ -68,44 +68,47 @@ def autoname(self, method):
         frappe.throw(f"Parent Item Group not found for Item Group: {self.item_group}")
 
     stock_setting = frappe.get_single("Stock Settings")
-    
-    matched_row = None
-    if stock_setting.item_naming_series:
-        for row in stock_setting.item_naming_series:
-            if row.item_group == parent_item_group:
-                matched_row = row
-                break
-    
-    if not matched_row:
-            frappe.throw(f"No Naming Series Defined for Parent Item Group in Stock Settings<br> <b>{parent_item_group}</b>")
-    
-    
-    from_start = int(matched_row.from_start)
-    to_end = int(matched_row.to_end) 
-    
-    frappe.db.sql(
-            """
-            SELECT current_no
-            FROM `tabItem Naming Series`
-            WHERE name = %s
-            FOR UPDATE
-            """,
-            matched_row.name,
-        )
+    if stock_setting.applicable_naming_series == 1:
+        matched_row = None
+        if stock_setting.item_naming_series:
+            for row in stock_setting.item_naming_series:
+                if row.item_group == parent_item_group:
+                    matched_row = row
+                    break
+        
+        if not matched_row:
+                frappe.throw(f"No Naming Series Defined for Parent Item Group in Stock Settings<br> <b>{parent_item_group}</b>")
+        
+        
+        from_start = int(matched_row.from_start)
+        to_end = int(matched_row.to_end) 
+        
+        frappe.db.sql(
+                """
+                SELECT current_no
+                FROM `tabItem Naming Series`
+                WHERE name = %s
+                FOR UPDATE
+                """,
+                matched_row.name,
+            )
 
-    current_no = frappe.db.get_value("Item Naming Series", matched_row.name, "current_no")
+        current_no = frappe.db.get_value("Item Naming Series", matched_row.name, "current_no")
 
-    if not current_no:
-        next_no = from_start + 1
+        if not current_no:
+            next_no = from_start + 1
+        else:
+            next_no = int(current_no) + 1
+
+        if next_no > to_end:
+            frappe.throw(
+                f"Naming series out of range for Item Group {self.item_group}. "
+                f"Allowed Range: {from_start} to {to_end}"
+            )
+
+        self.name = str(next_no)
+
+        frappe.db.set_value("Item Naming Series", matched_row.name,"current_no",next_no)
+    
     else:
-        next_no = int(current_no) + 1
-
-    if next_no > to_end:
-        frappe.throw(
-            f"Naming series out of range for Item Group {self.item_group}. "
-            f"Allowed Range: {from_start} to {to_end}"
-        )
-
-    self.name = str(next_no)
-
-    frappe.db.set_value("Item Naming Series", matched_row.name,"current_no",next_no)
+        frappe.msgprint("Dynamic Item Naming Series is Currently Disabled in Stock Settings. Please Enable it to Apply Automatic Numbering.")

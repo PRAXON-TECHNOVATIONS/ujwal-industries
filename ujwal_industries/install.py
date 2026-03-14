@@ -31,7 +31,15 @@ def stock_custom_filed():
             "insert_after": "ins_tab",
         },
     )
-    
+    create_custom_field(
+        "Stock Settings",
+        {
+            "label": _("Applicable Naming Series"),
+            "fieldname": "applicable_naming_series",
+            "fieldtype": "Check",
+            "insert_after": "ins_section",   
+        },
+    )
     create_custom_field(
         "Stock Settings",
         {
@@ -39,7 +47,7 @@ def stock_custom_filed():
             "fieldname": "item_naming_series",
             "fieldtype": "Table",
             "options": "Item Naming Series",
-            "insert_after": "ins_section",
+            "insert_after": "applicable_naming_series",
         },
     )
         
