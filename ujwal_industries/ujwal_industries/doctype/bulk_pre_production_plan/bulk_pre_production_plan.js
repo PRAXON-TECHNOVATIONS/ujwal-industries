@@ -768,6 +768,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			
 			const batches = fg.batches || [];
 			const is_exps = !!_expandeds[fg.item_code];
+			console.log(".........batches............",batches)
 			rows.push({
 				_is_group: true,
 				_expandeds: is_exps,
@@ -941,8 +942,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				if (!dates.length) return;
 
 				const formatted_dates = dates.map(d => {
-					const [y, m, d2] = d.split('-');
-					return `${d2}-${m}-${y}`;
+					return d;
 				});
 
 				frappe.msgprint({
@@ -1050,6 +1050,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		const rows = [];
 		chain_display.forEach((sfg, idx) => {
 			const batches = sfg.batches || [];
+			// console.log(".........batches......sfg......",batches)
 			const is_exp = !!_expanded[sfg.item_code];
 			rows.push({
 				_is_group: true,
@@ -1228,8 +1229,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				if (!dates.length) return;
 
 				const formatted_dates = dates.map(d => {
-					const [y, m, d2] = d.split('-');
-					return `${d2}-${m}-${y}`;
+					return d;
 				});
 
 				frappe.msgprint({
