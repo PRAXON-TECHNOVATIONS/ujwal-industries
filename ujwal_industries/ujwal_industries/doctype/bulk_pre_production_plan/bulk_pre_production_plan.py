@@ -1246,10 +1246,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
 			)
 			selected_tool = tool_info.get("tool") or ""
+   
+			item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			supplier_list = [d.supplier for d in item_suppliers]
+   
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
 			pm_days       = int(tool_info.get("pm_days", 0))
 
 			spm_details    = _get_row_spm_details(sfg, bom_no, bom_ops_map)
+			print("...........spm_details..........",spm_details)
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			row_spm        = cint(getattr(sfg, "spm", 0) or 0)
 			effective_spm  = row_spm if row_spm > 0 else cint(spm_details.get("spm") or 0)
@@ -1323,7 +1328,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"per_shift_qty": per_shift_qty, "tool_load_qty": tool_load_qty, "pm_days": pm_days,
 				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
 				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
-				"supplier": sfg.supplier or "", "row_name": sfg.name, "batches": batch_rows,
+				"supplier": sfg.supplier or "", "supplier_list": supplier_list,
+    			"row_name": sfg.name, "batches": batch_rows,
 			})
 
 		# ── Backdate cascade: deepest SFG start < today → push forward ───────
