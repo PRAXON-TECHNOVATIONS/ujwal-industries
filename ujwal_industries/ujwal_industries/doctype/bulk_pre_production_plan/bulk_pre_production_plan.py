@@ -345,8 +345,17 @@ def _apply_parallel_dates_to_rows(doc: Document, schedule: dict) -> None:
 			if batches:
 				frappe.db.set_value("Bulk PP Sub Assembly Item", row_name, {
 					"schedule_date":            batches[0]["start_date"],
-					"custom_schedule_end_date": batches[0]["end_date"],
+					"custom_schedule_end_date": batches[-1]["end_date"],
 				})
+
+		for mr_data in so_data.get("mr") or []:
+			row_name = (mr_data or {}).get("row_name")
+			if not row_name:
+				continue
+			frappe.db.set_value("Bulk PP Material Request Item", row_name, {
+				"custom_start_date": mr_data.get("start_date"),
+				"schedule_date":     mr_data.get("end_date"),
+			})
 
 
 def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
@@ -1148,9 +1157,16 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 	shift_minutes = _get_shift_working_minutes(shift_config)
 
-	# Shift boundary timedeltas for snapping batch start/end times
+	# Shift boundary timedeltas for snapping batch start/end times.
+	# For multi-shift, last_window_end_td is the adjusted end of the final window
+	# (e.g. Night 20:00–06:30 → timedelta(hours=30, minutes=30)) so that
+	# _snap_end(Apr9) = Apr10 06:30 — the true end of the combined working day.
 	_shift_start_td = _as_timedelta(shift_config.get("start_time")) or timedelta(hours=8)
-	_shift_end_td   = _as_timedelta(shift_config.get("end_time"))   or timedelta(hours=17)
+	_shift_end_td   = (
+		shift_config.get("last_window_end_td")
+		or _as_timedelta(shift_config.get("end_time"))
+		or timedelta(hours=17)
+	)
 
 	def _snap_start(dt: datetime) -> datetime:
 		"""Snap datetime to shift start time on the same date."""
@@ -1199,7 +1215,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					start_dt = start_dt + timedelta(days=1)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
-				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays))
+				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
 				holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
     
 				holiday_dates =[]
@@ -1218,14 +1234,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				})
 			return batch_rows
 
-		# ── Get FG planned_start_date (from sequential backward-from-delivery schedule) ──
-		fg_planned_start_dt = today_dt
-		for _fg in items["fg"]:
-			_ps = getattr(_fg, "planned_start_date", None)
-			if _ps:
-				_cand = get_datetime(_ps)
-				if _cand > fg_planned_start_dt:
-					fg_planned_start_dt = _cand
+		# ── Get FG deadline = SO delivery_date (always fresh, never stale planned_start_date) ──
+		_so_del = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+		fg_planned_start_dt = get_datetime(_so_del) if _so_del else today_dt
+		# If delivery_date is in the past and backdating not allowed → start from today
+		if not allow_backdated and fg_planned_start_dt < today_dt:
+			fg_planned_start_dt = today_dt
 
 		# ── SFG chain: BACKWARD from FG.planned_start ────────────────────────
 		# Process level-0 first (direct child of FG), deepest last.
@@ -1297,7 +1311,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				bp_mins     = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days_bn * shift_minutes)
 				mfg_end_dt  = shift_aware_forward_schedule(start_dt, bp_mins, shift_config)
 				is_last     = (b_idx == len(batches) - 1)
-				end_dt      = _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays)) \
+				end_dt      = _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays)) \
 				              if grn_days > 0 else mfg_end_dt
 				hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
     
@@ -1402,15 +1416,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				if rm_start_ideal < today_dt:
 					# Too late to order in time → push MR forward from today
 					rm_start = _snap_start(today_dt)
-					rm_end   = _snap_start(_working_day_add(today_dt, total_days, holidays))
+					rm_end   = _snap_end(_working_day_add(today_dt, total_days, holidays))
 				else:
 					# rm_start_ideal is in the future — order TODAY to get material ASAP.
 					# rm_end = today + lead+grn days; SFG cascade will pull production forward.
 					rm_start = _snap_start(today_dt)
-					rm_end   = _snap_start(_working_day_add(today_dt, total_days, holidays))
+					rm_end   = _snap_end(_working_day_add(today_dt, total_days, holidays))
 			else:
 				rm_start = _snap_start(today_dt)
-				rm_end   = _snap_start(_working_day_add(today_dt, total_days, holidays))
+				rm_end   = _snap_end(_working_day_add(today_dt, total_days, holidays))
 
 			rm_end_dt = get_datetime(rm_end) if not isinstance(rm_end, datetime) else rm_end
 			if max_mr_end_dt is None or rm_end_dt > max_mr_end_dt:
@@ -1431,9 +1445,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
-		# forward cascade from MR end so production (and delivery) happens sooner.
-		if (max_mr_end_dt and sfg_chain_out
-				and max_mr_end_dt < get_datetime(sfg_chain_out[0]["batches"][0]["start_date"])):
+		# SFG must always start exactly when MR arrives (material available).
+		# Cascade runs whether MR arrives early (pull forward) or late (push forward).
+		if max_mr_end_dt and sfg_chain_out:
 			new_start = _snap_start(max_mr_end_dt)
 			sfg_chain_rebuilt: list[dict] = []
 			for sfg_data in sfg_chain_out:   # deepest-first
@@ -1523,8 +1537,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 				batch_prod_mins = (batch_qty / effective_spm) if effective_spm > 0 else (mfg_days * shift_minutes)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_start after grn_days
-				end_dt = mfg_end_dt if grn_days == 0 else _snap_start(_working_day_add(mfg_end_dt, grn_days, holidays))
+				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_end after grn_days
+				end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
 
 				is_last_batch = (b_idx == len(batches) - 1)
 				# Count holidays strictly between start_date and end_date
@@ -1624,7 +1638,10 @@ def _working_day_subtract(from_dt: datetime, n_days: int, holidays: set) -> date
 
 
 def _get_shift_working_minutes(shift_config: dict) -> int:
-	"""Return net working minutes per shift (end - start - lunch break)."""
+	"""Return net working minutes per shift (or total daily minutes across all planning shifts)."""
+	# Multi-shift: total_daily_minutes is pre-computed by _get_shift_windows
+	if shift_config.get("total_daily_minutes"):
+		return int(shift_config["total_daily_minutes"])
 	start   = shift_config.get("start_time")
 	end     = shift_config.get("end_time")
 	l_start = shift_config.get("custom_lunch_start_time")
@@ -1833,9 +1850,10 @@ def generate_production_plan_items(docname: str, planning_mode: str | None = Non
 	doc.save()
 	doc.flags.ignore_mandatory = False
 
-	# Always compute parallel batch schedule so both modes are ready instantly.
+	# Compute parallel batch schedule so the parallel tab is ready instantly.
+	# Do NOT apply to child rows here — sequential dates must stay in SFG/FG row fields.
+	# Parallel dates are written to rows only when the user explicitly runs Parallel mode.
 	schedule = calculate_parallel_batch_schedule(docname)
-	_apply_parallel_dates_to_rows(doc, schedule)
 	frappe.db.set_value("Bulk Pre Production Plan", docname, {
 		"custom_batch_schedule": json.dumps(schedule),
 	})
@@ -2275,12 +2293,15 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	))
 	fg_bom_cache = _fetch_bom_operations_cache(fg_bom_nos)
 
+	# Always use SO delivery_date as the deadline — never use stale planned_start_date
+	_so_delivery_date = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+
 	for fg_row in doc.po_items:
 		if fg_row.sales_order != so_name or not fg_row.bom_no:
 			continue
 
-		# planned_start_date was initialised to the SO delivery_date
-		delivery_dt = get_datetime(fg_row.planned_start_date)
+		# Use SO delivery_date directly (not stale planned_start_date from previous run)
+		delivery_dt = get_datetime(_so_delivery_date) if _so_delivery_date else get_datetime(fg_row.planned_start_date)
 		prod_minutes = _calculate_row_production_minutes(fg_row, flt(fg_row.planned_qty), fg_bom_cache)
 
 		if prod_minutes > 0:
