@@ -62,6 +62,7 @@ doctype_js = {
   	"Stock Entry": "public/js/stock_entry.js",
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
+	"Item": "public/js/item.js",
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
@@ -403,6 +404,5 @@ from ujwal_industries.overrides.bom import apply_bom_overrides
 
 apply_work_order_overrides()
 apply_bom_overrides()
-
 
 
