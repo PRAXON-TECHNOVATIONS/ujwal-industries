@@ -80,7 +80,7 @@ def validate_planned_start_dates(doc: Document, method: str | None = None) -> No
             if planned_date < today:
                 manufacturing_type = row.get("custom_manufacturing_type") or ""
 
-                if manufacturing_type in ("In House", "Subcontract"):
+                if manufacturing_type in ("In House", "In House - Vendor", "Subcontract"):
                     # Both types are auto-corrected by master_set_fg_dates_by_type
                     # (In House → shift-clamped now; Subcontract → now_datetime() forward jump).
                     # Never throw here — let the before_save hooks recalculate.
@@ -134,7 +134,7 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
     # Filter rows
     target_rows = [
         row for row in doc.po_items
-        if row.get("custom_manufacturing_type") in ["Subcontract", "In House"]
+        if row.get("custom_manufacturing_type") in ["Subcontract", "In House", "In House - Vendor"]
     ]
 
     if not target_rows:
@@ -229,8 +229,9 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
                 row.custom_planned_end_date = str(_to_datetime(end_date))
 
             # === IN HOUSE LOGIC ===
-            elif mfg_type == "In House":
-                row.custom_supplier = None  # Clear Supplier
+            elif mfg_type in ["In House", "In House - Vendor"]:
+                if mfg_type == "In House":
+                    row.custom_supplier = None  # Clear Supplier
 
                 prod_minutes = _calculate_production_minutes(
                     row.bom_no, row.planned_qty, bom_time_cache
@@ -373,7 +374,7 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
             )
 
             # ── PLANNED START DATE ──────────────────────────────────────────
-            if mfg_type == "In House":
+            if mfg_type in ["In House", "In House - Vendor"]:
                 # Shift-aware backward scheduling; falls back to shift-clamped
                 # now_datetime() when the result would be in the past.
                 planned_datetime = get_adjusted_inhouse_start_date(

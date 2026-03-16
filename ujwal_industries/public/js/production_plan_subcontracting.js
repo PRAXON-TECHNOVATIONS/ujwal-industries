@@ -17,7 +17,7 @@ function mark_programmatic_update() {
 
 
 frappe.ui.form.on('Production Plan', {
-	refresh: function(frm) {
+	refresh: function (frm) {
 		// Only draft and po_items is available can edit the dates
 		if (frm.doc.docstatus === 0 && frm.doc.po_items) {
 			frm.add_custom_button(
@@ -37,39 +37,39 @@ frappe.ui.form.on('Production Plan', {
 				},
 				__("Create")
 			);
-    	}
-		frm.set_query("custom_supplier", "po_items", function(doc, cdt, cdn) {
-            var row = locals[cdt][cdn];
-            if (!row.item_code) {
-                return {};
-            }
-            return {
-                query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
-                filters: {
-                    item_code: row.item_code
-                }
-            };
-        });
-		frm.set_query("supplier", "sub_assembly_items", function(doc, cdt, cdn) {
-            var row = locals[cdt][cdn];
+		}
+		frm.set_query("custom_supplier", "po_items", function (doc, cdt, cdn) {
+			var row = locals[cdt][cdn];
+			if (!row.item_code) {
+				return {};
+			}
+			return {
+				query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
+				filters: {
+					item_code: row.item_code
+				}
+			};
+		});
+		frm.set_query("supplier", "sub_assembly_items", function (doc, cdt, cdn) {
+			var row = locals[cdt][cdn];
 
-            if (!row.production_item) {
-                return {};
-            }
+			if (!row.production_item) {
+				return {};
+			}
 
-            return {
-                query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
-                filters: {
-                    item_code: row.production_item
-                }
-            };
-        });
+			return {
+				query: "ujwal_industries.ujwal_industries.overrides.production_plan.get_item_suppliers_query",
+				filters: {
+					item_code: row.production_item
+				}
+			};
+		});
 		// Auto-populate suppliers and schedule_dates when form loads
 		// But DON'T trigger on every refresh - only when needed
 		if (frm.doc.sub_assembly_items && frm.doc.sub_assembly_items.length > 0) {
 			// Check if any subcontract item is missing supplier
 			const needs_update = frm.doc.sub_assembly_items.some(row =>
-				row.type_of_manufacturing === 'Subcontract' && !row.supplier
+				(row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && !row.supplier
 			);
 			if (needs_update) {
 				populate_subcontracting_data(frm);
@@ -78,42 +78,42 @@ frappe.ui.form.on('Production Plan', {
 
 	},
 
-	before_submit: function(frm) {
-        if (frm.ignore_tool_confirm) {
-            return;
-        }
+	before_submit: function (frm) {
+		if (frm.ignore_tool_confirm) {
+			return;
+		}
 
-        frappe.call({
-            method: "ujwal_industries.ujwal_industries.overrides.production_plan.validate_tool_limit",
-            args: {
-                docname: frm.doc.name
-            },
-            callback: function(r) {
+		frappe.call({
+			method: "ujwal_industries.ujwal_industries.overrides.production_plan.validate_tool_limit",
+			args: {
+				docname: frm.doc.name
+			},
+			callback: function (r) {
 
-                if (r.message && r.message.length > 0) {
+				if (r.message && r.message.length > 0) {
 
-                    frappe.validated = false;
+					frappe.validated = false;
 
-                    let msg = "<b>Tool Load Limit Exceeded !</b><br>" + r.message.join("");
+					let msg = "<b>Tool Load Limit Exceeded !</b><br>" + r.message.join("");
 
-                    frappe.confirm(
-                        msg,
-                        function() {
-                            frm.ignore_tool_confirm = true;
-                            frm.save('Submit');
-                        },
-                        function() {
-                            frappe.msgprint("Submission Cancelled");
-                        }
-                    );
+					frappe.confirm(
+						msg,
+						function () {
+							frm.ignore_tool_confirm = true;
+							frm.save('Submit');
+						},
+						function () {
+							frappe.msgprint("Submission Cancelled");
+						}
+					);
 
-                }
-            }
-        });
-    },
-	
+				}
+			}
+		});
+	},
+
 	// Hook into "Get Sub Assembly Items" button
-	get_sub_assembly_items: function(frm) {
+	get_sub_assembly_items: function (frm) {
 		// Wait for items to be added, then populate suppliers and schedule_dates
 		setTimeout(() => {
 			populate_subcontracting_data(frm);
@@ -121,7 +121,7 @@ frappe.ui.form.on('Production Plan', {
 	},
 
 	// Hook into "Get Items for Material Request" button
-	get_items_for_mr: function(frm) {
+	get_items_for_mr: function (frm) {
 		// Wait for MR items to be added, then calculate custom dates
 		setTimeout(() => {
 			calculate_mr_item_dates(frm);
@@ -130,41 +130,41 @@ frappe.ui.form.on('Production Plan', {
 });
 
 frappe.ui.form.on('Production Plan Item', {
-	custom_manufacturing_type: function(frm, cdt, cdn) {
-        const row = locals[cdt][cdn];
+	custom_manufacturing_type: function (frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
 
-        if (row.custom_manufacturing_type === 'Subcontract') {
+		if (row.custom_manufacturing_type === 'Subcontract' || row.custom_manufacturing_type === 'In House - Vendor') {
 
-            if (row.item_code) {
-                frappe.call({
-                    method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_subcontract_updates_client',
-                    args: {
-                        item_code: row.item_code,
-                        company: frm.doc.company,
-                        sales_order_item: row.sales_order_item
-                    },
-                    callback: function(r) {
-                        if (r.message) {
-                            mark_programmatic_update();
+			if (row.item_code) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.overrides.production_plan.get_subcontract_updates_client',
+					args: {
+						item_code: row.item_code,
+						company: frm.doc.company,
+						sales_order_item: row.sales_order_item
+					},
+					callback: function (r) {
+						if (r.message) {
+							mark_programmatic_update();
 
-                            if (r.message.custom_supplier && !row.custom_supplier) {
-                                frappe.model.set_value(cdt, cdn, 'custom_supplier', r.message.custom_supplier);
-                            }
+							if (r.message.custom_supplier && !row.custom_supplier) {
+								frappe.model.set_value(cdt, cdn, 'custom_supplier', r.message.custom_supplier);
+							}
 
-                            if (r.message.planned_start_date) {
-                                frappe.model.set_value(cdt, cdn, 'planned_start_date', r.message.planned_start_date);
-                            }
-                        }
-                    }
-                });
-            }
-        }
-        else if (row.custom_manufacturing_type === 'In House') {
-            mark_programmatic_update();
-            frappe.model.set_value(cdt, cdn, 'custom_supplier', '');
-        }
-    },
-	planned_start_date: function(frm, cdt, cdn) {
+							if (r.message.planned_start_date && row.custom_manufacturing_type === 'Subcontract') {
+								frappe.model.set_value(cdt, cdn, 'planned_start_date', r.message.planned_start_date);
+							}
+						}
+					}
+				});
+			}
+		}
+		else if (row.custom_manufacturing_type === 'In House') {
+			mark_programmatic_update();
+			frappe.model.set_value(cdt, cdn, 'custom_supplier', '');
+		}
+	},
+	planned_start_date: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update (to prevent loops)
 		if (is_programmatic_change()) {
 			return;
@@ -180,30 +180,30 @@ frappe.ui.form.on('Production Plan Item', {
 
 // Production Plan Sub Assembly Item events
 frappe.ui.form.on('Production Plan Sub Assembly Item', {
-	sub_assembly_items_add: function(frm, cdt, cdn) {
+	sub_assembly_items_add: function (frm, cdt, cdn) {
 		// When new row is added
 		populate_supplier_for_row(frm, cdt, cdn);
 	},
 
-	production_item: function(frm, cdt, cdn) {
+	production_item: function (frm, cdt, cdn) {
 		// When production item changes
 		populate_supplier_for_row(frm, cdt, cdn);
 		populate_fg_warehouse_for_row(frm, cdt, cdn);
 	},
 
-	type_of_manufacturing: function(frm, cdt, cdn) {
+	type_of_manufacturing: function (frm, cdt, cdn) {
 		// When type changes
 		const row = locals[cdt][cdn];
-		if (row.type_of_manufacturing === 'Subcontract' && !row.supplier) {
+		if ((row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && !row.supplier) {
 			populate_supplier_for_row(frm, cdt, cdn);
-		} else if (row.type_of_manufacturing !== 'Subcontract') {
+		} else if (row.type_of_manufacturing !== 'Subcontract' && row.type_of_manufacturing !== 'In House - Vendor') {
 			// Clear supplier if not subcontract
 			mark_programmatic_update();
 			frappe.model.set_value(cdt, cdn, 'supplier', '');
 		}
 	},
 
-	supplier: function(frm, cdt, cdn) {
+	supplier: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update
 		if (is_programmatic_change()) {
 			return;
@@ -216,7 +216,7 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 		}
 	},
 
-	schedule_date: function(frm, cdt, cdn) {
+	schedule_date: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update (to prevent loops)
 		if (is_programmatic_change()) {
 			return;
@@ -233,20 +233,20 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 		// CASCADE AFTER end_date is updated (in callback) to avoid race condition
 		if (row.type_of_manufacturing === 'Subcontract') {
 			// For Subcontract: custom_schedule_end_date = schedule_date + lead_time_days
-			update_subcontract_end_date(frm, row, function() {
+			update_subcontract_end_date(frm, row, function () {
 				// Cascade changes to parent SFGs and child MR items AFTER end_date is set
 				cascade_sfg_date_change(frm, row);
 			});
 		} else {
 			// For In House: custom_schedule_end_date = schedule_date + production_time
-			update_inhouse_end_date(frm, row, function() {
+			update_inhouse_end_date(frm, row, function () {
 				// Cascade changes to parent SFGs and child MR items AFTER end_date is set
 				cascade_sfg_date_change(frm, row);
 			});
 		}
 	},
 
-	custom_schedule_end_date: function(frm, cdt, cdn) {
+	custom_schedule_end_date: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update (to prevent loops)
 		if (is_programmatic_change()) {
 			return;
@@ -270,7 +270,7 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 						supplier: row.supplier || null,
 						company: frm.doc.company
 					},
-					callback: function(r) {
+					callback: function (r) {
 						if (r.message !== undefined) {
 							const lead_time = parseInt(r.message) || 0;
 
@@ -296,7 +296,7 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 						bom_no: row.bom_no,
 						qty: row.qty
 					},
-					callback: function(r) {
+					callback: function (r) {
 						if (r.message !== undefined) {
 							const production_minutes = parseFloat(r.message) || 0;
 
@@ -321,7 +321,7 @@ frappe.ui.form.on('Production Plan Sub Assembly Item', {
 
 // Material Request Plan Item events
 frappe.ui.form.on('Material Request Plan Item', {
-	custom_start_date: function(frm, cdt, cdn) {
+	custom_start_date: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update
 		if (is_programmatic_change()) {
 			return;
@@ -342,7 +342,7 @@ frappe.ui.form.on('Material Request Plan Item', {
 				supplier: row.custom_supplier,
 				company: frm.doc.company
 			},
-			callback: function(r) {
+			callback: function (r) {
 				if (r.message !== undefined && r.message.lead_time_days !== undefined) {
 					const lead_time = parseInt(r.message.lead_time_days || 0);
 
@@ -361,7 +361,7 @@ frappe.ui.form.on('Material Request Plan Item', {
 		});
 	},
 
-	schedule_date: function(frm, cdt, cdn) {
+	schedule_date: function (frm, cdt, cdn) {
 		// Skip if this is a programmatic update
 		if (is_programmatic_change()) {
 			return;
@@ -383,7 +383,7 @@ frappe.ui.form.on('Material Request Plan Item', {
 				supplier: row.custom_supplier,
 				company: frm.doc.company
 			},
-			callback: function(r) {
+			callback: function (r) {
 				if (r.message !== undefined && r.message.lead_time_days !== undefined) {
 					const lead_time = parseInt(r.message.lead_time_days || 0);
 
@@ -414,7 +414,7 @@ function update_subassembly_dates_for_fg(frm, fg_item_code, new_planned_date) {
 	// Collect subcontract items for this FG
 	const subcontract_items = [];
 	frm.doc.sub_assembly_items.forEach(row => {
-		if (row.type_of_manufacturing === 'Subcontract' && row.production_item) {
+		if ((row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && row.production_item) {
 			subcontract_items.push(row.production_item);
 		}
 	});
@@ -430,7 +430,7 @@ function update_subassembly_dates_for_fg(frm, fg_item_code, new_planned_date) {
 			items: subcontract_items,
 			company: frm.doc.company
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				// Build FG dates map with the updated date
 				const fg_dates = {};
@@ -467,7 +467,7 @@ function populate_subcontracting_data(frm) {
 	// Collect ALL subcontract items for supplier lookup
 	const subcontract_items = [];
 	frm.doc.sub_assembly_items.forEach(row => {
-		if (row.type_of_manufacturing === 'Subcontract' && row.production_item) {
+		if ((row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && row.production_item) {
 			subcontract_items.push(row.production_item);
 		}
 	});
@@ -483,7 +483,7 @@ function populate_subcontracting_data(frm) {
 				items: subcontract_items,
 				company: frm.doc.company
 			},
-			callback: function(r) {
+			callback: function (r) {
 				if (r.message) {
 					const supplier_map = r.message;
 
@@ -492,9 +492,9 @@ function populate_subcontracting_data(frm) {
 
 					// Populate supplier field for rows without supplier
 					frm.doc.sub_assembly_items.forEach(row => {
-						if (row.type_of_manufacturing === 'Subcontract' &&
-						    !row.supplier &&
-						    row.production_item in supplier_map) {
+						if ((row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') &&
+							!row.supplier &&
+							row.production_item in supplier_map) {
 							frappe.model.set_value(
 								row.doctype,
 								row.name,
@@ -609,7 +609,7 @@ function calculate_inhouse_dates_realtime(frm, fg_dates) {
 			fg_dates: fg_dates,
 			inhouse_items: all_items  // Pass ALL items, not just In House
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				// Apply the calculated schedule dates (only for In House items)
 				const calculated_dates = r.message;
@@ -691,7 +691,7 @@ function recalculate_schedule_dates(frm) {
 	// Collect all subcontract items
 	const subcontract_items = [];
 	frm.doc.sub_assembly_items.forEach(row => {
-		if (row.type_of_manufacturing === 'Subcontract' && row.production_item) {
+		if ((row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && row.production_item) {
 			subcontract_items.push(row.production_item);
 		}
 	});
@@ -707,7 +707,7 @@ function recalculate_schedule_dates(frm) {
 			items: subcontract_items,
 			company: frm.doc.company
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				mark_programmatic_update();
 				calculate_schedule_dates(frm, r.message);
@@ -724,9 +724,9 @@ function populate_supplier_for_row(frm, cdt, cdn) {
 	const row = locals[cdt][cdn];
 
 	// Only for subcontract items without supplier
-	if (row.type_of_manufacturing !== 'Subcontract' ||
-	    row.supplier ||
-	    !row.production_item) {
+	if ((row.type_of_manufacturing !== 'Subcontract' && row.type_of_manufacturing !== 'In House - Vendor') ||
+		row.supplier ||
+		!row.production_item) {
 		return;
 	}
 
@@ -737,7 +737,7 @@ function populate_supplier_for_row(frm, cdt, cdn) {
 			items: [row.production_item],
 			company: frm.doc.company
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message && row.production_item in r.message) {
 				mark_programmatic_update();
 				frappe.model.set_value(
@@ -771,7 +771,7 @@ function populate_fg_warehouse_for_row(frm, cdt, cdn) {
 			item_code: row.production_item,
 			company: frm.doc.company
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				mark_programmatic_update();
 				frappe.model.set_value(cdt, cdn, 'fg_warehouse', r.message);
@@ -826,7 +826,7 @@ function recalculate_fg_dates_from_subassembly(frm) {
 			subassembly_data: subassembly_data,
 			original_dates: original_dates
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message && r.message.length > 0) {
 				const impacts = r.message;
 
@@ -847,7 +847,7 @@ function recalculate_fg_dates_from_subassembly(frm) {
 				// Show confirmation dialog
 				frappe.confirm(
 					message,
-					function() {
+					function () {
 						// User confirmed - update FG planned_start_dates
 						mark_programmatic_update();
 
@@ -870,7 +870,7 @@ function recalculate_fg_dates_from_subassembly(frm) {
 							indicator: 'green'
 						}, 5);
 					},
-					function() {
+					function () {
 						// User cancelled
 						frappe.show_alert({
 							message: __('Update cancelled'),
@@ -903,7 +903,7 @@ function update_subcontract_end_date(frm, row, callback) {
 			supplier: row.supplier || null,
 			company: frm.doc.company
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message !== undefined) {
 				const lead_time = parseInt(r.message) || 0;
 
@@ -942,7 +942,7 @@ function update_inhouse_end_date(frm, row, callback) {
 			bom_no: row.bom_no,
 			qty: row.qty
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message !== undefined) {
 				const production_minutes = parseFloat(r.message) || 0;
 
@@ -989,7 +989,7 @@ function calculate_mr_item_dates(frm) {
 			production_plan_name: frm.doc.name,
 			mr_items_data: mr_items_data
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				const date_map = r.message;
 
@@ -1056,7 +1056,7 @@ function refresh_original_mr_dates(frm) {
 			production_plan_name: frm.doc.name || '',
 			mr_items_data: mr_items_data
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				// Store in __onload for later comparison
 				if (!frm.doc.__onload) {
@@ -1096,7 +1096,7 @@ function update_sfg_fg_dates_from_mr(frm) {
 			mr_items_data: mr_items_data,
 			original_mr_dates: original_dates
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				const sfg_updates = r.message.sfg_updates || [];
 				const fg_updates = r.message.fg_updates || [];
@@ -1145,7 +1145,7 @@ function update_sfg_fg_dates_from_mr(frm) {
 				// Show confirmation dialog
 				frappe.confirm(
 					message,
-					function() {
+					function () {
 						// User clicked Yes - apply updates
 						mark_programmatic_update();
 
@@ -1176,7 +1176,7 @@ function update_sfg_fg_dates_from_mr(frm) {
 							indicator: 'green'
 						}, 5);
 					},
-					function() {
+					function () {
 						// User clicked No - do nothing
 						frappe.show_alert({
 							message: __('Update cancelled'),
@@ -1225,7 +1225,7 @@ function refresh_original_subassembly_dates(frm) {
 			production_plan_name: frm.doc.name || '',
 			subassembly_data: subassembly_data
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				// Store in __onload for later comparison
 				if (!frm.doc.__onload) {
@@ -1257,7 +1257,7 @@ function cascade_sfg_date_change(frm, changed_sfg_row) {
 			company: frm.doc.company,
 			changed_sfg_idx: changed_sfg_row.idx
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				const parent_updates = r.message.parent_sfg_updates || [];
 				const mr_updates = r.message.mr_item_updates || [];
@@ -1312,7 +1312,7 @@ function cascade_mr_date_changes(frm) {
 
 	// Get original MR dates from __onload if available
 	const original_mr_dates = (frm.doc.__onload && frm.doc.__onload.original_mr_dates) || {};
-	
+
 	// Call server method to calculate cascade updates
 	frappe.call({
 		method: 'ujwal_industries.ujwal_industries.overrides.production_plan.calculate_sfg_fg_dates_from_mr_items',
@@ -1321,7 +1321,7 @@ function cascade_mr_date_changes(frm) {
 			mr_items_data: JSON.stringify(mr_items_data),
 			original_mr_dates: JSON.stringify(original_mr_dates)
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message) {
 				const sfg_updates = r.message.sfg_updates || [];
 				const fg_updates = r.message.fg_updates || [];
@@ -1372,7 +1372,7 @@ function cascade_mr_date_changes(frm) {
 // ============================================================================
 
 frappe.ui.form.on('Production Plan', {
-	onload_post_render: function(frm) {
+	onload_post_render: function (frm) {
 		if (frm.doc.name && !frm.doc.__islocal) {
 			// Check if this Production Plan is linked to a Bulk Pre Production Plan
 			check_and_render_bulk_pp_reference(frm);
@@ -1392,7 +1392,7 @@ function check_and_render_bulk_pp_reference(frm) {
 		args: {
 			production_plan: frm.doc.name
 		},
-		callback: function(r) {
+		callback: function (r) {
 			if (r.message && r.message.bulk_pp) {
 				render_bulk_pp_sidebar(frm, r.message);
 			}
@@ -1427,7 +1427,7 @@ function render_bulk_pp_sidebar(frm, data) {
 				${data.posting_date ? `
 					<div style="margin-bottom: 4px;">
 						<span style="color: #6c757d;">Date:</span>
-						<span style="color: #333;">${frappe.format(data.posting_date, {fieldtype: 'Date'})}</span>
+						<span style="color: #333;">${frappe.format(data.posting_date, { fieldtype: 'Date' })}</span>
 					</div>
 				` : ''}
 				${data.status ? `
@@ -1446,6 +1446,6 @@ function render_bulk_pp_sidebar(frm, data) {
 	`;
 
 	// Add to sidebar - remove existing first to avoid duplicates
-	$(frm.wrapper).find('.form-sidebar .bulk-pp-sidebar-info').remove();	
+	$(frm.wrapper).find('.form-sidebar .bulk-pp-sidebar-info').remove();
 	$(frm.wrapper).find('.form-sidebar .sidebar-menu').first().before(html);
 }
