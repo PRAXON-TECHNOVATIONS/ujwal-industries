@@ -29,6 +29,7 @@ from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 )
 
 
+@frappe.whitelist()
 def get_default_supplier_for_item(item_code: str, company: str) -> str | None:
 	"""
 	Get default supplier for an item from Item Subcontracting Supplier table
