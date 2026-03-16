@@ -205,14 +205,19 @@ function _build_layout(frm) {
 			_shift_types = rows.map(r => r.name).sort();
 			_render_editbar($root);
 		});
-	frappe.db.get_single_value("Manufacturing Settings", "default_shift_type")
-		.then(val => {
-			if (val && !_opt_shift_type) {
-				_opt_shift_type = val;
-				_render_editbar($root);
-				_fetch_shift_details();
-			}
-		});
+	frappe.db.get_list("Bulk PP Planning Shift", {
+		filters: { parent: "Manufacturing Settings" },
+		fields: ["shift_type"],
+		order_by: "idx asc",
+		limit: 1,
+	}).then(rows => {
+		const val = rows && rows[0] && rows[0].shift_type;
+		if (val && !_opt_shift_type) {
+			_opt_shift_type = val;
+			_render_editbar($root);
+			_fetch_shift_details();
+		}
+	});
 }
 
 // ─── Edit-mode options bar ─────────────────────────────────────────────────

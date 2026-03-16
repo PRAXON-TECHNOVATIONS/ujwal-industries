@@ -405,40 +405,258 @@ def _fetch_shift_config() -> dict[str, Any] | None:
     if not frappe.db.get_single_value("Manufacturing Settings", "enable_shift_wise_scheduling"):
         return None
 
-    shift_type = frappe.db.get_single_value("Manufacturing Settings", "default_shift_type")
-    if not shift_type:
-        return None
-
-    # Fetch standard Shift Type fields (always exist)
-    shift_data = frappe.db.get_value(
-        "Shift Type",
-        shift_type,
-        ["start_time", "end_time", "holiday_list"],
-        as_dict=True,
-    )
-
-    if not shift_data or shift_data.start_time is None or shift_data.end_time is None:
-        return None
-
-    config: dict[str, Any] = dict(shift_data)
-
-    # Fetch custom lunch fields separately — gracefully skip if not yet in DB schema
+    # Read shift types from the Table MultiSelect field (default_shift_type)
     try:
-        lunch_data = frappe.db.get_value(
-            "Shift Type",
-            shift_type,
-            ["custom_lunch_start_time", "custom_lunch_end_time"],
+        shift_rows = frappe.get_all(
+            "Bulk PP Planning Shift",
+            filters={"parent": "Manufacturing Settings", "parenttype": "Manufacturing Settings"},
+            fields=["shift_type"],
+            order_by="idx",
+        )
+    except Exception:
+        shift_rows = []
+
+    if not shift_rows:
+        return None
+
+    def _read_shift(st_name: str) -> "dict | None":
+        data = frappe.db.get_value(
+            "Shift Type", st_name,
+            ["start_time", "end_time", "holiday_list"],
             as_dict=True,
         )
-        if lunch_data:
-            config["custom_lunch_start_time"] = lunch_data.get("custom_lunch_start_time")
-            config["custom_lunch_end_time"] = lunch_data.get("custom_lunch_end_time")
-    except Exception:
-        # Custom fields not yet created — proceed without lunch break adjustment
-        config["custom_lunch_start_time"] = None
-        config["custom_lunch_end_time"] = None
+        if not data or data.start_time is None or data.end_time is None:
+            return None
+        try:
+            lunch = frappe.db.get_value(
+                "Shift Type", st_name,
+                ["custom_lunch_start_time", "custom_lunch_end_time"],
+                as_dict=True,
+            ) or {}
+        except Exception:
+            lunch = {}
+        return {
+            "start_time":             data.start_time,
+            "end_time":               data.end_time,
+            "holiday_list":           data.holiday_list,
+            "custom_lunch_start_time": lunch.get("custom_lunch_start_time"),
+            "custom_lunch_end_time":   lunch.get("custom_lunch_end_time"),
+        }
+
+    primary = _read_shift(shift_rows[0].shift_type)
+    if not primary:
+        return None
+
+    # Single shift → original behaviour
+    if len(shift_rows) == 1:
+        return primary
+
+    # Multiple shifts → build windows from each, fall back to single if any fail
+    windows = []
+    for row in shift_rows:
+        st = _read_shift(row.shift_type)
+        if st:
+            windows.append({
+                "shift_label":      row.shift_type,
+                "start_time":       st["start_time"],
+                "end_time":         st["end_time"],
+                "break_start_time": st["custom_lunch_start_time"],
+                "break_end_time":   st["custom_lunch_end_time"],
+            })
+
+    config = dict(primary)
+    if len(windows) > 1:
+        config["windows"] = windows
+        # Pre-compute total_daily_minutes and last_window_end_td now so that
+        # _get_shift_working_minutes() returns the correct value on first call
+        # (before any forward/backward schedule triggers _get_shift_windows).
+        processed = _get_shift_windows(config)
+        if processed:
+            config["last_window_end_td"] = processed[-1]["end_td"]
 
     return config
+
+
+def _get_shift_windows(shift_config: dict) -> "list[dict] | None":
+    """
+    Return processed window list built from multi-shift config, or None for single-window mode.
+
+    Each window dict:
+        start_td   : timedelta from midnight (window start)
+        end_td     : timedelta from midnight (window end; may be >24 h for overnight)
+        break_start: timedelta | None
+        break_end  : timedelta | None
+        net_mins   : float  (net working minutes in this window)
+    """
+    raw = shift_config.get("windows")
+    if not raw:
+        return None
+
+    processed: list[dict] = []
+    for row in raw:
+        s = _as_timedelta(row.get("start_time"))
+        e = _as_timedelta(row.get("end_time"))
+        if s is None or e is None:
+            continue
+        # Overnight shift: end_time < start_time on the clock → add 24 h
+        if e <= s:
+            e = e + timedelta(hours=24)
+        bs = _as_timedelta(row.get("break_start_time"))
+        be = _as_timedelta(row.get("break_end_time"))
+        # For overnight windows, break times that appear to be "before midnight"
+        # (i.e., clock value < shift start) are actually past midnight within the window.
+        # Adjust by +24 h so timedelta arithmetic and truthiness work correctly.
+        # e.g. Night 20:00–06:30 with break at 00:00–00:30 → bs=24:00, be=24:30
+        if bs is not None and bs < s:
+            bs = bs + timedelta(hours=24)
+        if be is not None and be < s:
+            be = be + timedelta(hours=24)
+        net = _net_working_minutes(s, e, bs, be)
+        processed.append({"start_td": s, "end_td": e, "break_start": bs, "break_end": be, "net_mins": net})
+
+    if not processed:
+        return None
+
+    # Sort by start_td so earlier shifts come first
+    processed.sort(key=lambda w: w["start_td"])
+
+    # Store total daily minutes back into config for _get_shift_working_minutes
+    shift_config["total_daily_minutes"] = sum(w["net_mins"] for w in processed)
+
+    return processed
+
+
+def _forward_multi_window(
+    start_dt: datetime,
+    production_minutes: float,
+    windows: list[dict],
+    holidays: set,
+) -> datetime:
+    """Forward-schedule across multiple shift windows per day."""
+    remaining    = float(production_minutes)
+    current_dt   = get_datetime(start_dt)
+    current_day  = getdate(current_dt)
+
+    while remaining > 0:
+        if current_day in holidays:
+            current_day = current_day + timedelta(days=1)
+            current_dt  = datetime.combine(current_day, datetime.min.time()) + windows[0]["start_td"]
+            continue
+
+        base = datetime.combine(current_day, datetime.min.time())
+
+        for w in windows:
+            win_start = base + w["start_td"]
+            win_end   = base + w["end_td"]
+
+            if current_dt >= win_end:
+                continue  # already past this window
+
+            effective_dt = max(current_dt, win_start)
+            effective_td = effective_dt - base
+
+            avail = _net_minutes_from_time(effective_td, w["end_td"], w["break_start"], w["break_end"])
+            if avail <= 0:
+                continue
+
+            if remaining <= avail:
+                return _place_finish_from_time(
+                    current_day, effective_td, remaining,
+                    w["end_td"], w["break_start"], w["break_end"],
+                )
+
+            remaining -= avail
+            current_dt = win_end
+
+        # All windows of current_day consumed → advance to next calendar day
+        next_day        = current_day + timedelta(days=1)
+        first_win_start = datetime.combine(next_day, datetime.min.time()) + windows[0]["start_td"]
+        current_dt  = max(current_dt, first_win_start)
+        current_day = next_day
+
+    return current_dt
+
+
+def _backward_multi_window(
+    deadline_date: Any,
+    production_minutes: float,
+    windows: list[dict],
+    holidays: set,
+) -> datetime:
+    """Backward-schedule across multiple shift windows per day."""
+    remaining   = float(production_minutes)
+    current_day = getdate(deadline_date)
+    total_daily = sum(w["net_mins"] for w in windows)
+
+    while remaining > 0:
+        current_day = current_day - timedelta(days=1)
+        while current_day in holidays:
+            current_day -= timedelta(days=1)
+
+        if remaining <= total_daily:
+            rem = remaining
+            for w in reversed(windows):
+                if rem <= w["net_mins"]:
+                    return _place_start_in_day(
+                        current_day, rem,
+                        w["start_td"], w["end_td"],
+                        w["break_start"], w["break_end"],
+                    )
+                rem -= w["net_mins"]
+
+        remaining -= total_daily
+
+    # Edge case: production_minutes == 0
+    return datetime.combine(getdate(deadline_date), datetime.min.time()) + windows[0]["start_td"]
+
+
+def _current_shift_datetime_multi(shift_config: dict[str, Any], windows: list[dict]) -> datetime:
+    """Multi-window variant of _current_shift_datetime."""
+    holidays = _get_holiday_set(shift_config.get("holiday_list"))
+    now_dt   = now_datetime()
+
+    # Check yesterday's overnight windows (they may still be active)
+    yesterday = getdate(now_dt) - timedelta(days=1)
+    if yesterday not in holidays:
+        base_y = datetime.combine(yesterday, datetime.min.time())
+        for w in windows:
+            if w["end_td"] > timedelta(hours=24):  # overnight
+                win_start = base_y + w["start_td"]
+                win_end   = base_y + w["end_td"]
+                if win_start <= now_dt < win_end:
+                    if w["break_start"] is not None and w["break_end"] is not None:
+                        bs = base_y + w["break_start"]
+                        be = base_y + w["break_end"]
+                        if bs <= now_dt < be:
+                            return be
+                    return now_dt
+
+    # Check today's windows
+    today = getdate(now_dt)
+    while today in holidays:
+        today = today + timedelta(days=1)
+
+    base = datetime.combine(today, datetime.min.time())
+    for w in windows:
+        win_start = base + w["start_td"]
+        win_end   = base + w["end_td"]
+
+        if now_dt < win_start:
+            return win_start  # gap before this window → wait
+
+        if win_start <= now_dt < win_end:
+            if w["break_start"] is not None and w["break_end"] is not None:
+                bs = base + w["break_start"]
+                be = base + w["break_end"]
+                if bs <= now_dt < be:
+                    return be
+            return now_dt
+
+    # Past all windows today → start at first window of next working day
+    next_day = today + timedelta(days=1)
+    while next_day in holidays:
+        next_day += timedelta(days=1)
+    return datetime.combine(next_day, datetime.min.time()) + windows[0]["start_td"]
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +684,8 @@ def _get_effective_shift_config() -> dict[str, Any]:
     is always shift-aware regardless of Manufacturing Settings.
     """
     return _fetch_shift_config() or _DEFAULT_SHIFT_CONFIG
+
+
 
 
 def _get_holiday_set(holiday_list: str | None) -> set[Any]:
@@ -511,8 +731,8 @@ def _net_working_minutes(
 ) -> float:
     """Net working minutes per day = shift duration − lunch break duration."""
     total = _td_minutes(shift_end - shift_start)
-    if lunch_start and lunch_end and lunch_end > lunch_start:
-        total -= _td_minutes(lunch_end - lunch_start)
+    if lunch_start is not None and lunch_end is not None and lunch_end != lunch_start:
+        total -= _td_minutes(abs(lunch_end - lunch_start))
     return max(total, 0.0)
 
 
@@ -728,6 +948,11 @@ def _backward_schedule(
     holidays = _get_holiday_set(shift_config.get("holiday_list"))
     working_mins = _net_working_minutes(shift_start, shift_end, lunch_start, lunch_end)
 
+    # Multi-window branch (multiple shift types configured in Manufacturing Settings)
+    windows = _get_shift_windows(shift_config)
+    if windows:
+        return _backward_multi_window(deadline_date, production_minutes, windows, holidays)
+
     if working_mins <= 0:
         return _to_datetime(deadline_date) - timedelta(minutes=production_minutes)
 
@@ -758,61 +983,42 @@ def _backward_schedule(
 
 def _current_shift_datetime(shift_config: dict[str, Any]) -> datetime:
     """
-    Return the earliest datetime from which production can start right now,
-    clamped to working hours.
-
-    Rules (evaluated against current time):
-      1. Before shift_start today        → today @ shift_start
-      2. In lunch break                   → today @ lunch_end
-      3. After shift_end today            → next working day @ shift_start
-      4. Within working hours             → now_datetime()
-
-    Args:
-        shift_config: Dict from _fetch_shift_config().
-
-    Returns:
-        Datetime within working hours on the nearest available working day.
+    Return earliest datetime from which production can start right now,
+    clamped to working hours.  Supports both single-window and multi-window.
     """
+    windows = _get_shift_windows(shift_config)
+    if windows:
+        return _current_shift_datetime_multi(shift_config, windows)
+
     shift_start = _as_timedelta(shift_config.get("start_time"))
     shift_end   = _as_timedelta(shift_config.get("end_time"))
     lunch_start = _as_timedelta(shift_config.get("custom_lunch_start_time"))
     lunch_end   = _as_timedelta(shift_config.get("custom_lunch_end_time"))
-    holiday_list = shift_config.get("holiday_list")
 
     if shift_start is None or shift_end is None:
         return now_datetime()
 
-    holidays = _get_holiday_set(holiday_list)
-    now = now_datetime()
-    today = getdate(now)
-    base = datetime.combine(today, datetime.min.time())
+    holidays = _get_holiday_set(shift_config.get("holiday_list"))
 
-    # Time-of-day as a timedelta from midnight
-    time_of_day = timedelta(
-        hours=now.hour,
-        minutes=now.minute,
-        seconds=now.second,
-    )
+    now_dt   = now_datetime()
+    now_date = getdate(now_dt)
 
-    if time_of_day < shift_start:
-        # Before shift starts — use today's shift_start (if today is a working day)
-        if today not in holidays:
-            return base + shift_start
-        # Today is a holiday — use next working day
-        next_day = _next_working_date(today, holidays)
+    # Skip holidays
+    while now_date in holidays:
+        now_date = now_date + timedelta(days=1)
+        now_dt   = datetime.combine(now_date, datetime.min.time()) + shift_start
+
+    now_td = timedelta(hours=now_dt.hour, minutes=now_dt.minute, seconds=now_dt.second)
+
+    if now_td < shift_start:
+        return datetime.combine(now_date, datetime.min.time()) + shift_start
+    if now_td >= shift_end:
+        next_day = _next_working_date(now_date, holidays)
         return datetime.combine(next_day, datetime.min.time()) + shift_start
+    if lunch_start and lunch_end and lunch_start <= now_td < lunch_end:
+        return datetime.combine(now_date, datetime.min.time()) + lunch_end
 
-    if time_of_day >= shift_end:
-        # After shift ends — use next working day's shift_start
-        next_day = _next_working_date(today, holidays)
-        return datetime.combine(next_day, datetime.min.time()) + shift_start
-
-    if lunch_start and lunch_end and lunch_start <= time_of_day < lunch_end:
-        # In lunch break — resume at lunch_end
-        return base + lunch_end
-
-    # Within working hours — start now (truncate microseconds for cleanliness)
-    return now.replace(microsecond=0)
+    return now_dt
 
 
 # ---------------------------------------------------------------------------
@@ -945,6 +1151,11 @@ def shift_aware_forward_schedule(
 
     holidays = _get_holiday_set(shift_config.get("holiday_list"))
     working_mins = _net_working_minutes(shift_start, shift_end, lunch_start, lunch_end)
+
+    # Multi-window branch (multiple shift types configured in Manufacturing Settings)
+    windows = _get_shift_windows(shift_config)
+    if windows:
+        return _forward_multi_window(start_date, production_minutes, windows, holidays)
 
     if working_mins <= 0:
         return start_date + timedelta(minutes=production_minutes)

@@ -34,10 +34,10 @@ def create_fields():
         },
         {
             "fieldname": "default_shift_type",
-            "fieldtype": "Link",
-            "label": "Default Shift Type",
-            "options": "Shift Type",
-            "description": "Select the default shift type for production scheduling.",
+            "fieldtype": "Table MultiSelect",
+            "label": "Shift Types for Planning",
+            "options": "Bulk PP Planning Shift",
+            "description": "Select one or more shift types for production scheduling. Multiple shifts combine their working minutes.",
             "insert_after": "enable_shift_wise_scheduling",
         },
     ]
