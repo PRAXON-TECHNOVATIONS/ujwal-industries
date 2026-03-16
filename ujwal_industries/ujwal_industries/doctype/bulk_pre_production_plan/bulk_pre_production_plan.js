@@ -591,7 +591,17 @@ function _render_sequential_grid(frm, so_data, container) {
 		},
 		{
 			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 110,
-			cellRenderer: p => _badge(p.value || 'In House', p.value === 'In House' ? '#16a34a' : '#d97706')
+			editable: true,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: {
+				values: ['In House', 'Subcontract', 'In House - Vendor']
+			},
+			cellRenderer: p => {
+				let color = '#16a34a'; // In House
+				if (p.value === 'Subcontract') color = '#d97706';
+				else if (p.value === 'In House - Vendor') color = '#0284c7';
+				return _badge(p.value || 'In House', color);
+			}
 		},
 		{
 			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
@@ -712,6 +722,29 @@ function _on_seq_cell_changed(frm, params) {
 			_handle_workstation_change(frm, doc_row.name, 'sfg', params.newValue, { params });
 		}).catch(() => {
 			_handle_workstation_change(frm, doc_row.name, 'sfg', params.newValue, { params });
+		});
+	} else if (fieldname === 'type_of_manufacturing' && changed) {
+		update_promise.then(() => {
+			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+					args: {
+						item_code: doc_row.production_item || doc_row.item_code,
+						company: frm.doc.company
+					},
+					callback: function(r) {
+						if (r.message && r.message !== doc_row.supplier) {
+							frappe.model.set_value(doc_row.doctype, doc_row.name, 'supplier', r.message).then(() => {
+								params.node.setDataValue('supplier', r.message);
+							});
+						}
+					}
+				});
+			} else if (params.newValue === 'In House') {
+				frappe.model.set_value(doc_row.doctype, doc_row.name, 'supplier', '').then(() => {
+					params.node.setDataValue('supplier', '');
+				});
+			}
 		});
 	}
 }
@@ -1270,13 +1303,15 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
-				values: ['In House', 'Subcontract']
+				values: ['In House', 'Subcontract', 'In House - Vendor']
 			},
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 
 				if (p.value === 'Subcontract') {
 					return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				} else if (p.value === 'In House - Vendor') {
+					return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
 				}
 
 				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
@@ -2065,6 +2100,35 @@ function _on_par_bom_changed(frm, params, par_data) {
 			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
 		}).catch(() => {
 			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		});
+	}
+
+	if (fieldname === 'type') {
+		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'type_of_manufacturing', params.newValue).then(() => {
+			_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { type_of_manufacturing: params.newValue });
+			
+			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+					args: {
+						item_code: sfg_row.production_item || sfg_row.item_code,
+						company: frm.doc.company
+					},
+					callback: function(r) {
+						if (r.message && r.message !== sfg_row.supplier) {
+							frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', r.message).then(() => {
+								params.node.setDataValue('supplier', r.message);
+								_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: r.message });
+							});
+						}
+					}
+				});
+			} else if (params.newValue === 'In House') {
+				frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', '').then(() => {
+					params.node.setDataValue('supplier', '');
+					_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: '' });
+				});
+			}
 		});
 	}
 }

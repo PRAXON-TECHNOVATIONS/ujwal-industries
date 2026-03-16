@@ -143,13 +143,13 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Manufacturing Type",
-   "options": "In House\nSubcontract\nMaterial Request"
+   "options": "In House\nSubcontract\nMaterial Request\nIn House - Vendor"
   },
   {
    "fieldname": "supplier",
    "fieldtype": "Link",
    "label": "Supplier",
-   "mandatory_depends_on": "eval:doc.type_of_manufacturing == 'Subcontract'",
+   "mandatory_depends_on": "eval:in_list(doc.type_of_manufacturing, ['Subcontract', 'In House - Vendor'])",
    "options": "Supplier"
   },
   {
