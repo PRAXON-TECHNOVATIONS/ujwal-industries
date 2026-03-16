@@ -637,6 +637,9 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
         doc.set_onload("has_active_downtime", has_active_downtime)
         doc.set_onload("current_server_time", str(current_time))
 
+    # Check if operation requires tool
+    doc.set_onload("operation_requires_tool", operation_requires_tool(doc.bom_no, doc.operation))
+
 
 def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
     """
@@ -745,7 +748,25 @@ def get_filtered_tools(doctype, txt, searchfield, start, page_len, filters):
         "page_len": page_len
     })
 
-    
+
+@frappe.whitelist()
+def operation_requires_tool(bom: str | None = None, operation: str | None = None) -> bool:
+    """Return whether the BOM operation has at least one tool configured."""
+    if not bom or not operation:
+        return False
+
+    return bool(
+        frappe.db.exists(
+            "Tool Child Table",
+            {
+                "parent": bom,
+                "operation": operation,
+                "tool": ["is", "set"],
+            },
+        )
+    )
+
+
 @frappe.whitelist()
 def check_tool_maintenance(tool):
     today = getdate(nowdate())
