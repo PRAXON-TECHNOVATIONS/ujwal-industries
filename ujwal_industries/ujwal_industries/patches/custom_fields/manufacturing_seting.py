@@ -3,6 +3,7 @@ import frappe
 
 def execute():
     """Patch entry point - creates custom fields for Manufacturing Settings"""
+    print("it tan")
     create_fields()
 
 
