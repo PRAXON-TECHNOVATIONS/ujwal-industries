@@ -670,7 +670,7 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
     # ── Batch fetches ─────────────────────────────────────────────────────────
     subcontract_items: list[str] = [
         d.production_item for d in doc.sub_assembly_items
-        if d.type_of_manufacturing == "Subcontract"
+        if d.type_of_manufacturing in ("Subcontract", "In House - Vendor")
     ]
     all_production_items: list[str] = [
         d.production_item for d in doc.sub_assembly_items if d.production_item
@@ -776,12 +776,12 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
         end_date: Any = get_datetime(parent_start)  # = custom_schedule_end_date
         was_jumped = False
 
+        supplier_info = supplier_map.get(row.production_item) if row.type_of_manufacturing in ("Subcontract", "In House - Vendor") else None
+        if row.type_of_manufacturing in ("Subcontract", "In House - Vendor") and not row.supplier and supplier_info:
+            row.supplier = supplier_info.supplier
+
         if row.type_of_manufacturing == "Subcontract":
             # ── SUBCONTRACT ─────────────────────────────────────────────────
-            supplier_info = supplier_map.get(row.production_item)
-            if not row.supplier and supplier_info:
-                row.supplier = supplier_info.supplier
-
             lead_time = 0
             if supplier_info:
                 lead_time = int(supplier_info.lead_time_days or 0)

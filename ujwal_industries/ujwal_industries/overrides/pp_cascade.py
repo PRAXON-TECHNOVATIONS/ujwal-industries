@@ -347,7 +347,7 @@ def calculate_sfg_fg_dates_from_mr_items(
 
                             new_sfg_datetime = _to_datetime(new_sfg_date)
 
-                        elif mfg_type == "In House":
+                        elif mfg_type in ["In House", "In House - Vendor"]:
                             # For In House: material arrival date = SFG start date (no lead time offset)
                             # The MR schedule_date IS when material arrives, which is when SFG can start
                             # So: SFG schedule_date = MR schedule_date (not custom_start_date!)
@@ -377,7 +377,7 @@ def calculate_sfg_fg_dates_from_mr_items(
                                 lead_time_days = int(supplier_map.get(item_code).lead_time_days or 0) if supplier_map.get(item_code) else 0
                                 new_sfg_end_date = add_days(getdate(new_sfg_datetime), lead_time_days)
                                 new_sfg_end_datetime = _to_datetime(new_sfg_end_date)
-                            elif mfg_type == "In House":
+                            elif mfg_type in ["In House", "In House - Vendor"]:
                                 # Calculate production time
                                 prod_time_result = calculate_production_time_from_bom(sfg_info["bom_no"])
                                 production_mins = prod_time_result.get("production_minutes", 0)

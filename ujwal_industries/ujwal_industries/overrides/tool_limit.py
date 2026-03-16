@@ -170,7 +170,7 @@ def tool_conflict(name, bom, row_name, from_doctype):
             return
 
         for row in doc.sub_assembly_items:
-            if row.name== row_name and row.type_of_manufacturing == 'In House':
+            if row.name== row_name and row.type_of_manufacturing in ['In House', 'In House - Vendor']:
 
                 if not row.schedule_date or not row.custom_schedule_end_date or not bom:
                     continue
@@ -227,7 +227,7 @@ def tool_conflict(name, bom, row_name, from_doctype):
             return
 
         for row in doc.po_items:
-            if row.name== row_name and row.custom_manufacturing_type == 'In House':
+            if row.name== row_name and row.custom_manufacturing_type in ['In House', 'In House - Vendor']:
 
                 if not row.planned_start_date or not row.custom_planned_end_date or not bom:
                     continue
