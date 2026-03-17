@@ -14,17 +14,23 @@ function mark_programmatic_update() {
 }
 
 // open_manage_dates_dialog is defined in manage_dates_dialog.js (loaded via app_include_js)
+// open_parallel_manage_dates_dialog is defined in parallel_manage_dates_dialog.js (loaded via app_include_js)
 
 
 frappe.ui.form.on('Production Plan', {
 	refresh: function (frm) {
 		// Only draft and po_items is available can edit the dates
 		if (frm.doc.docstatus === 0 && frm.doc.po_items) {
-			frm.add_custom_button(
-				__("Manage Dates"),
-				() => open_manage_dates_dialog(frm),
-				__("Actions")
-			);
+			frm.add_custom_button(__("Manage Dates"), () => {
+
+				if (frm.doc.custom_parallel_planning === 1) {
+					open_parallel_manage_dates_dialog(frm);
+					
+				} else {
+					open_manage_dates_dialog(frm);
+				}
+
+			}, __("Actions"));
 		}
 		// Always Draft and not display want to submit popup box
 		if (frm.doc.docstatus === 1) {

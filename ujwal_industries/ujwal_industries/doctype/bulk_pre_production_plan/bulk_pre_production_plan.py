@@ -1219,7 +1219,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, effective_spm, per_shift_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
-			print("......sfg_row........",sfg_row)
 			batch_rows = []
 			for b_idx, batch_qty in enumerate(batches_qty):
 				mfg_days_b = math.ceil(batch_qty / per_shift_qty) if per_shift_qty > 0 else 1
@@ -1236,7 +1235,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
 				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
-				
+    
 				holiday_count = 0
 				if sfg_row.get('type_of_manufacturing') == 'In House':
 					holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
