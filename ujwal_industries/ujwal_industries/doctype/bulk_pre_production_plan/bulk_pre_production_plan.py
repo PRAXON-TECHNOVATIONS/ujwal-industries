@@ -1609,7 +1609,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
    
 			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
-			pm_days       = int(tool_info.get("pm_days", 0))
+   
+			pm_days = 0
+			if fg.manufacturing_type in ("In House", "In House - Vendor"):
+				pm_days       = int(tool_info.get("pm_days", 0))
 			grn_days      = int(grn_map.get(item_code, 0))
 
    
@@ -1655,15 +1658,14 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 				is_last_batch = (b_idx == len(batches) - 1)
 				# Count holidays strictly between start_date and end_date
-				holiday_count = sum(
-					1 for h in holidays
-					if getdate(start_dt) < h <= getdate(end_dt)
-				)
+
+				holiday_count = 0
+				if fg.manufacturing_type in ("In House", "In House - Vendor"):
+					holiday_count = sum(
+						1 for h in holidays
+						if getdate(start_dt) < h <= getdate(end_dt)
+					)
     
-				# holiday_dates = [
-				# 	str(h) for h in holidays
-				# 	if getdate(start_dt) < h <= getdate(end_dt)
-				# ]
 				holiday_dates =[]
 				for h in holidays:
 					if getdate(start_dt) < h <= getdate(end_dt):
