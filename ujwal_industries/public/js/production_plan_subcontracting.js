@@ -21,7 +21,7 @@ frappe.ui.form.on('Production Plan', {
 		// Only draft and po_items is available can edit the dates
 		if (frm.doc.docstatus === 0 && frm.doc.po_items) {
 			frm.add_custom_button(
-				__("Manage dates"),
+				__("Manage Dates"),
 				() => open_manage_dates_dialog(frm),
 				__("Actions")
 			);

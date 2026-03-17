@@ -831,7 +831,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			
 			const batches = fg.batches || [];
 			const is_exps = !!_expandeds[fg.item_code];
-			console.log(".........batches............",batches)
 			rows.push({
 				_is_group: true,
 				_expandeds: is_exps,
@@ -846,6 +845,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				type: fg.type_of_manufacturing,
 				target_warehouse: fg.target_warehouse || '',
 				supplier: fg.supplier,
+				// supplier_list: sfg.supplier_list || [],
 				total_batches: batches.length,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				per_shift_qty: fg.per_shift_qty || 0,
@@ -922,16 +922,45 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
 		},
 		{
-			headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
+			headerName: 'Tool',field: 'tool',width: 190,
+
+			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
 				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
 			}),
-			cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
+
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+
+				if (p.data?.type === 'Subcontract') return '';
+
+				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+			}
 		},
+
 		{
-			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
-			editable: p => !!p.data?._is_group,
+			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+			autoHeight: true,
+			cellStyle: p => {
+				if (!p.data?._is_group) return null;
+
+				if (p.data?.type === 'Subcontract') {
+					return {
+						opacity: 0.4,
+						pointerEvents: 'none'
+					};
+				}
+				return {
+					whiteSpace: 'normal',
+					lineHeight: '1.35',
+					paddingTop: '6px',
+					paddingBottom: '6px'
+				};
+			},
+
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -940,11 +969,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				row_type: 'fg',
 				row_name: p.data?._row_name || p.data?.name || ''
 			}),
-			cellRenderer: p => p.data?._is_group ? _machine_display_html(
-				p.value,
-				p.data?.batchsize || 0,
-				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
-			) : ''
+
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type === 'Subcontract') return '';
+				return _machine_display_html(
+					p.value,
+					p.data?.batchsize || 0,
+					_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+				);
+			}
 		},
 		{
 			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
@@ -986,12 +1020,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-		// {
-		// 	headerName: 'Holi.', width: 58, type: 'numericColumn',
-		// 	valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
-		// 	cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold' } : {},
-		// 	cellRenderer: p => p.value != null ? String(p.value) : ''
-		// },
 
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
@@ -1050,22 +1078,40 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
+
 		{
 			headerName: 'Type', field: 'type', width: 108,
+			editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: {
+				values: ['In House', 'Subcontract']
+			},
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				return p.value === 'Subcontract'
-					? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
-					: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
+
+				if (p.value === 'Subcontract') {
+					return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				}
+
+				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
 			}
 		},
 		{
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
+		
 		{
-			headerName: 'Supplier', field: 'supplier', width: 130,
-			cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
+			headerName: 'Supplier', field: 'supplier', width: 160,
+			editable: p => !!p.data?._is_group,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: p.data?.supplier_list || []
+			}),
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+			}
 		},
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
@@ -1126,7 +1172,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		const rows = [];
 		chain_display.forEach((sfg, idx) => {
 			const batches = sfg.batches || [];
-			// console.log(".........batches......sfg......",batches)
 			const is_exp = !!_expanded[sfg.item_code];
 			rows.push({
 				_is_group: true,
@@ -1147,7 +1192,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				per_shift_qty: sfg.per_shift_qty || 0,
 				batchsize: sfg.batchsize || 0,
-				spm: sfg.spm || 0,
+				// spm: sfg.spm || 0,
+				spm: sfg.spm_1 || 0,
 				start_date: batches[0]?.start_date || '',
 				end_date: batches[batches.length - 1]?.end_date || '',
 			});
@@ -1215,24 +1261,51 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => (!p.data?._is_group) ? '' :
 				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
 		},
+
 		{
-			headerName: 'Tool', field: 'tool', width: 190, editable: p => !!p.data?._is_group,
+			headerName: 'Tool',field: 'tool',width: 190,
+
+			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
 				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
 			}),
-			cellRenderer: p => !p.data?._is_group ? '' : (p.value || '<span style="color:#94a3b8;">No Tool</span>')
+
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+
+				if (p.data?.type === 'Subcontract') return '';
+
+				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+			}
 		},
+
 		{
-			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
-			editable: p => !!p.data?._is_group,
+			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+
+			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+
 			autoHeight: true,
-			cellStyle: p => p.data?._is_group ? {
-				whiteSpace: 'normal',
-				lineHeight: '1.35',
-				paddingTop: '6px',
-				paddingBottom: '6px'
-			} : null,
+
+			cellStyle: p => {
+				if (!p.data?._is_group) return null;
+
+				if (p.data?.type === 'Subcontract') {
+					return {
+						opacity: 0.4,
+						pointerEvents: 'none'
+					};
+				}
+
+				return {
+					whiteSpace: 'normal',
+					lineHeight: '1.35',
+					paddingTop: '6px',
+					paddingBottom: '6px'
+				};
+			},
+
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1241,11 +1314,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				row_type: 'sfg',
 				row_name: p.data?._row_name || p.data?.name || ''
 			}),
-			cellRenderer: p => p.data?._is_group ? _machine_display_html(
-				p.value,
-				p.data?.batchsize || 0,
-				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
-			) : ''
+
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type === 'Subcontract') return '';
+				return _machine_display_html(
+					p.value,
+					p.data?.batchsize || 0,
+					_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
+				);
+			}
 		},
 		{
 			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
@@ -1287,10 +1365,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
-
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+			valueGetter: p => {
+				if (p.data?._is_group) return null;
+				if (p.data?.type === 'Subcontract') return 0;
+				return p.data?.holiday_count || 0;
+			},
 
 			cellStyle: p => (p.value > 0)
 				? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }
@@ -1307,18 +1388,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 			onCellClicked: p => {
 				if (p.colDef.headerName !== 'Holi.' || p.data?._is_group) return;
-
 				const dates = p.data?.holiday_dates || [];
-
 				if (!dates.length) return;
-
 				const formatted_dates = dates.map(d => {
 					return d;
 				});
-
 				frappe.msgprint({
-					title: 'Holiday Dates',
-					message: formatted_dates.join('<br>'),
+					title: 'Holiday Dates', message: formatted_dates.join('<br>'),
 					indicator: 'red'
 				});
 			}
@@ -1331,7 +1407,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 		{
 			headerName: 'SPM', width: 80, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			// valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			valueGetter: p => p.data?._is_group ? p.data.spm : null,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 		{
@@ -1345,15 +1422,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			valueFormatter: p => _format_bpp_date(p.value, '', !p.data?._is_group),
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
-		// {
-		// 	headerName: 'Type', field: 'type', width: 108,
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		return p.value === 'Subcontract'
-		// 			? `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`
-		// 			: `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
-		// 	}
-		// },
 		{
 			headerName: 'Type', field: 'type', width: 108,
 			editable: p => !!p.data?._is_group,
@@ -1377,10 +1445,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
-		// {
-		// 	headerName: 'Supplier', field: 'supplier', width: 130,
-		// 	cellRenderer: p => p.data?._is_group ? (p.value || '') : ''
-		// },
+		
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
 			editable: p => !!p.data?._is_group,
@@ -1417,6 +1482,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
 	});
 	_grids['par_' + so_data.so_name] = par_grid;
+	
 
 	// ── MR section ──────────────────────────────────────────────────────────
 	_append_mr_section(container, par_data.mr || so_data.mr, frm, so_data.so_name, 'par');
