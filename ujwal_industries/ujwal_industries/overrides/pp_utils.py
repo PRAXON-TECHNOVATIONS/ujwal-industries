@@ -686,6 +686,86 @@ def _get_effective_shift_config() -> dict[str, Any]:
     return _fetch_shift_config() or _DEFAULT_SHIFT_CONFIG
 
 
+def get_shift_config_for_shift_types(shift_types: "list[str] | None") -> dict[str, Any]:
+    """
+    Build a shift_config dict for the given Shift Type names.
+
+    This mirrors the behaviour of Manufacturing Settings' `default_shift_type`
+    (Table MultiSelect of `Bulk PP Planning Shift`), but allows callers to
+    override shifts per-row.
+
+    Notes:
+    - If shift-wise scheduling is disabled, returns empty dict {} so that
+      callers can fall back to `_get_effective_shift_config()` or defaults.
+    - For multi-shift selection, `windows` and `total_daily_minutes` are
+      computed so shift-aware forward/backward scheduling can use the exact
+      timings from Shift Master.
+    """
+    try:
+        enabled = frappe.db.get_single_value("Manufacturing Settings", "enable_shift_wise_scheduling")
+    except Exception:
+        enabled = 0
+
+    if not enabled:
+        return {}
+
+    names = [s for s in (shift_types or []) if s]
+    if not names:
+        return {}
+
+    def _read_shift(st_name: str) -> "dict | None":
+        data = frappe.db.get_value(
+            "Shift Type", st_name,
+            ["start_time", "end_time", "holiday_list"],
+            as_dict=True,
+        )
+        if not data or data.start_time is None or data.end_time is None:
+            return None
+        try:
+            lunch = frappe.db.get_value(
+                "Shift Type", st_name,
+                ["custom_lunch_start_time", "custom_lunch_end_time"],
+                as_dict=True,
+            ) or {}
+        except Exception:
+            lunch = {}
+        return {
+            "start_time":              data.start_time,
+            "end_time":                data.end_time,
+            "holiday_list":            data.holiday_list,
+            "custom_lunch_start_time": lunch.get("custom_lunch_start_time"),
+            "custom_lunch_end_time":   lunch.get("custom_lunch_end_time"),
+        }
+
+    primary = _read_shift(names[0])
+    if not primary:
+        return {}
+
+    if len(names) == 1:
+        return primary
+
+    windows = []
+    for name in names:
+        st = _read_shift(name)
+        if st:
+            windows.append({
+                "shift_label":      name,
+                "start_time":       st["start_time"],
+                "end_time":         st["end_time"],
+                "break_start_time": st["custom_lunch_start_time"],
+                "break_end_time":   st["custom_lunch_end_time"],
+            })
+
+    config = dict(primary)
+    if len(windows) > 1:
+        config["windows"] = windows
+        processed = _get_shift_windows(config)
+        if processed:
+            config["last_window_end_td"] = processed[-1]["end_td"]
+
+    return config
+
+
 
 
 def _get_holiday_set(holiday_list: str | None) -> set[Any]:
