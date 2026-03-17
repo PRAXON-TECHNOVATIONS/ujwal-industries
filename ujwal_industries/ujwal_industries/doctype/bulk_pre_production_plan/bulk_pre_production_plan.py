@@ -983,6 +983,36 @@ def get_bom_spm_details(
 
 
 @frappe.whitelist()
+def get_default_planning_shift_types() -> list[str]:
+	"""
+	Return default planning shift types as configured on Manufacturing Settings.
+
+	The field is a Table MultiSelect stored as child rows of doctype
+	`Bulk PP Planning Shift` with `shift_type` values.
+	"""
+	# If the setting/field doesn't exist yet, just return empty.
+	try:
+		enabled = frappe.db.get_single_value("Manufacturing Settings", "enable_shift_wise_scheduling")
+	except Exception:
+		enabled = 0
+
+	if not enabled:
+		return []
+
+	try:
+		shift_rows = frappe.get_all(
+			"Bulk PP Planning Shift",
+			filters={"parent": "Manufacturing Settings", "parenttype": "Manufacturing Settings"},
+			fields=["shift_type"],
+			order_by="idx",
+		)
+	except Exception:
+		shift_rows = []
+
+	return [row.shift_type for row in (shift_rows or []) if (row or {}).get("shift_type")]
+
+
+@frappe.whitelist()
 def get_active_boms_for_items(item_codes: str | list[str]) -> dict[str, list[str]]:
 	"""Return active BOM names grouped by item."""
 	item_codes = frappe.parse_json(item_codes) if isinstance(item_codes, str) else item_codes

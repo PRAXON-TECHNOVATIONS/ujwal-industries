@@ -13,6 +13,7 @@
   "tool_load_qty",
   "pm_days",
   "custom_workstations_csv",
+  "custom_shift_types_csv",
   "column_break_1",
   "planned_qty",
   "stock_uom",
@@ -89,6 +90,11 @@
    "fieldname": "custom_workstations_csv",
    "fieldtype": "Small Text",
    "label": "Selected Workstations"
+  },
+  {
+   "fieldname": "custom_shift_types_csv",
+   "fieldtype": "Small Text",
+   "label": "Shift Types"
   },
   {
    "fieldname": "column_break_1",
