@@ -19,6 +19,7 @@
   "tool_load_qty",
   "pm_days",
   "custom_workstations_csv",
+  "custom_shift_types_csv",
   "bom_level",
   "type_of_manufacturing",
   "supplier",
@@ -129,6 +130,11 @@
    "fieldname": "custom_workstations_csv",
    "fieldtype": "Small Text",
    "label": "Selected Workstations"
+  },
+  {
+   "fieldname": "custom_shift_types_csv",
+   "fieldtype": "Small Text",
+   "label": "Shift Types"
   },
   {
    "columns": 1,
