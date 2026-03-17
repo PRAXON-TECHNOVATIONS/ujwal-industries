@@ -1278,7 +1278,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					start_dt = start_dt + timedelta(days=1)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
-				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
+				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
 				
 				holiday_count = 0
 				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
