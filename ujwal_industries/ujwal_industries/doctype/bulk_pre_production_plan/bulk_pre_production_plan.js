@@ -304,6 +304,7 @@ let _ag_loaded = false;
 let _bom_options_cache = {};
 let _bom_recalc_inflight = false;
 let _bom_capacity_cache = {};
+let _default_shift_types_cache = null;
 
 function setup_production_tabs(frm) {
 	const html_field = frm.fields_dict.production_items_html;
@@ -520,25 +521,33 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
 
-	_hydrate_machine_defaults(frm, par_data).then(changed => {
-		if (changed) {
-			_render_all_grids(frm, so_map, mode, $wrapper, par_data);
-			
-			return;
-		}
-
-		Object.values(so_map).forEach(so_data => {
-			const $grid_wrap = $wrapper.find(`.bpp-grid-wrap[data-so="${so_data.so_name}"]`);
-			if (!$grid_wrap.length) return;
-
-			if (mode === 'Sequential') {
-				_render_sequential_grid(frm, so_data, $grid_wrap[0]);
-			} else {
-				const so_par = par_data ? par_data[so_data.so_name] : null;
-				_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
+	Promise.resolve()
+		.then(() => _hydrate_machine_defaults(frm, par_data))
+		.then((machine_changed) => {
+			if (machine_changed) {
+				_render_all_grids(frm, so_map, mode, $wrapper, par_data);
+				return null;
 			}
+			return _hydrate_shift_defaults(frm, par_data);
+		})
+		.then((shift_changed) => {
+			if (shift_changed) {
+				_render_all_grids(frm, so_map, mode, $wrapper, par_data);
+				return;
+			}
+
+			Object.values(so_map).forEach(so_data => {
+				const $grid_wrap = $wrapper.find(`.bpp-grid-wrap[data-so="${so_data.so_name}"]`);
+				if (!$grid_wrap.length) return;
+
+				if (mode === 'Sequential') {
+					_render_sequential_grid(frm, so_data, $grid_wrap[0]);
+				} else {
+					const so_par = par_data ? par_data[so_data.so_name] : null;
+					_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
+				}
+			});
 		});
-	});
 }
 
 
@@ -556,6 +565,9 @@ function _render_sequential_grid(frm, so_data, container) {
 	_bind_fg_bom_selects(frm, fg_div);
 	_bind_fg_tool_selects(frm, fg_div);
 	_bind_fg_machine_selects(frm, fg_div);
+	_bind_fg_shift_selects(frm, fg_div);
+	_bind_fg_mfg_type_selects(frm, fg_div);
+	_bind_fg_supplier_inputs(frm, fg_div);
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -664,6 +676,25 @@ function _render_sequential_grid(frm, so_data, container) {
 				p.data?.batchsize || 0,
 				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
 			)
+		},
+		{
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false, filter: false,
+			editable: true,
+			autoHeight: true,
+			cellStyle: {
+				whiteSpace: 'normal',
+				lineHeight: '1.35',
+				paddingTop: '6px',
+				paddingBottom: '6px'
+			},
+			cellEditor: ShiftPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				frm,
+				row_type: 'sfg',
+				row_name: p.data?.name || p.data?._row_name || ''
+			}),
+			cellRenderer: p => _shift_display_html(p.value)
 		},
 	];
 
@@ -802,8 +833,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			
 			const batches = fg.batches || [];
 			const is_exps = !!_expandeds[fg.item_code];
+			const fg_type = fg.manufacturing_type || fg.custom_manufacturing_type || fg.type_of_manufacturing || 'In House';
+			const fg_supplier = fg.custom_supplier || fg.supplier || '';
 			rows.push({
 				_is_group: true,
+				_row_table: 'fg',
 				_expandeds: is_exps,
 				_fg_idx: idx,
 				_row_name: fg.row_name,
@@ -812,9 +846,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				tool: fg.tool || '',
 				tools: fg.tools || [],
 				custom_workstations_csv: fg.custom_workstations_csv || '',
-				type: fg.type_of_manufacturing,
+				custom_shift_types_csv: fg.custom_shift_types_csv || '',
+				type: fg_type,
 				target_warehouse: fg.target_warehouse || '',
-				supplier: fg.supplier,
+				supplier: fg_supplier,
 				// supplier_list: sfg.supplier_list || [],
 				total_batches: batches.length,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
@@ -827,6 +862,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			if (is_exps) {
 				batches.forEach(b => rows.push({
 					_is_group: false,
+					_row_table: 'fg',
 					_fg_idx: idx,
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
@@ -951,6 +987,18 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			editable: p => !!p.data?._is_group,
+			cellEditor: ShiftPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				frm,
+				row_type: 'fg',
+				row_name: p.data?._row_name || p.data?.name || ''
+			}),
+			cellRenderer: p => p.data?._is_group ? _shift_display_html(p.value) : ''
+		},
+		{
 			headerName: 'Batches', field: 'total_batches', width: 72,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
@@ -1042,13 +1090,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
-				values: ['In House', 'Subcontract']
+				values: ['In House', 'Subcontract', 'In House - Vendor']
 			},
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 
 				if (p.value === 'Subcontract') {
 					return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				}
+				if (p.value === 'In House - Vendor') {
+					return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
 				}
 
 				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
@@ -1141,6 +1192,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				tool: sfg.tool || '',
 				tools: sfg.tools || [],
 				custom_workstations_csv: sfg.custom_workstations_csv || '',
+				custom_shift_types_csv: sfg.custom_shift_types_csv || '',
 				type: sfg.type_of_manufacturing,
 				target_warehouse: sfg.target_warehouse || '',
 				supplier: sfg.supplier,
@@ -1281,6 +1333,18 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
 				);
 			}
+		},
+		{
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			editable: p => !!p.data?._is_group,
+			cellEditor: ShiftPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				frm,
+				row_type: 'sfg',
+				row_name: p.data?._row_name || p.data?.name || ''
+			}),
+			cellRenderer: p => p.data?._is_group ? _shift_display_html(p.value) : ''
 		},
 		{
 			headerName: 'Batches', field: 'total_batches', width: 72,
@@ -1485,7 +1549,9 @@ function _fg_section_html(fg_items, so_name) {
 	if (!fg_items || !fg_items.length) return '';
 	const rows = fg_items.map(item => {
 		const mfg_type = item.manufacturing_type || item.custom_manufacturing_type || 'In House';
-		const badge_color = mfg_type === 'In House' ? '#059669' : '#2563EB';
+		let badge_color = '#059669';
+		if (mfg_type === 'Subcontract') badge_color = '#d97706';
+		else if (mfg_type === 'In House - Vendor') badge_color = '#0284c7';
 		const start = _format_bpp_date(item.planned_start_date);
 		const end = _format_bpp_date(item.custom_planned_end_date);
 		const qty = Number(item.planned_qty || item.qty || 0).toLocaleString('en-IN');
@@ -1499,7 +1565,29 @@ function _fg_section_html(fg_items, so_name) {
 			</td>
 			<td style="padding:10px 14px; text-align:right; font-variant-numeric:tabular-nums;
 				color:#334155; font-weight:600;">${qty}</td>
-			<td style="padding:10px 14px;">${_badge(mfg_type, badge_color)}</td>
+			<td style="padding:10px 14px;">
+				<div style="display:flex; align-items:center; gap:8px;">
+					${_badge(mfg_type, badge_color)}
+					<select
+						class="bpp-fg-mfg-type"
+						data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+						style="min-width:155px;padding:4px 6px;border:1px solid #CBD5E1;border-radius:4px;background:#fff;font-size:12px;color:#475569;"
+					>
+						<option value="In House"${mfg_type === 'In House' ? ' selected' : ''}>In House</option>
+						<option value="Subcontract"${mfg_type === 'Subcontract' ? ' selected' : ''}>Subcontract</option>
+						<option value="In House - Vendor"${mfg_type === 'In House - Vendor' ? ' selected' : ''}>In House - Vendor</option>
+					</select>
+				</div>
+			</td>
+			<td style="padding:10px 14px;">
+				<input
+					class="bpp-fg-supplier"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					value="${frappe.utils.escape_html(item.custom_supplier || '')}"
+					placeholder="Supplier"
+					style="min-width:180px;padding:5px 8px;border:1px solid #CBD5E1;border-radius:4px;background:#fff;font-size:12px;color:#334155;"
+				/>
+			</td>
 			<td style="padding:10px 14px; color:#334155; font-weight:600;">
 				${item.target_warehouse || '—'}
 			</td>
@@ -1546,6 +1634,14 @@ function _fg_section_html(fg_items, so_name) {
 					style="min-width:200px;cursor:pointer;"
 				></div>
 			</td>
+			<td style="padding:10px 14px; position:relative; overflow:visible;">
+				<div
+					class="bpp-fg-shift-inline"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					data-csv="${frappe.utils.escape_html(item.custom_shift_types_csv || '')}"
+					style="min-width:160px;cursor:pointer;"
+				></div>
+			</td>
 		</tr>`;
 	}).join('');
 
@@ -1562,17 +1658,66 @@ function _fg_section_html(fg_items, so_name) {
 						<th style="${_th_style()}">Item Code</th>
 						<th style="${_th_style('right')}">Qty</th>
 						<th style="${_th_style()}">Mfg Type</th>
+						<th style="${_th_style()}">Supplier</th>
 						<th style="${_th_style()}">Target Warehouse</th>
 						<th style="${_th_style()}">Start Date</th>
 						<th style="${_th_style()}">End Date</th>
 						<th style="${_th_style()}">BOM</th>
 						<th style="${_th_style()}">Tool</th>
 						<th style="${_th_style()}">Machines</th>
+						<th style="${_th_style()}">Shifts</th>
 					</tr>
 				</thead>
 				<tbody>${rows}</tbody>
 			</table>
 		</div>`;
+}
+
+function _bind_fg_mfg_type_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-mfg-type').off('change').on('change', function () {
+		const row_name = $(this).data('row-name');
+		const new_type = $(this).val();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || !new_type || row.manufacturing_type === new_type) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'manufacturing_type', new_type).then(() => {
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { manufacturing_type: new_type });
+
+			// Auto-fetch/clear supplier like SFG planner behavior
+			if (['Subcontract', 'In House - Vendor'].includes(new_type)) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+					args: { item_code: row.item_code, company: frm.doc.company },
+					callback: function (r) {
+						if (r.message && r.message !== row.custom_supplier) {
+							frappe.model.set_value(row.doctype, row.name, 'custom_supplier', r.message).then(() => {
+								$(wrapper).find(`.bpp-fg-supplier[data-row-name="${row.name}"]`).val(r.message);
+								_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: r.message });
+							});
+						}
+					}
+				});
+			} else {
+				frappe.model.set_value(row.doctype, row.name, 'custom_supplier', '').then(() => {
+					$(wrapper).find(`.bpp-fg-supplier[data-row-name="${row.name}"]`).val('');
+					_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: '' });
+				});
+			}
+		});
+	});
+}
+
+function _bind_fg_supplier_inputs(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-supplier').off('change blur').on('change blur', function () {
+		const row_name = $(this).data('row-name');
+		const new_supplier = ($(this).val() || '').trim();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || row.custom_supplier === new_supplier) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'custom_supplier', new_supplier).then(() => {
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: new_supplier });
+		});
+	});
 }
 
 function _collect_bom_item_codes(so_map, mode, parallel_data) {
@@ -1631,12 +1776,13 @@ function _hydrate_machine_defaults(frm, parallel_data) {
 			const effectiveCsv = row.custom_workstations_csv || details.workstations_csv || '';
 			const machineCount = _parse_csv_list(effectiveCsv).length || details.machine_count || 0;
 			const batchsize = Number(details.batchsize || row.batchsize || 0);
+			const shiftCount = _shift_count_from_row(row);
 			row.tools = details.tools || row.tools || [];
 			row.batchsize = batchsize || row.batchsize || 0;
 			row.tool_load_qty = details.tool_load_qty || row.tool_load_qty || 0;
 			row.pm_days = details.pm_days || row.pm_days || 0;
 			row.machine_count = machineCount;
-			row.spm = batchsize > 0 ? batchsize * machineCount : (details.spm || row.spm || 0);
+			row.spm = batchsize > 0 ? (batchsize * machineCount * shiftCount) : (details.spm || row.spm || 0);
 		});
 		return Promise.resolve(changed);
 	}
@@ -1651,12 +1797,92 @@ function _hydrate_machine_defaults(frm, parallel_data) {
 	});
 }
 
+function _fetch_default_shift_types() {
+	if (_default_shift_types_cache && Array.isArray(_default_shift_types_cache)) {
+		return Promise.resolve(_default_shift_types_cache);
+	}
+	return frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_planning_shift_types',
+	}).then(r => {
+		_default_shift_types_cache = (r.message || []).filter(Boolean);
+		return _default_shift_types_cache;
+	}).catch(() => {
+		_default_shift_types_cache = [];
+		return _default_shift_types_cache;
+	});
+}
+
+function _collect_rows_missing_shift_defaults(frm, parallel_data) {
+	const rows = [];
+	(frm.doc.po_items || []).forEach(row => { rows.push({ row, row_type: 'fg' }); });
+	(frm.doc.sub_assembly_items || []).forEach(row => { rows.push({ row, row_type: 'sfg' }); });
+	if (parallel_data) {
+		Object.values(parallel_data || {}).forEach(so_data => {
+			(so_data.fg || []).forEach(row => rows.push({ row, row_type: 'fg', from_schedule: true }));
+			(so_data.sfg_chain || []).forEach(row => rows.push({ row, row_type: 'sfg', from_schedule: true }));
+		});
+	}
+	return rows;
+}
+
+function _hydrate_shift_defaults(frm, parallel_data) {
+	const candidates = _collect_rows_missing_shift_defaults(frm, parallel_data);
+	return _fetch_default_shift_types().then(defaults => {
+		const default_csv = (defaults || []).join(',');
+		if (!default_csv) return false;
+
+		let changed = false;
+		const updates = [];
+
+		candidates.forEach(({ row, row_type, from_schedule }) => {
+			if (!row) return;
+			if (row.custom_shift_types_csv) return;
+			row.custom_shift_types_csv = default_csv;
+			changed = true;
+
+			// Recompute SPM using shifts as multiplier (default shift count >= 1).
+			const machine_count = Number(row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
+			const batchsize = Number(row.batchsize || 0);
+			const shift_count = _shift_count_from_row(row);
+			const spm = batchsize * machine_count * shift_count;
+			if (spm) row.spm = spm;
+
+			// Persist to DB for actual child rows (so Save keeps it)
+			if (!from_schedule && row.doctype && row.name) {
+				updates.push(
+					frappe.model.set_value(row.doctype, row.name, 'custom_shift_types_csv', default_csv)
+				);
+				updates.push(
+					frappe.model.set_value(row.doctype, row.name, 'spm', spm)
+				);
+			}
+
+			// Keep parallel JSON in sync (no DB write here; it’s stored on parent)
+			if (from_schedule && row.row_name) {
+				_sync_parallel_schedule_override(frm, row.row_name, row_type, { custom_shift_types_csv: default_csv, spm });
+			}
+		});
+
+		if (!changed) return false;
+		_mark_form_dirty(frm);
+
+		if (!updates.length) return true;
+		return Promise.allSettled(updates).then(() => true);
+	});
+}
+
 function _parse_csv_list(csv_value) {
 	if (!csv_value) return [];
 	return String(csv_value)
 		.split(',')
 		.map(value => value.trim())
 		.filter(Boolean);
+}
+
+function _shift_count_from_row(data) {
+	const csv = data?.custom_shift_types_csv || '';
+	const count = _parse_csv_list(csv).length;
+	return count > 0 ? count : 1;
 }
 
 function _machine_button_label(csv_value) {
@@ -1667,6 +1893,7 @@ function _machine_button_label(csv_value) {
 
 function _machine_summary_html(batchsize, csv_value) {
 	const count = _parse_csv_list(csv_value).length;
+	// Default shift multiplier = 1 if shift selection not present yet
 	const spm = Number(batchsize || 0) * count;
 	return `<div style="margin-top:4px;font-size:10px;color:#64748b;white-space:nowrap;">
 		<span>Machines: <strong>${count}</strong></span>
@@ -1685,7 +1912,8 @@ function _effective_spm_value(data) {
 	if (direct_spm > 0) return direct_spm;
 	const base_batchsize = Number(data.batchsize || 0);
 	const machine_count = Number(data.machine_count || _parse_csv_list(data.custom_workstations_csv).length || 0);
-	return base_batchsize * machine_count;
+	const shift_count = _shift_count_from_row(data);
+	return base_batchsize * machine_count * shift_count;
 }
 
 function _find_bpp_row(frm, row_name, row_type) {
@@ -1724,11 +1952,29 @@ function _machine_display_html(csv_value, batchsize, fallback_csv = '') {
 	</div>`;
 }
 
+function _shift_display_html(csv_value) {
+	const values = _parse_csv_list(csv_value || '');
+	const label = values.length ? values.join(', ') : 'Select';
+	return `<div style="height:100%;display:flex;align-items:center;width:100%;">
+		<div title="${frappe.utils.escape_html(label)}" style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;width:100%;text-align:left;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.35;">
+			${frappe.utils.escape_html(label)}
+		</div>
+	</div>`;
+}
+
 function _get_workstation_options(txt) {
+	return _get_link_options('Workstation', txt);
+}
+
+function _get_shift_type_options(txt) {
+	return _get_link_options('Shift Type', txt);
+}
+
+function _get_link_options(doctype, txt) {
 	return frappe.call({
 		method: 'frappe.desk.search.search_link',
 		args: {
-			doctype: 'Workstation',
+			doctype,
 			txt: txt || '',
 			page_length: 50
 		}
@@ -1900,6 +2146,168 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 }
 
 /**
+ * Creates a reusable inline tag autocomplete widget for Shift Types.
+ */
+function _create_inline_shift_editor(initial_csv, onchange) {
+	const wrapper = document.createElement('div');
+	wrapper.style.cssText = _TAG_WRAPPER_STYLE;
+
+	const tagsContainer = document.createElement('span');
+	tagsContainer.style.cssText = 'display:contents;';
+	wrapper.appendChild(tagsContainer);
+
+	const input = document.createElement('input');
+	input.type = 'text';
+	input.placeholder = 'Type to add…';
+	input.style.cssText = _TAG_INPUT_STYLE;
+	input.setAttribute('autocomplete', 'off');
+	wrapper.appendChild(input);
+
+	const dropdown = document.createElement('div');
+	dropdown.style.cssText = _DROPDOWN_STYLE;
+	dropdown.style.display = 'none';
+	wrapper.appendChild(dropdown);
+
+	let selected = _parse_csv_list(initial_csv);
+	let options = [];
+	let highlightIdx = -1;
+	let _searchTimeout = null;
+	let _destroyed = false;
+
+	function _renderTags() {
+		tagsContainer.innerHTML = _render_machine_tags(selected);
+		tagsContainer.querySelectorAll('.bpp-machine-tag-remove').forEach(btn => {
+			btn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				const val = btn.getAttribute('data-value');
+				selected = selected.filter(v => v !== val);
+				_renderTags();
+				_fireChange();
+			});
+		});
+		if (!selected.length) {
+			input.placeholder = 'Type to add…';
+		} else {
+			input.placeholder = '';
+		}
+	}
+
+	function _fireChange() {
+		if (onchange) onchange(selected.join(','));
+	}
+
+	function _renderDropdown() {
+		const filtered = options.filter(o => !selected.includes(o));
+		if (!filtered.length || _destroyed) {
+			dropdown.style.display = 'none';
+			dropdown.innerHTML = '';
+			return;
+		}
+		highlightIdx = Math.min(highlightIdx, filtered.length - 1);
+		dropdown.innerHTML = filtered.map((o, i) => {
+			const hl = i === highlightIdx ? _DROPDOWN_ITEM_HOVER : '';
+			return `<div class="bpp-machine-dd-item" data-value="${frappe.utils.escape_html(o)}" style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o)}</div>`;
+		}).join('');
+		dropdown.style.display = 'block';
+		dropdown.querySelectorAll('.bpp-machine-dd-item').forEach(item => {
+			item.addEventListener('mousedown', (e) => {
+				e.preventDefault();
+				const val = item.getAttribute('data-value');
+				if (val && !selected.includes(val)) {
+					selected.push(val);
+					_renderTags();
+					_fireChange();
+				}
+				input.value = '';
+				_searchOptions('');
+				input.focus();
+			});
+			item.addEventListener('mouseenter', () => {
+				item.style.background = '#EFF6FF';
+				item.style.color = '#1E40AF';
+			});
+			item.addEventListener('mouseleave', () => {
+				item.style.background = '';
+				item.style.color = '#334155';
+			});
+		});
+	}
+
+	function _searchOptions(txt) {
+		_get_shift_type_options(txt).then(results => {
+			if (_destroyed) return;
+			options = results || [];
+			highlightIdx = -1;
+			_renderDropdown();
+		});
+	}
+
+	input.addEventListener('input', () => {
+		clearTimeout(_searchTimeout);
+		_searchTimeout = setTimeout(() => _searchOptions(input.value), 200);
+	});
+
+	input.addEventListener('focus', () => {
+		_searchOptions(input.value);
+	});
+
+	input.addEventListener('blur', () => {
+		setTimeout(() => {
+			dropdown.style.display = 'none';
+		}, 200);
+	});
+
+	input.addEventListener('keydown', (e) => {
+		const filtered = options.filter(o => !selected.includes(o));
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			highlightIdx = highlightIdx < 0 ? 0 : Math.min(highlightIdx + 1, filtered.length - 1);
+			_renderDropdown();
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			highlightIdx = highlightIdx <= 0 ? 0 : highlightIdx - 1;
+			_renderDropdown();
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			if (filtered.length && highlightIdx >= 0 && highlightIdx < filtered.length) {
+				const val = filtered[highlightIdx];
+				if (!selected.includes(val)) {
+					selected.push(val);
+					_renderTags();
+					_fireChange();
+				}
+				input.value = '';
+				highlightIdx = 0;
+				_searchOptions('');
+			}
+		} else if (e.key === 'Backspace' && !input.value && selected.length) {
+			selected.pop();
+			_renderTags();
+			_fireChange();
+		}
+	});
+
+	wrapper.addEventListener('click', () => input.focus());
+
+	_renderTags();
+
+	return {
+		el: wrapper,
+		getValues: () => selected.slice(),
+		getCsv: () => selected.join(','),
+		setValues: (vals) => {
+			selected = vals.slice();
+			_renderTags();
+		},
+		focus: () => input.focus(),
+		destroy: () => {
+			_destroyed = true;
+			clearTimeout(_searchTimeout);
+		}
+	};
+}
+
+/**
  * AG Grid cell editor — inline tag autocomplete (no popup).
  */
 class WorkstationPopupEditor {
@@ -1923,7 +2331,12 @@ class WorkstationPopupEditor {
 		const row_name = this.params.row_name;
 		const row_type = this.params.row_type || 'sfg';
 		const machine_count = _parse_csv_list(csv).length;
-		const spm = Number(this.params.base_batchsize || 0) * machine_count;
+		let shift_count = 1;
+		if (frm && row_name) {
+			const row = _find_bpp_row(frm, row_name, row_type);
+			shift_count = _shift_count_from_row(row);
+		}
+		const spm = Number(this.params.base_batchsize || 0) * machine_count * shift_count;
 		if (frm && row_name) {
 			const row = _find_bpp_row(frm, row_name, row_type);
 			if (row) {
@@ -1976,6 +2389,67 @@ class WorkstationPopupEditor {
 	destroy() {
 		if (this._tags) this._tags.destroy();
 	}
+}
+
+/**
+ * AG Grid cell editor — Shift Type multi-select (popup).
+ */
+class ShiftPopupEditor {
+	init(params) {
+		this.params = params;
+		this._tags = _create_inline_shift_editor(
+			params.value || '',
+			(csv) => this._onTagChange(csv)
+		);
+		this.eGui = this._tags.el;
+		const popupWidth = Math.max(220, (params.column?.getActualWidth?.() || 240) - 16);
+		this.eGui.style.boxSizing = 'border-box';
+		this.eGui.style.width = `${popupWidth}px`;
+		this.eGui.style.minWidth = `${popupWidth}px`;
+		this.eGui.style.maxWidth = `${popupWidth}px`;
+		this.eGui.style.marginLeft = '8px';
+	}
+
+	async _onTagChange(csv) {
+		const frm = this.params.frm;
+		const row_name = this.params.row_name;
+		const row_type = this.params.row_type || 'sfg';
+		if (frm && row_name) {
+			const row = _find_bpp_row(frm, row_name, row_type);
+			if (row) {
+				row.custom_shift_types_csv = csv;
+				const machine_count = Number(row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
+				const batchsize = Number(row.batchsize || 0);
+				const shift_count = _shift_count_from_row({ custom_shift_types_csv: csv });
+				const spm = batchsize * machine_count * shift_count;
+				row.spm = spm;
+				_mark_form_dirty(frm);
+				if (row.doctype && row.name) {
+					await frappe.model.set_value(row.doctype, row.name, 'custom_shift_types_csv', csv);
+					await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+				}
+			}
+		}
+		_sync_parallel_schedule_override(frm, row_name, row_type, { custom_shift_types_csv: csv });
+		if (this.params.data) {
+			this.params.data.custom_shift_types_csv = csv;
+			this.params.data.spm = this.params.data.batchsize
+				? (Number(this.params.data.batchsize || 0)
+					* Number(this.params.data.machine_count || _parse_csv_list(this.params.data.custom_workstations_csv).length || 0)
+					* _shift_count_from_row({ custom_shift_types_csv: csv }))
+				: this.params.data.spm;
+		}
+		if (this.params.api) {
+			this.params.api.refreshCells({ force: true });
+		}
+	}
+
+	getGui() { return this.eGui; }
+	afterGuiAttached() { this._tags.focus(); }
+	getValue() { return this._tags.getCsv(); }
+	isPopup() { return true; }
+	getPopupPosition() { return 'under'; }
+	destroy() { if (this._tags) this._tags.destroy(); }
 }
 
 function _get_bom_options(item_code, current_bom) {
@@ -2115,6 +2589,66 @@ function _bind_fg_machine_selects(frm, wrapper) {
 	});
 }
 
+/** Shows CSV display for FG shift cells, opens inline tag editor on click */
+function _bind_fg_shift_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-shift-inline').each(function () {
+		const host = this;
+		const row_name = $(host).data('row-name');
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row) return;
+		const initial_csv = row.custom_shift_types_csv || '';
+		_render_fg_shift_display(host, initial_csv);
+	});
+
+	$(wrapper).find('.bpp-fg-shift-inline').off('click.bpp_shift').on('click.bpp_shift', function () {
+		const host = this;
+		if (host._editing) return;
+		const row_name = $(host).data('row-name');
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row) return;
+
+		host._editing = true;
+		host.innerHTML = '';
+		const editor = _create_inline_shift_editor(row.custom_shift_types_csv || '', (csv) => {
+			row.custom_shift_types_csv = csv;
+			const machine_count = Number(row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
+			const batchsize = Number(row.batchsize || 0);
+			const shift_count = _shift_count_from_row({ custom_shift_types_csv: csv });
+			const spm = batchsize * machine_count * shift_count;
+			row.spm = spm;
+			_render_fg_shift_display(host, csv);
+			frappe.model.set_value(row.doctype, row.name, 'custom_shift_types_csv', csv);
+			frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_shift_types_csv: csv });
+			_mark_form_dirty(frm);
+		});
+		host.appendChild(editor.el);
+		host._editor = editor;
+		editor.focus();
+
+		function _closeOnOutsideClick(ev) {
+			if (!host.contains(ev.target)) {
+				document.removeEventListener('mousedown', _closeOnOutsideClick, true);
+				const csv = editor.getCsv();
+				editor.destroy();
+				host._editing = false;
+				host._editor = null;
+				_render_fg_shift_display(host, csv);
+			}
+		}
+		setTimeout(() => document.addEventListener('mousedown', _closeOnOutsideClick, true), 50);
+	});
+}
+
+/** Renders comma-separated shift text in an FG cell */
+function _render_fg_shift_display(host, csv) {
+	const values = _parse_csv_list(csv);
+	const label = values.length ? values.join(', ') : 'Select';
+	host.innerHTML = `<div style="border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:6px 8px;font-size:12px;color:#334155;width:100%;text-align:left;box-sizing:border-box;cursor:pointer;" title="${frappe.utils.escape_html(label)}">
+		${frappe.utils.escape_html(label)}
+	</div>`;
+}
+
 /** Renders comma-separated machine text in an FG cell */
 function _render_fg_machine_display(host, csv) {
 	const values = _parse_csv_list(csv);
@@ -2134,66 +2668,94 @@ function _clear_parallel_schedule(frm) {
 function _on_par_bom_changed(frm, params, par_data) {
 	if (!params.data?._is_group || params.oldValue === params.newValue) return;
 
-	const sfg_row = _find_bpp_row(frm, params.data._row_name, 'sfg');
-	if (!sfg_row) return;
+	const row_table = params.data?._row_table || 'sfg';
+	const target_row = _find_bpp_row(frm, params.data._row_name, row_table);
+	if (!target_row) return;
 	const fieldname = params.colDef.field;
 
 	if (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool') {
 		_mark_bom_form_dirty(frm);
-		sfg_row[fieldname] = params.newValue;
+		target_row[fieldname] = params.newValue;
 		params.data[fieldname] = params.newValue;
 	}
 
 	if (fieldname === 'bom_no') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'bom_no', params.newValue).then(() => {
-			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'bom_no', params.newValue).then(() => {
+			_handle_bom_change(frm, target_row.name, params.newValue, row_table, { params, par_data });
 		}).catch(() => {
-			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+			_handle_bom_change(frm, target_row.name, params.newValue, row_table, { params, par_data });
 		});
 		return;
 	}
 
 	if (fieldname === 'tool') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'tool', params.newValue).then(() => {
-			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'tool', params.newValue).then(() => {
+			_handle_tool_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		}).catch(() => {
-			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+			_handle_tool_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		});
 		return;
 	}
 
 	if (fieldname === 'custom_workstations_csv') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'custom_workstations_csv', params.newValue).then(() => {
-			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'custom_workstations_csv', params.newValue).then(() => {
+			_handle_workstation_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		}).catch(() => {
-			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+			_handle_workstation_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		});
 	}
 
 	if (fieldname === 'type') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'type_of_manufacturing', params.newValue).then(() => {
-			_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { type_of_manufacturing: params.newValue });
+		if (row_table === 'fg') {
+			frappe.model.set_value(target_row.doctype, target_row.name, 'manufacturing_type', params.newValue).then(() => {
+				_sync_parallel_schedule_override(frm, target_row.name, 'fg', { manufacturing_type: params.newValue });
+				
+				if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
+					frappe.call({
+						method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+						args: { item_code: target_row.item_code, company: frm.doc.company },
+						callback: function(r) {
+							if (r.message && r.message !== target_row.custom_supplier) {
+								frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', r.message).then(() => {
+									params.node.setDataValue('supplier', r.message);
+									_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: r.message });
+								});
+							}
+						}
+					});
+				} else if (params.newValue === 'In House') {
+					frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', '').then(() => {
+						params.node.setDataValue('supplier', '');
+						_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: '' });
+					});
+				}
+			});
+			return;
+		}
+
+		frappe.model.set_value(target_row.doctype, target_row.name, 'type_of_manufacturing', params.newValue).then(() => {
+			_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { type_of_manufacturing: params.newValue });
 			
 			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
 				frappe.call({
 					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
 					args: {
-						item_code: sfg_row.production_item || sfg_row.item_code,
+						item_code: target_row.production_item || target_row.item_code,
 						company: frm.doc.company
 					},
 					callback: function(r) {
-						if (r.message && r.message !== sfg_row.supplier) {
-							frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', r.message).then(() => {
+						if (r.message && r.message !== target_row.supplier) {
+							frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);
-								_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: r.message });
+								_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: r.message });
 							});
 						}
 					}
 				});
 			} else if (params.newValue === 'In House') {
-				frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', '').then(() => {
+				frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', '').then(() => {
 					params.node.setDataValue('supplier', '');
-					_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: '' });
+					_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: '' });
 				});
 			}
 		});
@@ -2296,6 +2858,15 @@ function _run_bom_change_recalculation(frm) {
 
 function _mark_bom_form_dirty(frm) {
 	frm._bom_changed = true;
+	frm.doc.__unsaved = 1;
+	frm.dirty();
+	if (typeof frm.refresh_header === 'function') {
+		frm.refresh_header();
+	}
+}
+
+function _mark_form_dirty(frm) {
+	// Marks the form dirty without triggering BOM recalculation on save.
 	frm.doc.__unsaved = 1;
 	frm.dirty();
 	if (typeof frm.refresh_header === 'function') {
