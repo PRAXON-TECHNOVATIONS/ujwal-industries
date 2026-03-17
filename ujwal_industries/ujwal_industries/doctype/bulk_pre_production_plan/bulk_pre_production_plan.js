@@ -566,6 +566,8 @@ function _render_sequential_grid(frm, so_data, container) {
 	_bind_fg_tool_selects(frm, fg_div);
 	_bind_fg_machine_selects(frm, fg_div);
 	_bind_fg_shift_selects(frm, fg_div);
+	_bind_fg_mfg_type_selects(frm, fg_div);
+	_bind_fg_supplier_inputs(frm, fg_div);
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -831,8 +833,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			
 			const batches = fg.batches || [];
 			const is_exps = !!_expandeds[fg.item_code];
+			const fg_type = fg.manufacturing_type || fg.custom_manufacturing_type || fg.type_of_manufacturing || 'In House';
+			const fg_supplier = fg.custom_supplier || fg.supplier || '';
 			rows.push({
 				_is_group: true,
+				_row_table: 'fg',
 				_expandeds: is_exps,
 				_fg_idx: idx,
 				_row_name: fg.row_name,
@@ -842,9 +847,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				tools: fg.tools || [],
 				custom_workstations_csv: fg.custom_workstations_csv || '',
 				custom_shift_types_csv: fg.custom_shift_types_csv || '',
-				type: fg.type_of_manufacturing,
+				type: fg_type,
 				target_warehouse: fg.target_warehouse || '',
-				supplier: fg.supplier,
+				supplier: fg_supplier,
 				// supplier_list: sfg.supplier_list || [],
 				total_batches: batches.length,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
@@ -857,6 +862,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			if (is_exps) {
 				batches.forEach(b => rows.push({
 					_is_group: false,
+					_row_table: 'fg',
 					_fg_idx: idx,
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
@@ -1084,13 +1090,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
-				values: ['In House', 'Subcontract']
+				values: ['In House', 'Subcontract', 'In House - Vendor']
 			},
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 
 				if (p.value === 'Subcontract') {
 					return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				}
+				if (p.value === 'In House - Vendor') {
+					return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
 				}
 
 				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
@@ -1540,7 +1549,9 @@ function _fg_section_html(fg_items, so_name) {
 	if (!fg_items || !fg_items.length) return '';
 	const rows = fg_items.map(item => {
 		const mfg_type = item.manufacturing_type || item.custom_manufacturing_type || 'In House';
-		const badge_color = mfg_type === 'In House' ? '#059669' : '#2563EB';
+		let badge_color = '#059669';
+		if (mfg_type === 'Subcontract') badge_color = '#d97706';
+		else if (mfg_type === 'In House - Vendor') badge_color = '#0284c7';
 		const start = _format_bpp_date(item.planned_start_date);
 		const end = _format_bpp_date(item.custom_planned_end_date);
 		const qty = Number(item.planned_qty || item.qty || 0).toLocaleString('en-IN');
@@ -1554,7 +1565,29 @@ function _fg_section_html(fg_items, so_name) {
 			</td>
 			<td style="padding:10px 14px; text-align:right; font-variant-numeric:tabular-nums;
 				color:#334155; font-weight:600;">${qty}</td>
-			<td style="padding:10px 14px;">${_badge(mfg_type, badge_color)}</td>
+			<td style="padding:10px 14px;">
+				<div style="display:flex; align-items:center; gap:8px;">
+					${_badge(mfg_type, badge_color)}
+					<select
+						class="bpp-fg-mfg-type"
+						data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+						style="min-width:155px;padding:4px 6px;border:1px solid #CBD5E1;border-radius:4px;background:#fff;font-size:12px;color:#475569;"
+					>
+						<option value="In House"${mfg_type === 'In House' ? ' selected' : ''}>In House</option>
+						<option value="Subcontract"${mfg_type === 'Subcontract' ? ' selected' : ''}>Subcontract</option>
+						<option value="In House - Vendor"${mfg_type === 'In House - Vendor' ? ' selected' : ''}>In House - Vendor</option>
+					</select>
+				</div>
+			</td>
+			<td style="padding:10px 14px;">
+				<input
+					class="bpp-fg-supplier"
+					data-row-name="${frappe.utils.escape_html(item.name || item.row_name || '')}"
+					value="${frappe.utils.escape_html(item.custom_supplier || '')}"
+					placeholder="Supplier"
+					style="min-width:180px;padding:5px 8px;border:1px solid #CBD5E1;border-radius:4px;background:#fff;font-size:12px;color:#334155;"
+				/>
+			</td>
 			<td style="padding:10px 14px; color:#334155; font-weight:600;">
 				${item.target_warehouse || '—'}
 			</td>
@@ -1625,6 +1658,7 @@ function _fg_section_html(fg_items, so_name) {
 						<th style="${_th_style()}">Item Code</th>
 						<th style="${_th_style('right')}">Qty</th>
 						<th style="${_th_style()}">Mfg Type</th>
+						<th style="${_th_style()}">Supplier</th>
 						<th style="${_th_style()}">Target Warehouse</th>
 						<th style="${_th_style()}">Start Date</th>
 						<th style="${_th_style()}">End Date</th>
@@ -1637,6 +1671,53 @@ function _fg_section_html(fg_items, so_name) {
 				<tbody>${rows}</tbody>
 			</table>
 		</div>`;
+}
+
+function _bind_fg_mfg_type_selects(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-mfg-type').off('change').on('change', function () {
+		const row_name = $(this).data('row-name');
+		const new_type = $(this).val();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || !new_type || row.manufacturing_type === new_type) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'manufacturing_type', new_type).then(() => {
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { manufacturing_type: new_type });
+
+			// Auto-fetch/clear supplier like SFG planner behavior
+			if (['Subcontract', 'In House - Vendor'].includes(new_type)) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+					args: { item_code: row.item_code, company: frm.doc.company },
+					callback: function (r) {
+						if (r.message && r.message !== row.custom_supplier) {
+							frappe.model.set_value(row.doctype, row.name, 'custom_supplier', r.message).then(() => {
+								$(wrapper).find(`.bpp-fg-supplier[data-row-name="${row.name}"]`).val(r.message);
+								_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: r.message });
+							});
+						}
+					}
+				});
+			} else {
+				frappe.model.set_value(row.doctype, row.name, 'custom_supplier', '').then(() => {
+					$(wrapper).find(`.bpp-fg-supplier[data-row-name="${row.name}"]`).val('');
+					_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: '' });
+				});
+			}
+		});
+	});
+}
+
+function _bind_fg_supplier_inputs(frm, wrapper) {
+	$(wrapper).find('.bpp-fg-supplier').off('change blur').on('change blur', function () {
+		const row_name = $(this).data('row-name');
+		const new_supplier = ($(this).val() || '').trim();
+		const row = _find_bpp_row(frm, row_name, 'fg');
+		if (!row || row.custom_supplier === new_supplier) return;
+
+		frappe.model.set_value(row.doctype, row.name, 'custom_supplier', new_supplier).then(() => {
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_supplier: new_supplier });
+		});
+	});
 }
 
 function _collect_bom_item_codes(so_map, mode, parallel_data) {
@@ -2587,66 +2668,94 @@ function _clear_parallel_schedule(frm) {
 function _on_par_bom_changed(frm, params, par_data) {
 	if (!params.data?._is_group || params.oldValue === params.newValue) return;
 
-	const sfg_row = _find_bpp_row(frm, params.data._row_name, 'sfg');
-	if (!sfg_row) return;
+	const row_table = params.data?._row_table || 'sfg';
+	const target_row = _find_bpp_row(frm, params.data._row_name, row_table);
+	if (!target_row) return;
 	const fieldname = params.colDef.field;
 
 	if (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool') {
 		_mark_bom_form_dirty(frm);
-		sfg_row[fieldname] = params.newValue;
+		target_row[fieldname] = params.newValue;
 		params.data[fieldname] = params.newValue;
 	}
 
 	if (fieldname === 'bom_no') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'bom_no', params.newValue).then(() => {
-			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'bom_no', params.newValue).then(() => {
+			_handle_bom_change(frm, target_row.name, params.newValue, row_table, { params, par_data });
 		}).catch(() => {
-			_handle_bom_change(frm, sfg_row.name, params.newValue, 'sfg', { params, par_data });
+			_handle_bom_change(frm, target_row.name, params.newValue, row_table, { params, par_data });
 		});
 		return;
 	}
 
 	if (fieldname === 'tool') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'tool', params.newValue).then(() => {
-			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'tool', params.newValue).then(() => {
+			_handle_tool_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		}).catch(() => {
-			_handle_tool_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+			_handle_tool_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		});
 		return;
 	}
 
 	if (fieldname === 'custom_workstations_csv') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'custom_workstations_csv', params.newValue).then(() => {
-			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+		frappe.model.set_value(target_row.doctype, target_row.name, 'custom_workstations_csv', params.newValue).then(() => {
+			_handle_workstation_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		}).catch(() => {
-			_handle_workstation_change(frm, sfg_row.name, 'sfg', params.newValue, { params, par_data });
+			_handle_workstation_change(frm, target_row.name, row_table, params.newValue, { params, par_data });
 		});
 	}
 
 	if (fieldname === 'type') {
-		frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'type_of_manufacturing', params.newValue).then(() => {
-			_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { type_of_manufacturing: params.newValue });
+		if (row_table === 'fg') {
+			frappe.model.set_value(target_row.doctype, target_row.name, 'manufacturing_type', params.newValue).then(() => {
+				_sync_parallel_schedule_override(frm, target_row.name, 'fg', { manufacturing_type: params.newValue });
+				
+				if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
+					frappe.call({
+						method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+						args: { item_code: target_row.item_code, company: frm.doc.company },
+						callback: function(r) {
+							if (r.message && r.message !== target_row.custom_supplier) {
+								frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', r.message).then(() => {
+									params.node.setDataValue('supplier', r.message);
+									_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: r.message });
+								});
+							}
+						}
+					});
+				} else if (params.newValue === 'In House') {
+					frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', '').then(() => {
+						params.node.setDataValue('supplier', '');
+						_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: '' });
+					});
+				}
+			});
+			return;
+		}
+
+		frappe.model.set_value(target_row.doctype, target_row.name, 'type_of_manufacturing', params.newValue).then(() => {
+			_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { type_of_manufacturing: params.newValue });
 			
 			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
 				frappe.call({
 					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
 					args: {
-						item_code: sfg_row.production_item || sfg_row.item_code,
+						item_code: target_row.production_item || target_row.item_code,
 						company: frm.doc.company
 					},
 					callback: function(r) {
-						if (r.message && r.message !== sfg_row.supplier) {
-							frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', r.message).then(() => {
+						if (r.message && r.message !== target_row.supplier) {
+							frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);
-								_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: r.message });
+								_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: r.message });
 							});
 						}
 					}
 				});
 			} else if (params.newValue === 'In House') {
-				frappe.model.set_value(sfg_row.doctype, sfg_row.name, 'supplier', '').then(() => {
+				frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', '').then(() => {
 					params.node.setDataValue('supplier', '');
-					_sync_parallel_schedule_override(frm, sfg_row.name, 'sfg', { supplier: '' });
+					_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: '' });
 				});
 			}
 		});

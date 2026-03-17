@@ -1281,11 +1281,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
 				
 				holiday_count = 0
-				if sfg_row.get('type_of_manufacturing') == 'In House':
+				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
 					holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
 
 				holiday_dates =[]
-				if sfg_row.get('type_of_manufacturing') == 'In House':
+				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
 					for h in holidays:
 						if getdate(start_dt) < h <= getdate(end_dt):
 							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
@@ -1343,7 +1343,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
    
 			pm_days = 0
-			if sfg.type_of_manufacturing in "In House":
+			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 				pm_days       = int(tool_info.get("pm_days", 0))
 
 			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
@@ -1381,7 +1381,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			mfg_days_b0 = math.ceil(batch0_qty / per_shift_qty) if per_shift_qty > 0 else 1
    
 			hc_b0 = 0
-			if sfg.type_of_manufacturing in "In House":
+			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 				hc_b0 = sum(1 for h in holidays if getdate(b0_start) < h <= getdate(b0_end))
     
 			batch_rows: list[dict] = [{
@@ -1403,11 +1403,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				end_dt      = _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config) \
 				              if grn_days > 0 else mfg_end_dt
 				hc = 0
-				if sfg.type_of_manufacturing in "In House":
+				if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 					hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
 	
 				holiday_dates =[]
-				if sfg.type_of_manufacturing in "In House":
+				if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 					for h in holidays:
 						if getdate(start_dt) < h <= getdate(end_dt):
 							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
@@ -2998,8 +2998,8 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 			(name, creation, modified, modified_by, owner, docstatus, parent, parenttype, parentfield, idx,
 			 item_code, bom_no, planned_qty, planned_start_date, custom_planned_end_date,
 			 sales_order, sales_order_item, warehouse, target_warehouse, description, stock_uom, product_bundle_item,
-			 custom_manufacturing_type)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			 custom_manufacturing_type, custom_supplier)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 		""", (
 			frappe.generate_hash(length=10),
 			now, now, user, user, 0,
@@ -3008,7 +3008,8 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 			getattr(fg, 'custom_planned_end_date', None),
 			fg.sales_order, fg.sales_order_item, fg.warehouse, getattr(fg, 'target_warehouse', None),
 			fg.description, fg.stock_uom, fg.product_bundle_item,
-			getattr(fg, 'manufacturing_type', 'In House')
+			getattr(fg, 'manufacturing_type', 'In House'),
+			getattr(fg, "custom_supplier", None)
 		))
 
 	# Insert SFG items (sub_assembly_items)
