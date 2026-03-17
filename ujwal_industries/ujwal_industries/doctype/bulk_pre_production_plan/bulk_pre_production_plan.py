@@ -402,6 +402,10 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				row.custom_workstations_csv = fg_data.get("custom_workstations_csv")
 			if "tool" in fg_data:
 				row.tool = fg_data.get("tool") or ""
+			if "custom_shift_types_csv" in fg_data:
+				row.custom_shift_types_csv = fg_data.get("custom_shift_types_csv") or ""
+			if "spm" in fg_data:
+				row.spm = fg_data.get("spm") or 0
 
 		for sfg_data in so_data.get("sfg_chain") or []:
 			row = sfg_map.get((sfg_data or {}).get("row_name"))
@@ -419,7 +423,10 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				row.custom_workstations_csv = sfg_data.get("custom_workstations_csv")
 			if "tool" in sfg_data:
 				row.tool = sfg_data.get("tool") or ""
-
+			if "custom_shift_types_csv" in sfg_data:
+				row.custom_shift_types_csv = sfg_data.get("custom_shift_types_csv") or ""
+			if "spm" in sfg_data:
+				row.spm = sfg_data.get("spm") or 0
 
 def _get_selected_bom_map(doc: Document, so_name: str) -> dict[str, str]:
 	"""Map Sales Order Item row name to user-selected BOM."""
@@ -442,6 +449,7 @@ def _get_existing_fg_workstation_map(doc: Document, so_name: str) -> dict[str, d
 			result[row.sales_order_item] = {
 				"bom_no": getattr(row, "bom_no", "") or "",
 				"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
+				"custom_shift_types_csv": getattr(row, "custom_shift_types_csv", "") or "",
 				"tool": getattr(row, "tool", "") or "",
 			}
 	return result
@@ -461,6 +469,7 @@ def _get_existing_sfg_workstation_map(doc: Document, so_name: str) -> dict[tuple
 		)
 		result[key] = {
 			"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
+			"custom_shift_types_csv": getattr(row, "custom_shift_types_csv", "") or "",
 			"tool": getattr(row, "tool", "") or "",
 		}
 	return result
@@ -1300,12 +1309,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				})
 			return batch_rows
 
-		# ── Get FG deadline = SO delivery_date (always fresh, never stale planned_start_date) ──
+		# ── Get FG deadline = SO delivery_date (always fresh) ───────────────────
 		_so_del = frappe.db.get_value("Sales Order", so_name, "delivery_date")
-		fg_planned_start_dt = get_datetime(_so_del) if _so_del else today_dt
-		# If delivery_date is in the past and backdating not allowed → start from today
-		if not allow_backdated and fg_planned_start_dt < today_dt:
-			fg_planned_start_dt = today_dt
+		fg_deadline_dt = get_datetime(_so_del) if _so_del else today_dt
+		# If delivery_date is in the past and backdating not allowed → anchor from today
+		if not allow_backdated and fg_deadline_dt < today_dt:
+			fg_deadline_dt = today_dt
 
 		# ── SFG chain: BACKWARD from FG.planned_start ────────────────────────
 		# Process level-0 first (direct child of FG), deepest last.
@@ -1313,9 +1322,26 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		sfg_rows_sorted = sorted(items["sfg"], key=lambda r: r.bom_level or 0)  # level 0 first
 
 		sfg_chain_bwd: list[dict] = []   # [level0, level1, ..., deepest]
-		# Initial deadline uses the first SFG's shift selection (row-wise scheduling)
+		# Compute FG start by backward-scheduling FG duration from the SO delivery deadline.
+		# This ensures FG ends at delivery (or as close as possible) rather than starting on delivery.
+		fg_start_anchor_dt = fg_deadline_dt
+		if items.get("fg"):
+			fg0 = items["fg"][0]
+			fg0_cfg = _get_row_shift_config(fg0)
+			_fg0_cache = _fetch_bom_operations_cache([fg0.bom_no]) if getattr(fg0, "bom_no", None) else {}
+			fg0_prod_mins = _calculate_row_production_minutes(fg0, flt(getattr(fg0, "planned_qty", 0) or 0), _fg0_cache)
+			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
+			if fg0_prod_mins and fg0_prod_mins > 0:
+				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
+				if not allow_backdated and _fg0_start < today_dt:
+					_fg0_start = _snap_start(today_dt, fg0_cfg)
+				fg_start_anchor_dt = _fg0_start
+			else:
+				fg_start_anchor_dt = _fg0_deadline
+
+		# Initial SFG deadline = FG start (row-wise shift snapping for first SFG)
 		first_sfg_cfg = _get_row_shift_config(sfg_rows_sorted[0]) if sfg_rows_sorted else default_shift_config
-		deadline_dt = _snap_start(fg_planned_start_dt, first_sfg_cfg)
+		deadline_dt = _snap_start(fg_start_anchor_dt, first_sfg_cfg)
 
 		for sfg in sfg_rows_sorted:
 			shift_config = _get_row_shift_config(sfg)
@@ -1446,14 +1472,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# sfg_chain_bwd[-1] = deepest (last processed), sfg_chain_bwd[0] = level 0
 		sfg_chain_out: list[dict] = []
 		fg_start_override: "datetime | None" = None
-		deepest_sfg_has_linked_rm = bool(
-			sfg_chain_bwd
-			and sfg_bom_links.get(sfg_chain_bwd[-1].get("bom_no") or "")
-		)
-
-		if sfg_chain_bwd and (
+		# Push forward only when backdating is disallowed and the computed plan would start in the past.
+		# Do NOT force-forward just because there are no RM links; Bulk PP is a planner and must
+		# still anchor to the SO delivery date for future delivery scenarios (e.g., Sept delivery).
+		if sfg_chain_bwd and (not allow_backdated) and (
 			get_datetime(sfg_chain_bwd[-1]["batches"][0]["start_date"]) < today_dt
-			or not deepest_sfg_has_linked_rm
 		):
 			# Preserve original behaviour: the cascade anchor is "today" in the
 			# default/global shift context. Row-wise shifts only affect the row's
@@ -1516,10 +1539,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					rm_start = _snap_start(today_dt, default_shift_config)
 					rm_end   = _snap_end(_working_day_add(today_dt, total_days, default_holidays), default_shift_config)
 				else:
-					# rm_start_ideal is in the future — order TODAY to get material ASAP.
-					# rm_end = today + lead+grn days; SFG cascade will pull production forward.
-					rm_start = _snap_start(today_dt, default_shift_config)
-					rm_end   = _snap_end(_working_day_add(today_dt, total_days, default_holidays), default_shift_config)
+					# We have enough time: keep the plan anchored to the delivery-driven schedule.
+					# Receive material exactly when deepest SFG starts, and place the order by rm_start_ideal.
+					rm_start = _snap_start(get_datetime(rm_start_ideal), default_shift_config)
+					rm_end   = _snap_end(get_datetime(rm_end_ideal), default_shift_config)
 			else:
 				rm_start = _snap_start(today_dt, default_shift_config)
 				rm_end   = _snap_end(_working_day_add(today_dt, total_days, default_holidays), default_shift_config)
@@ -2064,6 +2087,11 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			if existing_fg_ws.get("bom_no") == bom
 			else ""
 		)
+		existing_fg_shift = (
+			existing_fg_ws.get("custom_shift_types_csv")
+			if existing_fg_ws.get("bom_no") == bom
+			else ""
+		)
 		tool_details = _get_bom_spm_details_map(bom, selected_tool=existing_fg_tool or None)
 
 		# Add to po_items (FG items)
@@ -2091,6 +2119,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 				or bom_spm_details.get('workstations_csv')
 				or ''
 			),
+			'custom_shift_types_csv': existing_fg_shift or "",
 			'planned_qty': item.qty,
 			'stock_uom': item.stock_uom,
 			'warehouse': warehouse,
