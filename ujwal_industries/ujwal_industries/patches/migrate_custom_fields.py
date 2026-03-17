@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Ujwal Industries and contributors
 # For license information, please see license.txt
 
-from .custom_fields import serial_no, manufacturing_settings
+from .custom_fields import manufacturing_settings, serial_no
 
 
 def run_all():

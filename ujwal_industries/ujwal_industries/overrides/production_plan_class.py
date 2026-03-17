@@ -32,19 +32,24 @@ class CustomProductionPlan(ProductionPlan):
 
         wo_list, po_list = [], []
         subcontracted_po = {}
+        vendor_po_dict = {}
         default_warehouses = get_default_warehouse()
 
-        # Modified: pass subcontracted_po to FG method
-        self.make_work_order_for_finished_goods(wo_list, subcontracted_po, default_warehouses)
-        self.make_work_order_for_subassembly_items(wo_list, subcontracted_po, default_warehouses)
+        # Modified: pass subcontracted_po and vendor_po_dict to FG method
+        self.make_work_order_for_finished_goods(wo_list, subcontracted_po, vendor_po_dict, default_warehouses)
+        self.make_work_order_for_subassembly_items(wo_list, subcontracted_po, vendor_po_dict, default_warehouses)
+        
         self.make_subcontracted_purchase_order(subcontracted_po, po_list)
+        self.make_vendor_purchase_orders(vendor_po_dict, po_list)
+        
         self.show_list_created_message("Work Order", wo_list)
         self.show_list_created_message("Purchase Order", po_list)
 
-    def make_work_order_for_finished_goods(self, wo_list, subcontracted_po, default_warehouses):
+    def make_work_order_for_finished_goods(self, wo_list, subcontracted_po, vendor_po_dict, default_warehouses):
         """
-        Override to handle FG subcontracting.
+        Override to handle FG subcontracting and FG vendor labor items.
         If FG has custom_manufacturing_type == "Subcontract", add to subcontracted_po instead.
+        If FG is "In House - Vendor", add to vendor_po_dict AND create Work Order.
         """
         items_data = self.get_production_items()
 
@@ -82,7 +87,19 @@ class CustomProductionPlan(ProductionPlan):
                     )
                 continue
 
-            # Regular In House FG item - create Work Order (original logic)
+            if fg_row and fg_row.get("custom_manufacturing_type") == "In House - Vendor":
+                supplier = fg_row.get("custom_supplier")
+                if supplier:
+                    vendor_po_dict.setdefault(supplier, []).append({
+                        "is_fg": True,
+                        "item_code": fg_row.item_code,
+                        "bom_no": fg_row.bom_no,
+                        "qty": flt(fg_row.planned_qty) - flt(fg_row.ordered_qty),
+                        "schedule_date": fg_row.planned_start_date,
+                        "production_plan_item": fg_row.name,
+                    })
+
+            # Regular In House or In House - Vendor FG item - create Work Order
             if self.sub_assembly_items:
                 item["use_multi_level_bom"] = 0
 
@@ -90,6 +107,68 @@ class CustomProductionPlan(ProductionPlan):
             work_order = self.create_work_order(item)
             if work_order:
                 wo_list.append(work_order)
+
+    def make_work_order_for_subassembly_items(self, wo_list, subcontracted_po, vendor_po_dict, default_warehouses):
+        for row in self.sub_assembly_items:
+            if row.type_of_manufacturing == "Subcontract":
+                subcontracted_po.setdefault(row.supplier, []).append(row)
+                continue
+
+            if getattr(row, "type_of_manufacturing", None) == "In House - Vendor":
+                vendor_po_dict.setdefault(row.supplier, []).append({
+                    "is_fg": False,
+                    "item_code": row.production_item,
+                    "bom_no": row.bom_no,
+                    "qty": flt(row.qty) - flt(row.ordered_qty),
+                    "schedule_date": row.schedule_date,
+                    "production_plan_sub_assembly_item": row.name,
+                })
+
+            if row.type_of_manufacturing == "Material Request":
+                continue
+
+            work_order_data = {
+                "wip_warehouse": default_warehouses.get("wip_warehouse"),
+                "fg_warehouse": default_warehouses.get("fg_warehouse"),
+                "company": self.get("company"),
+            }
+
+            if flt(row.qty) <= flt(row.ordered_qty):
+                continue
+
+            self.prepare_data_for_sub_assembly_items(row, work_order_data)
+
+            if work_order_data.get("qty") <= 0:
+                continue
+
+            work_order = self.create_work_order(work_order_data)
+            if work_order:
+                wo_list.append(work_order)
+                
+    def prepare_data_for_sub_assembly_items(self, row, wo_data):
+        for field in [
+            "production_item",
+            "item_name",
+            "qty",
+            "fg_warehouse",
+            "description",
+            "bom_no",
+            "stock_uom",
+            "bom_level",
+            "schedule_date",
+        ]:
+            if row.get(field):
+                wo_data[field] = row.get(field)
+
+        wo_data["qty"] = flt(row.get("qty")) - flt(row.get("ordered_qty"))
+
+        wo_data.update(
+            {
+                "use_multi_level_bom": 0,
+                "production_plan": self.name,
+                "production_plan_sub_assembly_item": row.name,
+            }
+        )
 
     def make_subcontracted_purchase_order(self, subcontracted_po, purchase_orders):
         """
@@ -159,6 +238,74 @@ class CustomProductionPlan(ProductionPlan):
             po.flags.ignore_validate = True
             po.insert()
             purchase_orders.append(po.name)
+
+    def make_vendor_purchase_orders(self, vendor_po_dict, purchase_orders):
+        """
+        Create regular processing Purchase Orders for In House - Vendor items.
+        Extracts Service Items from Subcontracting BOM.
+        """
+        if not vendor_po_dict:
+            return
+
+        for supplier, item_list in vendor_po_dict.items():
+            po = frappe.new_doc("Purchase Order")
+            po.company = self.company
+            po.supplier = supplier
+            po.is_subcontracted = 0
+
+            # Get schedule date from first item
+            first_item = item_list[0]
+            po.schedule_date = getdate(first_item.get("schedule_date")) if first_item.get("schedule_date") else nowdate()
+
+            # Consolidate items by service item
+            service_item_map = {}
+
+            for row in item_list:
+                qty = row.get("qty", 0)
+                if qty <= 0:
+                    continue
+                    
+                item_code = row.get("item_code")
+                bom_no = row.get("bom_no")
+                
+                # Fetch Subcontracting BOM
+                sub_bom = frappe.db.get_value(
+                    "Subcontracting BOM", 
+                    {"finished_good": item_code, "finished_good_bom": bom_no, "is_active": 1},
+                    ["name", "service_item", "conversion_factor"],
+                    as_dict=True
+                )
+                
+                if not sub_bom:
+                    frappe.msgprint(_("No active Subcontracting BOM found for Item {0} and BOM {1}").format(item_code, bom_no))
+                    continue
+                
+                service_item = sub_bom.service_item
+                conversion_factor = flt(sub_bom.conversion_factor) or 1
+                required_service_qty = flt(qty) * conversion_factor
+                
+                if service_item not in service_item_map:
+                    service_item_map[service_item] = {
+                        "item_code": service_item,
+                        "qty": 0.0,
+                        "schedule_date": row.get("schedule_date")
+                    }
+                    
+                service_item_map[service_item]["qty"] += required_service_qty
+
+            for srv_item, srv_data in service_item_map.items():
+                po.append("items", {
+                    "item_code": srv_item,
+                    "qty": srv_data["qty"],
+                    "schedule_date": srv_data["schedule_date"]
+                })
+
+            if po.items:
+                po.set_missing_values()
+                po.flags.ignore_mandatory = True
+                po.flags.ignore_validate = True
+                po.insert()
+                purchase_orders.append(po.name)
 
     def create_work_order(self, item):
         from erpnext.manufacturing.doctype.work_order.work_order import OverProductionError
