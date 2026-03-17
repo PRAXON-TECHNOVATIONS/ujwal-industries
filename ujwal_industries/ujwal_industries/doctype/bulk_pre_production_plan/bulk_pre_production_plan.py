@@ -2790,6 +2790,21 @@ def create_production_plans_document(bulk_pp_name) :
 					'fg_warehouse' : warehouse,
 					'custom_workstation' : j.get('custom_workstations_csv'),
 				})
+		
+		for j in so_details.get('mr'):
+			warehouse = ''
+			item_doc = frappe.get_doc("Item", j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+			pp_doc.append('mr_items',{
+				'item_code' :  j.get('item_code'),
+				'item_name' :  j.get('item_name'),
+				'warehouse' :  warehouse,
+				'custom_start_date' :  j.get('start_date'),
+				'schedule_date' :  j.get('end_date'),
+				'quantity' :  j.get('qty'),
+				'custom_supplier' :  j.get('supplier'),
+			})
 		pp_doc.save()
  
  
