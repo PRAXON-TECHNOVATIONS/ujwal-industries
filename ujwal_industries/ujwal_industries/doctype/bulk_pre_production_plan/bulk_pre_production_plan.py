@@ -1219,6 +1219,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, effective_spm, per_shift_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			print("......sfg_row........",sfg_row)
 			batch_rows = []
 			for b_idx, batch_qty in enumerate(batches_qty):
 				mfg_days_b = math.ceil(batch_qty / per_shift_qty) if per_shift_qty > 0 else 1
@@ -1235,13 +1236,17 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
 				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays))
-				holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
-    
+				
+				holiday_count = 0
+				if sfg_row.get('type_of_manufacturing') == 'In House':
+					holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+
 				holiday_dates =[]
-				for h in holidays:
-					if getdate(start_dt) < h <= getdate(end_dt):
-						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
-						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+				if sfg_row.get('type_of_manufacturing') == 'In House':
+					for h in holidays:
+						if getdate(start_dt) < h <= getdate(end_dt):
+							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+							holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
       
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches_qty), "qty": batch_qty,
@@ -1285,7 +1290,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			supplier_list = [d.supplier for d in item_suppliers]
    
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
-			pm_days       = int(tool_info.get("pm_days", 0))
+   
+			pm_days = 0
+			if sfg.type_of_manufacturing in "In House":
+				pm_days       = int(tool_info.get("pm_days", 0))
 
 			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
     
@@ -1317,7 +1325,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			b0_end     = deadline_dt
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_shift_qty) if per_shift_qty > 0 else 1
-			hc_b0 = sum(1 for h in holidays if getdate(b0_start) < h <= getdate(b0_end))
+   
+			hc_b0 = 0
+			if sfg.type_of_manufacturing in "In House":
+				hc_b0 = sum(1 for h in holidays if getdate(b0_start) < h <= getdate(b0_end))
+    
 			batch_rows: list[dict] = [{
 				"batch": 1, "total": len(batches), "qty": batch0_qty,
 				"mfg_days": mfg_days_b0, "grn_days": grn_days,
@@ -1336,13 +1348,16 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				is_last     = (b_idx == len(batches) - 1)
 				end_dt      = _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays)) \
 				              if grn_days > 0 else mfg_end_dt
-				hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
-    
+				hc = 0
+				if sfg.type_of_manufacturing in "In House":
+					hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+	
 				holiday_dates =[]
-				for h in holidays:
-					if getdate(start_dt) < h <= getdate(end_dt):
-						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
-						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+				if sfg.type_of_manufacturing in "In House":
+					for h in holidays:
+						if getdate(start_dt) < h <= getdate(end_dt):
+							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+							holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
       
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches), "qty": batch_qty,
