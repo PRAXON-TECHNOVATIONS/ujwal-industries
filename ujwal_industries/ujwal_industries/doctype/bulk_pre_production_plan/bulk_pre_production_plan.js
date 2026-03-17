@@ -2414,23 +2414,35 @@ class ShiftPopupEditor {
 		const frm = this.params.frm;
 		const row_name = this.params.row_name;
 		const row_type = this.params.row_type || 'sfg';
+		let override_spm = undefined;
 		if (frm && row_name) {
 			const row = _find_bpp_row(frm, row_name, row_type);
 			if (row) {
 				row.custom_shift_types_csv = csv;
-				const machine_count = Number(row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
-				const batchsize = Number(row.batchsize || 0);
+				
+				// Read batchsize and machine_count from params.data if possible, since
+				// un-rendered or child doc rows might not have these transient attributes.
+				const gridData = this.params.data || {};
+				const machine_count = Number(gridData.machine_count || row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
+				const batchsize = Number(gridData.batchsize || row.batchsize || 0);
+				
 				const shift_count = _shift_count_from_row({ custom_shift_types_csv: csv });
 				const spm = batchsize * machine_count * shift_count;
-				row.spm = spm;
+				
+				if (spm > 0) {
+					row.spm = spm;
+					override_spm = spm;
+				}
 				_mark_form_dirty(frm);
 				if (row.doctype && row.name) {
 					await frappe.model.set_value(row.doctype, row.name, 'custom_shift_types_csv', csv);
-					await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+					if (spm > 0) {
+						await frappe.model.set_value(row.doctype, row.name, 'spm', spm);
+					}
 				}
 			}
 		}
-		_sync_parallel_schedule_override(frm, row_name, row_type, { custom_shift_types_csv: csv });
+
 		if (this.params.data) {
 			this.params.data.custom_shift_types_csv = csv;
 			this.params.data.spm = this.params.data.batchsize
@@ -2438,7 +2450,13 @@ class ShiftPopupEditor {
 					* Number(this.params.data.machine_count || _parse_csv_list(this.params.data.custom_workstations_csv).length || 0)
 					* _shift_count_from_row({ custom_shift_types_csv: csv }))
 				: this.params.data.spm;
+			if (override_spm === undefined) override_spm = this.params.data.spm;
 		}
+
+		const overrides = { custom_shift_types_csv: csv };
+		if (override_spm !== undefined) overrides.spm = override_spm;
+		_sync_parallel_schedule_override(frm, row_name, row_type, overrides);
+
 		if (this.params.api) {
 			this.params.api.refreshCells({ force: true });
 		}
@@ -2619,7 +2637,7 @@ function _bind_fg_shift_selects(frm, wrapper) {
 			_render_fg_shift_display(host, csv);
 			frappe.model.set_value(row.doctype, row.name, 'custom_shift_types_csv', csv);
 			frappe.model.set_value(row.doctype, row.name, 'spm', spm);
-			_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_shift_types_csv: csv });
+			_sync_parallel_schedule_override(frm, row.name, 'fg', { custom_shift_types_csv: csv, spm: spm });
 			_mark_form_dirty(frm);
 		});
 		host.appendChild(editor.el);
