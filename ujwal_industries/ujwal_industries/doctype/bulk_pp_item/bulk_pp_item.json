@@ -23,6 +23,7 @@
   "custom_planned_end_date",
   "custom_schedule_end_date",
   "manufacturing_type",
+  "custom_supplier",
   "section_break_9",
   "pending_qty",
   "ordered_qty",
@@ -157,7 +158,15 @@
    "fieldname": "manufacturing_type",
    "fieldtype": "Select",
    "label": "Manufacturing Type",
-   "options": "In House\nSubcontract"
+   "options": "In House\nSubcontract\nIn House - Vendor"
+  },
+  {
+   "depends_on": "eval:doc.manufacturing_type == 'Subcontract' || doc.manufacturing_type == 'In House - Vendor'",
+   "fieldname": "custom_supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "mandatory_depends_on": "eval:in_list(doc.manufacturing_type, ['Subcontract', 'In House - Vendor'])",
+   "options": "Supplier"
   },
   {
    "fieldname": "section_break_9",
