@@ -280,6 +280,23 @@ def _get_row_spm_details(
 				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
 				per_shift_qty = i.get('per_day_qty') if i.get('per_day_qty') != 0 else 0
 
+	if row.doctype == 'Bulk PP Item' and row.manufacturing_type == 'Subcontract':
+		spm = 0
+		supplier_sub_details = frappe.db.sql("""
+						SELECT 
+								IFNULL(tiss.per_day_qty, 0) as per_day_qty,
+								tiss.is_per_day_qty_based,
+								IFNULL(tiss.lead_time_days, 0) as lead_time_days
+							FROM tabItem ti
+							Left JOIN `tabItem Subcontracting Supplier` tiss ON tiss.parent = ti.name 
+							WHERE tiss.is_default = 1
+							And ti.name = '{0}'
+					""".format(row.item_code), as_dict=True)
+		for i in supplier_sub_details:
+			if i.get('is_per_day_qty_based') == 1:
+				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
+				per_shift_qty = i.get('per_day_qty') if i.get('	') != 0 else 0
+    
 	return {
 		"bom_no": bom_no or "",
 		"batchsize": batchsize,
@@ -1154,7 +1171,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	for mr in doc.mr_items:
 		if mr.sales_order in so_map:
 			so_map[mr.sales_order]["mr"].append(mr)
-
 	# Batch-fetch BOM tool details and operation batchsize
 	all_bom_nos = list({
 		row.bom_no
@@ -1184,6 +1200,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		for rows in so_map.values()
 		for row in rows["mr"]
 		if getattr(row, "item_code", None)
+	} | {
+		row.item_code
+		for rows in so_map.values()
+		for row in rows["fg"]
+		if getattr(row, "item_code	", None)
 	})
 	grn_map = _fetch_grn_days_map(all_item_codes)         # item_code → grn_days
 	lead_map = _fetch_default_lead_time_map(              # item_code → lead_time_days
@@ -1613,10 +1634,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			pm_days = 0
 			if fg.manufacturing_type in ("In House", "In House - Vendor"):
 				pm_days       = int(tool_info.get("pm_days", 0))
+    
 			grn_days      = int(grn_map.get(item_code, 0))
-
-   
-   
 			spm_details = _get_row_spm_details(fg, bom_no, bom_ops_map)
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			# Prefer spm stored on the row (set via workstation selection); fall back to computed
@@ -1627,7 +1646,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			# per-day qty is combined across selected shifts; UI expects per single shift qty.
 			per_day_qty = effective_spm * shift_minutes if effective_spm and shift_minutes else 0
 			per_shift_qty = (per_day_qty / shift_count) if per_day_qty else 0
-
+   
+			if spm_details.get("subcontract_per_shift_qty") != 0:
+				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+    
 			# Split into batches.
 			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
 			split_qty = tool_load_qty or per_day_qty
@@ -1671,7 +1693,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					if getdate(start_dt) < h <= getdate(end_dt):
 						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
 						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
-    
+				
 				batch_rows.append({
 					"batch":         b_idx + 1,
 					"total":         len(batches),
@@ -1701,8 +1723,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"planned_qty":             flt(fg.planned_qty),
 				"per_shift_qty":             per_shift_qty,
 				"per_day_qty":               per_day_qty,
+				"spm_1": effective_spm,
 				"manufacturing_type":      fg.manufacturing_type or "In House",
-				# "supplier_list": supplier_list,
+				"supplier_list": supplier_list,
 				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
 				"custom_shift_types_csv": getattr(fg, "custom_shift_types_csv", "") or "",
 				"target_warehouse": (
