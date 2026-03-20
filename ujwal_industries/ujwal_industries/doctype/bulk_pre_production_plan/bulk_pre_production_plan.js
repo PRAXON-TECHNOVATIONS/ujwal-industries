@@ -2,7 +2,55 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
+
+	onload(frm) {
+    setTimeout(() => {
+
+        frm.fields_dict['sales_orders'].grid.wrapper.on(
+            'blur',
+            'input[data-fieldname="delivery_date"]',
+            function () {
+
+                let $input = $(this);
+                let rowname = $input.closest('[data-name]').attr('data-name');
+
+                if (!rowname) return;
+
+                let row = frappe.get_doc(
+                    frm.fields_dict.sales_orders.grid.doctype,
+                    rowname
+                );
+
+                let today = frappe.datetime.get_today();
+
+                if (row.delivery_date && row.delivery_date < today) {
+                    $input.css("border", "4px solid red");
+                } else {
+                    $input.css("border", "");
+                }
+            }
+        );
+
+    }, 200);
+},
+
 	refresh: function (frm) {
+
+            cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function(i, item) {
+                let row = locals[cur_frm.fields_dict["sales_orders"].grid.doctype][$(item).attr('data-name')];
+				let today = frappe.datetime.get_today();
+                if (row.delivery_date != null) {
+                 if (row.delivery_date && row.delivery_date < today) {
+                    $(item).find('[data-fieldname="delivery_date"]').css({'border':  "4px solid red"});
+                }
+                else {
+                    $(item).find('[data-fieldname="delivery_date"]').css({'border':  ""});
+                }
+            }
+            });
+
+        frm.refresh_field('sales_orders')
+		
 
 		set_bom_selection_query(frm);
 
@@ -520,7 +568,7 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	if (mode === 'Parallel' && !par_data && frm.doc.custom_batch_schedule) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
-
+	
 	Promise.resolve()
 		.then(() => _hydrate_machine_defaults(frm, par_data))
 		.then((machine_changed) => {
@@ -788,7 +836,6 @@ function _on_seq_cell_changed(frm, params) {
 
 function _render_parallel_grid(frm, so_data, par_data, container) {
 	container.innerHTML = '';
-
 	if (!par_data) {
 		container.innerHTML = `
 			<div style="padding:32px 20px; text-align:center; color:#94A3B8; font-size:13px;
@@ -850,12 +897,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				type: fg_type,
 				target_warehouse: fg.target_warehouse || '',
 				supplier: fg_supplier,
-				// supplier_list: sfg.supplier_list || [],
+				supplier_list: fg.supplier_list || [],
 				total_batches: batches.length,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				per_shift_qty: fg.per_shift_qty || 0,
 				batchsize: fg.batchsize || 0,
-				spm: fg.spm || 0,
+				// spm: fg.spm || 0,
+				spm: fg.spm_1 || 0,	
 				start_date: batches[0]?.start_date || '',
 				end_date: batches[batches.length - 1]?.end_date || '',
 			});
@@ -1070,7 +1118,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 		{
 			headerName: 'SPM', width: 80, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			// valueGetter: p => p.data?._is_group ? _effective_spm_value(p.data) : null,
+			valueGetter: p => p.data?._is_group ? p.data.spm : null,
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 		{
