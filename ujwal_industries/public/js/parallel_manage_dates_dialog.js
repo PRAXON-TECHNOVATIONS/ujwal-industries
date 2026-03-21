@@ -300,19 +300,22 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 
 	function build_fg_table() {
 		const input_style = `border:1.5px solid #c7d2fe;border-radius:8px;padding:6px 8px;font-size:12px;
-			color:#3730a3;background:#fafafe;outline:none;font-family:inherit;
+			color:#3730a3; background:#fafafe;outline:none;font-family:inherit;
 			transition:border-color 0.15s,box-shadow 0.15s;`;
 
 		const rows_html = po_items.map((row, i) => {
 			const mfg     = row.custom_manufacturing_type || '';
 			const row_bg  = i % 2 === 0 ? '#ffffff' : '#f8f7ff';
 			const sel_bg  = mfg === 'In House'    ? '#dbeafe'
-				          : mfg === 'Subcontract' ? '#fef3c7' : '#f1f5f9';
+						: mfg === 'Subcontract' ? '#fef3c7' : '#f1f5f9';
 			const sel_clr = mfg === 'In House'    ? '#1e40af'
-				          : mfg === 'Subcontract' ? '#92400e' : '#64748b';
+						: mfg === 'Subcontract' ? '#92400e' : '#64748b';
 
 			const date_val = to_date_part(row.planned_start_date);
 			const time_val = to_time_part(row.planned_start_date);
+			
+			const date_val_1 = to_date_part(row.custom_planned_end_date);
+			const time_val_1 = to_time_part(row.custom_planned_end_date);
 
 			// Supplier options — default supplier pre-selected (or row.custom_supplier if set)
 			const item_suppliers  = suppliers_by_item[row.item_code] || [];
@@ -326,43 +329,56 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 
 			return `
 			<tr style="background:${row_bg};" data-row-name="${esc(row.name)}">
-				<td style="padding:10px 12px;color:#94a3b8;font-size:11px;text-align:center;
-					border-bottom:1px solid #f0f0ff;width:36px;">${i + 1}</td>
+				<td style="padding:10px 12px; color:#94a3b8; font-size:11px;text-align:center;
+					border-bottom:1px solid #f0f0ff;">${i + 1}</td>
 
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
+				<td style=" border-bottom:1px solid #f0f0ff;">
 					<div style="font-weight:600;color:#1e1b4b;font-size:13px;">${esc(row.item_code)}</div>
 					${row.item_name && row.item_name !== row.item_code
 						? `<div style="color:#94a3b8;font-size:11px;margin-top:2px;">${esc(row.item_name)}</div>`
 						: ''}
-				</td>
-
-				<td style="padding:10px 12px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
+					
 					${row.sales_order
-						? `<span style="font-size:11px;font-weight:600;color:#2563eb;">${esc(row.sales_order)}</span>`
-						: '<span style="color:#cbd5e1;font-style:italic;font-size:11px;">—</span>'}
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							SO: ${esc(row.sales_order)}
+						</div>`
+						: ''}
+
+					${row.custom_manufacturing_type
+					? `<div style="font-size:11px;margin-top:4px;font-weight:600;
+							color:${row.custom_manufacturing_type === 'In House' ? '#1e40af' : '#92400e'};">
+						${row.custom_manufacturing_type}
+					</div>`
+					: ''}	
+					${row.custom_manufacturing_type === 'Subcontract' && row.custom_supplier
+						? `<div style="font-size:10px;color:#a16207;margin-top:2px;">
+							Supplier: ${esc(row.custom_supplier)}
+					</div>`
+					: ''}
 				</td>
 
-				<td style="padding:10px 12px;border-bottom:1px solid #f0f0ff;min-width:170px;">
-					<select class="md-mfg-select" data-row-name="${esc(row.name)}"
-						style="border:none;border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;
-							background:${sel_bg};color:${sel_clr};cursor:pointer;outline:none;appearance:auto;width:100%;">
-						<option value="" ${!mfg ? 'selected' : ''} disabled>— Manufacturing Type —</option>
-						<option value="In House"    ${mfg === 'In House'    ? 'selected' : ''}>In House</option>
-						<option value="Subcontract" ${mfg === 'Subcontract' ? 'selected' : ''}>Subcontract</option>
-					</select>
+				<td style="padding:10px 14px; border-bottom:1px solid #f0f0ff;white-space:nowrap;">
+					${row.custom_mfg_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_mfg_days)}
+						</div>`
+						: ''}
+				</td>
+				
+				<td style="padding:10px 14px; border-bottom:1px solid #f0f0ff; ">
+					${row.custom_grn_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_grn_days)}
+						</div>`
+						: ''}
+				</td>
 
-					<!-- Supplier dropdown — visible only for Subcontract rows -->
-					<div class="md-supplier-wrap" data-row-name="${esc(row.name)}"
-						style="margin-top:7px;display:${mfg === 'Subcontract' ? 'block' : 'none'};">
-						<select class="md-supplier-select" data-row-name="${esc(row.name)}"
-							style="width:100%;border:1.5px solid #fcd34d;border-radius:8px;padding:4px 8px;
-								font-size:11px;color:#92400e;background:#fffbeb;outline:none;cursor:pointer;font-family:inherit;">
-							<option value="">— Select Supplier —</option>
-							${supplier_options}
-						</select>
-						<div class="md-lead-info" data-row-name="${esc(row.name)}"
-							style="font-size:10px;color:#a16207;margin-top:3px;min-height:14px;padding-left:2px;"></div>
-					</div>
+				<td style="padding:10px 14px; border-bottom:1px solid #f0f0ff; ">
+					${row.custom_pm_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_pm_days)}
+						</div>`
+						: ''}
 				</td>
 
 				<td style="padding:10px 14px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
@@ -370,26 +386,34 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 					<span style="color:#94a3b8;font-size:11px;margin-left:4px;">${esc(row.stock_uom)}</span>
 				</td>
 
-				<td style="padding:8px 12px;border-bottom:1px solid #f0f0ff;">
+				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
+
 					<div style="display:flex;gap:6px;align-items:center;">
 						<input type="date" class="md-start-date" data-row-name="${esc(row.name)}"
 							value="${date_val}" data-original="${date_val}"
-							style="${input_style}width:130px;"/>
+							style="${input_style}width:130px; "/>
 						<input type="text" class="md-start-time" data-row-name="${esc(row.name)}"
 							value="${time_val}" data-original="${time_val}"
 							placeholder="HH:MM" maxlength="5"
-							style="${input_style}width:70px;text-align:center;letter-spacing:1px;
+							style="${input_style}width:70px; text-align:center;letter-spacing:1px;
 								font-variant-numeric:tabular-nums;font-weight:600;"/>
 					</div>
+
 				</td>
 
-				<td style="padding:10px 12px;border-bottom:1px solid #f0f0ff;">
-					<div class="md-end-display" data-row-name="${esc(row.name)}"
-						data-raw-end="${esc(row.custom_planned_end_date || '')}" 
-						style="background:#f1f5f9;color:#64748b;font-size:12px;padding:6px 11px;
-							border-radius:8px;display:inline-block;min-width:155px;line-height:1.4; margin-top: 16px;">
-						${display_dt(row.custom_planned_end_date)}
+				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
+
+					<div style="display:flex;gap:6px;align-items:center;">
+						<input type="date" class="md-start-date" data-row-name="${esc(row.name)}"
+							value="${date_val_1}" data-original="${date_val_1}"
+							style="${input_style}width:130px; "/>
+						<input type="text" class="md-start-time" data-row-name="${esc(row.name)}"
+							value="${time_val_1}" data-original="${time_val_1}"
+							placeholder="HH:MM" maxlength="5"
+							style="${input_style}width:70px; text-align:center;letter-spacing:1px;
+								font-variant-numeric:tabular-nums;font-weight:600;"/>
 					</div>
+
 					<!-- Breakdown: "Lead: Xd · GRN: Yd" or "Prod: Xh" — filled by _refresh_end_date -->
 					<div class="md-end-breakdown" data-row-name="${esc(row.name)}"
 						style="font-size:10px;color:#94a3b8;margin-top:4px;min-height:14px;padding-left:2px;"></div>
@@ -400,16 +424,17 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		return `
 		<div class="md-table-wrap" style="border:1px solid #e2e8f0;border-radius:10px;overflow:auto;
 			box-shadow:0 2px 8px rgba(79,70,229,0.07);-webkit-overflow-scrolling:touch;">
-			<table style="width:100%;min-width:700px;border-collapse:collapse;">
+			<table style="border-collapse:collapse;">
 				<thead>
 					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#3730a3 100%);">
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
-						<th style="padding:10px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SALES ORDER</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">MFG TYPE / SUPPLIER</th>
-						<th style="padding:10px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED START ✏</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED END</th>
+						<th style="padding:10px 12px; color:#a5b4fc; font-size:10px; font-weight:700; letter-spacing:0.6px; text-align:center;">#</th>
+						<th style="width:25%; padding:10px 14px; color:#a5b4fc; font-size:10px; font-weight:700; letter-spacing:0.6px; text-align:left;">ITEM</th>
+						<th style="width:10%; color:#a5b4fc; font-size:10px; font-weight:700; letter-spacing:0.6px; text-align:left;">Mfg Days</th>
+						<th style="width:10%; color:#a5b4fc; font-size:10px; font-weight:700; letter-spacing:0.6px; text-align:left;">GRN Days</th>
+						<th style="width:10%; color:#a5b4fc; font-size:10px; font-weight:700; letter-spacing:0.6px; text-align:left;">PM Days</th>
+						<th style="width:10%; padding:10px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
+						<th style="padding:10px 12px; color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED START ✏</th>
+						<th style="padding:10px 12px; color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED END</th>
 					</tr>
 				</thead>
 				<tbody>${rows_html}</tbody>
@@ -468,19 +493,19 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 				data-sfg-name="${esc(row.name)}" data-chain="${esc(chain_id)}">
 
 				<td style="padding:8px 10px;color:#94a3b8;font-size:11px;text-align:center;
-					border-bottom:1px solid #f0f0ff;width:32px;">${i + 1}</td>
+					border-bottom:1px solid #f0f0ff;">${i + 1}</td>
 
 				<!-- Chain badge -->
 				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
 					<div style="display:inline-flex;align-items:center;gap:4px;
 						background:${pal.bg};border:1px solid ${pal.border};border-radius:20px;padding:3px 9px;">
-						<div style="width:7px;height:7px;border-radius:50%;background:${pal.dot};flex-shrink:0;"></div>
+						<div style="width:7px; height:7px;border-radius:50%;background:${pal.dot};flex-shrink:0;"></div>
 						<span style="font-size:9px;font-weight:700;color:${pal.text};letter-spacing:0.2px;">${esc(clabel)}</span>
 					</div>
 				</td>
 
 				<!-- Item + BOM tree indent -->
-				<td style="padding:8px 14px;border-bottom:1px solid #f0f0ff;min-width:175px;">
+				<td style="padding:8px 14px;border-bottom:1px solid #f0f0ff;">
 					<div style="padding-left:${item_left}px;">
 						${tree_chr}<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${esc(row.production_item)}</span>
 					</div>
@@ -488,27 +513,61 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 						? `<div style="color:#94a3b8;font-size:10px;margin-top:1px;
 								padding-left:${item_left + (indent > 0 ? 18 : 0)}px;">${esc(row.item_name)}</div>`
 						: ''}
-				</td>
 
-				<!-- MFG TYPE + Supplier (Subcontract only) -->
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;min-width:160px;">
-					<select class="md-sfg-mfg" data-sfg-name="${esc(row.name)}"
-						style="border:none;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;
-							background:${sel_bg};color:${sel_clr};cursor:pointer;outline:none;appearance:auto;width:100%;">
-						<option value="In House"          ${mfg === 'In House'          ? 'selected' : ''}>In House</option>
-						<option value="Subcontract"       ${mfg === 'Subcontract'       ? 'selected' : ''}>Subcontract</option>
-					</select>
-					<div class="md-sfg-supplier-wrap" data-sfg-name="${esc(row.name)}"
-						style="margin-top:6px;display:${mfg === 'Subcontract' ? 'block' : 'none'};">
-						<select class="md-sfg-supplier" data-sfg-name="${esc(row.name)}"
-							style="width:100%;border:1.5px solid #fcd34d;border-radius:8px;padding:4px 8px;
-								font-size:11px;color:#92400e;background:#fffbeb;outline:none;cursor:pointer;font-family:inherit;">
-							<option value="">— Select Supplier —</option>
-							${sfg_sup_opts}
-						</select>
+					<div style="margin-top:6px;padding-left:${item_left + (indent > 0 ? 18 : 0)}px;">
+					
+						<div style="display:inline-block;
+								padding:2px 8px;
+								border-radius:12px;
+								font-size:10px;
+								font-weight:600;
+								background:${sel_bg};
+								color:${sel_clr};">
+								${mfg || '—'}
+								
+								<br>
+								${mfg === 'Subcontract' && row.supplier ? `
+							<div style="margin-top:4px;
+								font-size:10px;
+								color:#92400e;
+								background:#fffbeb;
+								display:inline-block;
+								padding:2px 6px;
+								border-radius:6px;
+								border:1px solid #fcd34d;">
+								${esc(row.supplier)}
+							</div>
+						` : ''}
+						</div>
+
+						
+
 					</div>
 				</td>
 
+				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
+					${row.custom_mfg_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_mfg_days)}
+						</div>`
+						: ''}
+				</td>
+				
+				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
+					${row.custom_grn_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_grn_days)}
+						</div>`
+						: ''}
+				</td>
+
+				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
+					${row.custom_pm_days
+						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">
+							${esc(row.custom_pm_days)}
+						</div>`
+						: ''}
+				</td>
 				<!-- QTY (readonly) -->
 				<td style="padding:8px 10px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
 					<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${row.qty || 0}</span>
@@ -557,7 +616,7 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		<div style="display:flex;align-items:center;justify-content:space-between;
 			margin-bottom:14px;flex-wrap:wrap;gap:8px;">
 			<div style="display:flex;align-items:center;gap:10px;">
-				<div style="width:5px;height:24px;background:linear-gradient(180deg,#4f46e5,#7c3aed);
+				<div style="width:5px; height:24px;background:linear-gradient(180deg,#4f46e5,#7c3aed);
 					border-radius:3px;flex-shrink:0;"></div>
 				<div>
 					<div style="font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.2;">Sub Assembly Items</div>
@@ -575,13 +634,15 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		</div>
 		<div class="md-table-wrap" style="border:1px solid #e2e8f0;border-radius:10px;overflow:auto;
 			box-shadow:0 2px 8px rgba(79,70,229,0.07);-webkit-overflow-scrolling:touch;">
-			<table style="width:100%;min-width:820px;border-collapse:collapse;">
+			<table style="width:100%; border-collapse:collapse;">
 				<thead>
 					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#3730a3 100%);">
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">CHAIN</th>
-						<th style="padding:9px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">MFG TYPE ✏</th>
+						<th style=" padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
+						<th style=" padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">CHAIN</th>
+						<th style="width:20%; padding:9px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
+						<th style="width:10%; padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">Mgf Days</th>
+						<th style="width:10%; padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">GRN Days</th>
+						<th style="width:10%; padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PM Days</th>
 						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
 						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SCHEDULE START ✏</th>
 						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SCHEDULE END ✏</th>
