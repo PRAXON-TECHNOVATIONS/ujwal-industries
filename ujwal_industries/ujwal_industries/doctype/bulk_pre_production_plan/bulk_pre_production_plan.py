@@ -407,7 +407,7 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 
 	fg_map = {row.name: row for row in doc.get("po_items") or [] if getattr(row, "name", None)}
 	sfg_map = {row.name: row for row in doc.get("sub_assembly_items") or [] if getattr(row, "name", None)}
-
+	print("........schedule......",schedule)
 	for so_data in (schedule or {}).values():
 		for fg_data in so_data.get("fg") or []:
 			row = fg_map.get((fg_data or {}).get("row_name"))
@@ -1365,6 +1365,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		deadline_dt = _snap_start(fg_start_anchor_dt, first_sfg_cfg)
 
 		for sfg in sfg_rows_sorted:
+			sfg.spm = 0
 			shift_config = _get_row_shift_config(sfg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -1402,9 +1403,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
 			if spm_details.get("subcontract_per_shift_qty") != 0:
+				display_spm    = spm_details.get("spm")
 				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
 				per_day_qty   = per_shift_qty * shift_count
 			else:
+				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
 				per_shift_qty     = real_spm * minutes_per_shift
 				per_day_qty       = per_shift_qty * shift_count
@@ -1630,6 +1633,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		for fg in items["fg"]:
 			fg_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
 			prod_minutes = _calculate_row_production_minutes(fg, flt(fg.planned_qty), _fg_bom_cache)
+			fg.spm = 0
 			tool_details = _get_bom_spm_details_map(fg.bom_no, selected_tool=getattr(fg, "tool", "") or None)
 			if prod_minutes and prod_minutes > 0:
 				fg_end = shift_aware_forward_schedule(fg_start, prod_minutes, shift_config)
@@ -1639,8 +1643,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		fg_rows_sorted =  items["fg"]
 		
 		prev_fg_row0_end: str | None = None
-
-		for fg_idx, fg in enumerate(fg_rows_sorted):
+		for fg_idx, fg in enumerate(fg_rows_sorted):	
 			shift_config = _get_row_shift_config(fg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -1670,14 +1673,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			row_spm = cint(getattr(fg, "spm", 0) or 0)
 			machine_count = cint(spm_details.get("machine_count") or 0)
- 
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
    
 			if spm_details.get("subcontract_per_shift_qty") != 0:
+				display_spm = spm_details.get("spm")
 				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
 				per_day_qty = per_shift_qty * shift_count
 			else:
+				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
 				per_shift_qty = real_spm * minutes_per_shift
 				per_day_qty = per_shift_qty * shift_count
@@ -1755,6 +1759,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"planned_qty":             flt(fg.planned_qty),
 				"batchsize":               base_batchsize,
 				"spm":                     display_spm,
+				"spm_1":                   display_spm,
 				"per_shift_qty":           per_shift_qty,
 				"per_day_qty":             per_day_qty,
 				"manufacturing_type":      fg.manufacturing_type or "In House",
@@ -2907,6 +2912,9 @@ def create_production_plans_document(bulk_pp_name) :
 					'sales_order' : j.get('sales_order'),
 					'warehouse' : warehouse,
 					'custom_workstation' : j.get('custom_workstations_csv'),
+					'custom_mfg_days' : k.get('mfg_days'),
+					'custom_grn_days' : k.get('grn_days'),
+					'custom_pm_days' : k.get('pm_days'),
 				})
 		
 		for j in so_details.get('sfg_chain')[::-1]:
@@ -2926,6 +2934,9 @@ def create_production_plans_document(bulk_pp_name) :
 					'supplier' : j.get('supplier'),
 					'fg_warehouse' : warehouse,
 					'custom_workstation' : j.get('custom_workstations_csv'),
+					'custom_mfg_days' : k.get('mfg_days'),
+					'custom_grn_days' : k.get('grn_days'),
+					'custom_pm_days' : k.get('pm_days'),
 				})
 		
 		for j in so_details.get('mr'):
