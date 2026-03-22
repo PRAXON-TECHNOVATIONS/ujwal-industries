@@ -34,7 +34,7 @@ app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
-	# "/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.29",
+	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.29",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
