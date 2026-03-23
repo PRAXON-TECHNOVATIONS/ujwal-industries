@@ -31,19 +31,7 @@ class DocumentSeriesSettings(Document):
 @frappe.whitelist()
 def get_next_number(doctype):
 
-    settings = frappe.get_all(
-        "Document Series Settings",
-        limit=1
-    )
-    
-    # if not frappe.db.table_exists("tabDocument Series Settings"):
-    #     return None
-
-    
-    if not settings:
-        return None
-
-    settings_doc = frappe.get_doc("Document Series Settings", settings[0].name)
+    settings_doc = frappe.get_doc("Document Series Settings")
 
     for row in settings_doc.document_series:
 
