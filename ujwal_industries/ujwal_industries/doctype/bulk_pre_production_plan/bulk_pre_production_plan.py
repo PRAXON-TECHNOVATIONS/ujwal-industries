@@ -551,36 +551,11 @@ class BulkPreProductionPlan(Document):
 			self.status = "Cancelled"
 
 	def on_submit(self):
-		"""Create Production Plans asynchronously on submit - one per sales order"""
-		if not self.sales_orders:
-			return
-
-		# Enqueue async job to create production plans
-		# frappe.enqueue(
-		# 	"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_async",
-		# 	bulk_pp_name=self.name,
-		# 	timeout=3000,
-		# 	queue="long"
-		# )
-
-		# frappe.msgprint(
-		# 	_("Production Plans are being created in the background. You will be notified once complete."),
-		# 	indicator="blue",
-		# 	alert=True
-		# )
-
-		frappe.enqueue(
-			"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_production_plans_document",
-			bulk_pp_name=self.name,
-			timeout=3000,
-			queue="long"
-		)
-
-		frappe.msgprint(
-			_("Production Plans are being created in the background. You will be notified once complete."),
-			indicator="blue",
-			alert=True
-		)
+		"""
+		Prevent full submission of Bulk Pre Production Plan as per user request.
+		Production Plans should be created individually using the 'Create Production Plans' button.
+		"""
+		frappe.throw(_("Full submission of Bulk Pre Production Plan is disabled. Please use the 'Create Production Plans' button to process Sales Orders individually."))
   
 	@frappe.whitelist()
 	def get_items(self):
@@ -2955,6 +2930,132 @@ def create_production_plans_document(bulk_pp_name) :
 				'custom_supplier' :  j.get('supplier'),
 			})
 		pp_doc.save()
+
+
+@frappe.whitelist()
+def create_selected_production_plans(bulk_pp_name, sales_orders):
+	"""
+	Create Production Plans for selected Sales Orders from Bulk PP
+	without submitting the Bulk PP document.
+	"""
+	if isinstance(sales_orders, str):
+		sales_orders = json.loads(sales_orders)
+
+	bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+	if not bulk_pp.custom_batch_schedule:
+		frappe.throw(_("Batch schedule not found. Please click 'Calculate Schedule' first."))
+
+	so_data = json.loads(bulk_pp.custom_batch_schedule)
+	created_plans = []
+
+	for so_name in sales_orders:
+		if so_name not in so_data:
+			continue
+		
+		# Check if already processed in this doc
+		is_already_created = False
+		for row in bulk_pp.sales_orders:
+			if row.sales_order == so_name and row.custom_pp_created:
+				is_already_created = True
+				break
+		
+		if is_already_created:
+			continue
+
+		# Logic similar to create_production_plans_document but for one SO
+		i = so_name
+		pp_doc = frappe.new_doc("Production Plan")
+		pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
+		pp_doc.get_items_from = 'Sales Order'
+		pp_doc.custom_parallel_planning = 1
+
+		pp_doc.append('sales_orders',{
+			'sales_order': i
+		})
+		so_details = so_data.get(i)
+		for j in so_details.get('fg'):
+			warehouse = ''
+			item_doc = frappe.get_doc("Item", j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+     
+			if 'manufacturing_type' in j:
+				types = j.get('manufacturing_type')
+			elif "custom_manufacturing_type" in j:
+				types = j.get('custom_manufacturing_type')
+			else:
+				types = 'In House'
+	
+			for k in j.get('batches'):
+				pp_doc.append('po_items',{
+					'include_exploded_items' : 1,
+					'item_code' : j.get('item_code'),
+					'bom_no' : j.get('bom_no'),
+					'planned_qty' : k.get('qty'),
+					'stock_uom' : item_doc.stock_uom,
+					'custom_manufacturing_type' : types,
+					'planned_start_date' : k.get('start_date'),
+					'custom_planned_end_date' : k.get('end_date'),
+					'sales_order' : j.get('sales_order'),
+					'warehouse' : warehouse,
+					'custom_workstation' : j.get('custom_workstations_csv'),
+					'custom_mfg_days' : k.get('mfg_days'),
+					'custom_grn_days' : k.get('grn_days'),
+					'custom_pm_days' : k.get('pm_days'),
+				})
+		
+		for j in so_details.get('sfg_chain')[::-1]:
+			warehouse = ''
+			item_doc = frappe.get_doc("Item",j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+			for k in j.get('batches'):
+				pp_doc.append('sub_assembly_items',{
+					'production_item' : j.get('item_code'),
+					'bom_no' : j.get('bom_no'),
+					'qty' : k.get('qty'),
+					'stock_uom' : item_doc.stock_uom,
+					'type_of_manufacturing' : j.get('type_of_manufacturing'),
+					'schedule_date' : k.get('start_date'),
+					'custom_schedule_end_date' : k.get('end_date'),
+					'supplier' : j.get('supplier'),
+					'fg_warehouse' : warehouse,
+					'custom_workstation' : j.get('custom_workstations_csv'),
+					'custom_mfg_days' : k.get('mfg_days'),
+					'custom_grn_days' : k.get('grn_days'),
+					'custom_pm_days' : k.get('pm_days'),
+				})
+		
+		for j in so_details.get('mr'):
+			warehouse = ''
+			item_doc = frappe.get_doc("Item", j.get('item_code'))
+			if item_doc.item_defaults:
+					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+			pp_doc.append('mr_items',{
+				'item_code' :  j.get('item_code'),
+				'item_name' :  j.get('item_name'),
+				'warehouse' :  warehouse,
+				'custom_start_date' :  j.get('start_date'),
+				'schedule_date' :  j.get('end_date'),
+				'quantity' :  j.get('qty'),
+				'custom_supplier' :  j.get('supplier'),
+			})
+		pp_doc.save()
+		created_plans.append(pp_doc.name)
+
+		# Mark row as processed
+		for row in bulk_pp.sales_orders:
+			if row.sales_order == so_name:
+				row.custom_pp_created = 1
+				break
+	
+	if created_plans:
+		bulk_pp.flags.ignore_mandatory = True
+		bulk_pp.save()
+		bulk_pp.flags.ignore_mandatory = False
+		frappe.db.commit()
+
+	return created_plans
  
  
 @frappe.whitelist()
