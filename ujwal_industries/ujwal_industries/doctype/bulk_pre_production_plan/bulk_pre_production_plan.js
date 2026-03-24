@@ -4,53 +4,53 @@
 frappe.ui.form.on('Bulk Pre Production Plan', {
 
 	onload(frm) {
-    setTimeout(() => {
+		setTimeout(() => {
 
-        frm.fields_dict['sales_orders'].grid.wrapper.on(
-            'blur',
-            'input[data-fieldname="delivery_date"]',
-            function () {
+			frm.fields_dict['sales_orders'].grid.wrapper.on(
+				'blur',
+				'input[data-fieldname="delivery_date"]',
+				function () {
 
-                let $input = $(this);
-                let rowname = $input.closest('[data-name]').attr('data-name');
+					let $input = $(this);
+					let rowname = $input.closest('[data-name]').attr('data-name');
 
-                if (!rowname) return;
+					if (!rowname) return;
 
-                let row = frappe.get_doc(
-                    frm.fields_dict.sales_orders.grid.doctype,
-                    rowname
-                );
+					let row = frappe.get_doc(
+						frm.fields_dict.sales_orders.grid.doctype,
+						rowname
+					);
 
-                let today = frappe.datetime.get_today();
+					let today = frappe.datetime.get_today();
 
-                if (row.delivery_date && row.delivery_date < today) {
-                    $input.css("border", "4px solid red");
-                } else {
-                    $input.css("border", "");
-                }
-            }
-        );
+					if (row.delivery_date && row.delivery_date < today) {
+						$input.css("border", "4px solid red");
+					} else {
+						$input.css("border", "");
+					}
+				}
+			);
 
-    }, 200);
-},
+		}, 200);
+	},
 
 	refresh: function (frm) {
-		
-		cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function(i, item) {
+
+		cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function (i, item) {
 			let row = locals[cur_frm.fields_dict["sales_orders"].grid.doctype][$(item).attr('data-name')];
 			let today = frappe.datetime.get_today();
 			if (row.delivery_date != null) {
 				if (row.delivery_date && row.delivery_date < today) {
-				$(item).find('[data-fieldname="delivery_date"]').css({'border':  "4px solid red"});
+					$(item).find('[data-fieldname="delivery_date"]').css({ 'border': "4px solid red" });
+				}
+				else {
+					$(item).find('[data-fieldname="delivery_date"]').css({ 'border': "" });
+				}
 			}
-			else {
-				$(item).find('[data-fieldname="delivery_date"]').css({'border':  ""});
-			}
-		}
-            });
+		});
 
-        frm.refresh_field('sales_orders')
-		
+		frm.refresh_field('sales_orders')
+    
 
 		set_bom_selection_query(frm);
 
@@ -62,6 +62,61 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
 			setTimeout(function () { setup_production_tabs(frm); }, 200);
+		}
+
+		if (frm.doc.docstatus === 0 && (frm.doc.po_items || []).length > 0) {
+			const update_submit_btn = () => {
+				const active_tab = frm.fields_dict.production_items_html.$wrapper.find('.bpp-so-tab.active');
+				const active_so = active_tab.attr('data-so');
+				const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === active_so) || {};
+
+				if (so_row.custom_pp_created) {
+					frm.set_df_property('start_pre_production', 'hidden', 1); // Hide start if already processed
+					frm.remove_custom_button(__('Create Production Plan'));
+				} else {
+					frm.set_df_property('start_pre_production', 'hidden', 0);
+					frm.add_custom_button(__('Create Production Plan'), function () {
+						const current_tab = frm.fields_dict.production_items_html.$wrapper.find('.bpp-so-tab.active');
+						const so_to_process = current_tab.attr('data-so');
+
+						if (!so_to_process) {
+							frappe.msgprint(__('No Sales Order selected in tab.'));
+							return;
+						}
+
+						frappe.confirm(
+							__('Create Production Plan for {0}?', [so_to_process]),
+							function () {
+								frappe.call({
+									method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.create_selected_production_plans',
+									args: {
+										bulk_pp_name: frm.doc.name,
+										sales_orders: [so_to_process]
+									},
+									freeze: true,
+									callback: function (r) {
+										if (r.message && r.message.length > 0) {
+											frappe.show_alert({
+												message: __('Production Plan created successfully for {0}', [so_to_process]),
+												indicator: 'green'
+											});
+											frm.reload_doc();
+										}
+									}
+								});
+							}
+						);
+					}).addClass('btn-primary');
+				}
+			};
+
+			// Run initially after tabs are setup
+			setTimeout(update_submit_btn, 500);
+
+			// Listen for tab clicks to update button
+			frm.fields_dict.production_items_html.$wrapper.on('click', '.bpp-so-tab', function () {
+				setTimeout(update_submit_btn, 100);
+			});
 		}
 	},
 	after_save: function (frm) {
@@ -421,18 +476,20 @@ function setup_production_tabs(frm) {
 		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
 		const del_date = frappe.format(so_row.delivery_date, { fieldtype: 'Date' });
 		tabs_li += `
-		<li class="nav-item">
-		<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
-		href="#bpp-so-${idx}" role="tab"
-		style="padding:8px 18px; font-size:12px; cursor:pointer;
-		border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};">
-		<i class="fa fa-file-text-o" style="margin-right:4px; font-size:11px;"></i>
-		${so_data.so_name}
-		<span style="display:block; font-size:10px; font-weight:400; color:#94A3B8; margin-top:1px;">
-		${so_row.customer || ''} · ${del_date}
-		</span>
-		</a>
-		</li>`;
+    
+			<li class="nav-item">
+				<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
+					href="#bpp-so-${idx}" role="tab"
+					style="padding:8px 18px; font-size:12px; cursor:pointer;
+					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};">
+					<i class="fa ${so_row.custom_pp_created ? 'fa-check-circle' : 'fa-file-text-o'}" 
+						style="margin-right:4px; font-size:11px; color:${so_row.custom_pp_created ? '#16A34A' : 'inherit'};"></i>
+					${so_data.so_name}
+					<span style="display:block; font-size:10px; font-weight:400; color:#94A3B8; margin-top:1px;">
+						${so_row.customer || ''} · ${del_date}
+					</span>
+				</a>
+			</li>`;
 		tabs_content += `
 		<div class="tab-pane fade ${active === 'active' ? 'show active' : ''}" id="bpp-so-${idx}" role="tabpanel">
 		<div class="bpp-grid-wrap" data-so="${so_data.so_name}"
@@ -503,7 +560,16 @@ function setup_production_tabs(frm) {
 function _build_so_map(frm) {
 	const map = {};
 	(frm.doc.po_items || []).forEach(item => {
-		if (!map[item.sales_order]) map[item.sales_order] = { so_name: item.sales_order, fg: [], sfg: [], mr: [] };
+		if (!map[item.sales_order]) {
+			const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === item.sales_order) || {};
+			map[item.sales_order] = {
+				so_name: item.sales_order,
+				fg: [],
+				sfg: [],
+				mr: [],
+				custom_pp_created: so_row.custom_pp_created
+			};
+		}
 		map[item.sales_order].fg.push(item);
 	});
 	(frm.doc.sub_assembly_items || []).forEach(item => {
@@ -610,10 +676,12 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 	if (mode === 'Parallel' && !par_data && frm.doc.custom_batch_schedule) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
+
 	
 	if (mode === 'Consolidated' && !par_data && frm.doc.custom_batch_schedule) {
 		try { par_data = JSON.parse(frm.doc.custom_batch_schedule); } catch (e) { }
 	}
+
 
 	Promise.resolve()
 		.then(() => _hydrate_machine_defaults(frm, par_data))
@@ -657,6 +725,20 @@ function _render_sequential_grid(frm, so_data, container) {
 	container.innerHTML = '';
 
 	// ── FG section ──────────────────────────────────────────────────────────
+	if (so_data.custom_pp_created) {
+		const banner = document.createElement('div');
+		banner.innerHTML = `
+			<div style="background:#DCFCE7; color:#16A34A; padding:12px 20px; text-align:center; 
+				font-weight:700; border-radius:8px; margin-bottom:16px; border:1px solid #BBF7D0;
+				display:flex; align-items:center; justify-content:center; gap:10px; font-size:14px;">
+				<i class="fa fa-check-circle" style="font-size:18px;"></i>
+				Production Plan has been created for ${so_data.so_name}. This view is now read-only.
+			</div>`;
+		container.appendChild(banner);
+		container.style.opacity = '0.85';
+		container.style.pointerEvents = 'none';
+	}
+
 	const fg_div = document.createElement('div');
 	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
 	container.appendChild(fg_div);
@@ -862,7 +944,7 @@ function _on_seq_cell_changed(frm, params) {
 						item_code: doc_row.production_item || doc_row.item_code,
 						company: frm.doc.company
 					},
-					callback: function(r) {
+					callback: function (r) {
 						if (r.message && r.message !== doc_row.supplier) {
 							frappe.model.set_value(doc_row.doctype, doc_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);
@@ -886,6 +968,21 @@ function _on_seq_cell_changed(frm, params) {
 
 function _render_parallel_grid(frm, so_data, par_data, container) {
 	container.innerHTML = '';
+
+	if (so_data.custom_pp_created) {
+		const banner = document.createElement('div');
+		banner.innerHTML = `
+			<div style="background:#DCFCE7; color:#16A34A; padding:12px 20px; text-align:center; 
+				font-weight:700; border-radius:8px; margin-bottom:16px; border:1px solid #BBF7D0;
+				display:flex; align-items:center; justify-content:center; gap:10px; font-size:14px;">
+				<i class="fa fa-check-circle" style="font-size:18px;"></i>
+				Production Plan has been created for ${so_data.so_name}. This view is now read-only.
+			</div>`;
+		container.appendChild(banner);
+		container.style.opacity = '0.85';
+		container.style.pointerEvents = 'none';
+	}
+
 	if (!par_data) {
 		container.innerHTML = `
 			<div style="padding:32px 20px; text-align:center; color:#94A3B8; font-size:13px;
@@ -911,7 +1008,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	const fg_chain_display = (par_data.fg || []).slice().reverse();
 
 	const fg_colors = ['#2563eb', '#d97706', '#16a34a', '#9333ea', '#dc2626', '#0891b2'];
-	const _expandeds = {}; 
+	const _expandeds = {};
 
 
 	// Timeline window from all batch dates
@@ -927,6 +1024,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	function _builds_rows() {
 		const rows = [];
 		fg_chain_display.forEach((fg, idx) => {
+      
 			const batches = fg.batches || [];
 			const is_exps = !!_expandeds[fg.item_code];
 			const fg_type = fg.manufacturing_type || fg.custom_manufacturing_type || fg.type_of_manufacturing || 'In House';
@@ -954,7 +1052,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				per_shift_qty: fg.per_shift_qty || 0,
 				batchsize: fg.batchsize || 0,
 				// spm: fg.spm || 0,
-				spm: fg.spm_1 || 0,	
+				spm: fg.spm_1 || 0,
 				start_date: batches[0]?.start_date || '',
 				end_date: batches[batches.length - 1]?.end_date || '',
 			});
@@ -992,10 +1090,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		</div>`;
 	};
 
-	
+
 	const par_colss = [
 		// Chevron toggle
-		
+
 		{
 			headerName: '', field: '_expandeds', width: 36, pinned: 'left', sortable: false,
 			cellStyle: { padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
@@ -1027,7 +1125,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
 		},
 		{
-			headerName: 'Tool',field: 'tool',width: 190,
+			headerName: 'Tool', field: 'tool', width: 190,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 
@@ -1046,7 +1144,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 			autoHeight: true,
 			cellStyle: p => {
@@ -1262,7 +1360,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
-		
+
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
 			editable: p => !!p.data?._is_group,
@@ -1299,7 +1397,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
 	});
 	_grids['par_' + so_data.so_name] = par_grids;
-	
+
 
 
 
@@ -1427,7 +1525,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Tool',field: 'tool',width: 190,
+			headerName: 'Tool', field: 'tool', width: 190,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 
@@ -1446,7 +1544,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 
@@ -1656,7 +1754,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
-		
+
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
 			editable: p => !!p.data?._is_group,
@@ -1693,7 +1791,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
 	});
 	_grids['par_' + so_data.so_name] = par_grid;
-	
+
 
 	// ── MR section ──────────────────────────────────────────────────────────
 	_append_mr_section(container, par_data.mr || so_data.mr, frm, so_data.so_name, 'par');
@@ -3452,16 +3550,16 @@ class ShiftPopupEditor {
 			const row = _find_bpp_row(frm, row_name, row_type);
 			if (row) {
 				row.custom_shift_types_csv = csv;
-				
+
 				// Read batchsize and machine_count from params.data if possible, since
 				// un-rendered or child doc rows might not have these transient attributes.
 				const gridData = this.params.data || {};
 				const machine_count = Number(gridData.machine_count || row.machine_count || _parse_csv_list(row.custom_workstations_csv).length || 0);
 				const batchsize = Number(gridData.batchsize || row.batchsize || 0);
-				
+
 				const shift_count = _shift_count_from_row({ custom_shift_types_csv: csv });
 				const spm = batchsize * machine_count * shift_count;
-				
+
 				if (spm > 0) {
 					row.spm = spm;
 					override_spm = spm;
@@ -3760,12 +3858,12 @@ function _on_par_bom_changed(frm, params, par_data) {
 		if (row_table === 'fg') {
 			frappe.model.set_value(target_row.doctype, target_row.name, 'manufacturing_type', params.newValue).then(() => {
 				_sync_parallel_schedule_override(frm, target_row.name, 'fg', { manufacturing_type: params.newValue });
-				
+
 				if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
 					frappe.call({
 						method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
 						args: { item_code: target_row.item_code, company: frm.doc.company },
-						callback: function(r) {
+						callback: function (r) {
 							if (r.message && r.message !== target_row.custom_supplier) {
 								frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', r.message).then(() => {
 									params.node.setDataValue('supplier', r.message);
@@ -3786,7 +3884,7 @@ function _on_par_bom_changed(frm, params, par_data) {
 
 		frappe.model.set_value(target_row.doctype, target_row.name, 'type_of_manufacturing', params.newValue).then(() => {
 			_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { type_of_manufacturing: params.newValue });
-			
+
 			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
 				frappe.call({
 					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
@@ -3794,7 +3892,7 @@ function _on_par_bom_changed(frm, params, par_data) {
 						item_code: target_row.production_item || target_row.item_code,
 						company: frm.doc.company
 					},
-					callback: function(r) {
+					callback: function (r) {
 						if (r.message && r.message !== target_row.supplier) {
 							frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);

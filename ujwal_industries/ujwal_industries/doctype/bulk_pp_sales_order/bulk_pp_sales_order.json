@@ -14,7 +14,7 @@
   "is_selected",
   "for_warehouse",
   "items_generated",
-  "merged"
+  "custom_pp_created",
  ],
  "fields": [
   {
@@ -85,10 +85,10 @@
   },
   {
    "default": "0",
-   "fieldname": "merged",
+   "fieldname": "custom_pp_created",
    "fieldtype": "Check",
-   "in_list_view": 1,
-   "label": "Merged"
+   "label": "Production Plan Created",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
