@@ -10,6 +10,9 @@ from typing import Any
 import math
 from datetime import datetime, timedelta
 import json
+from erpnext.stock.utils import get_latest_stock_qty
+from erpnext.stock.stock_balance import get_reserved_qty
+from frappe.utils import get_datetime, format_datetime
 
 # Import helper functions from production_plan overrides
 from ujwal_industries.ujwal_industries.overrides.pp_utils import (
@@ -407,7 +410,6 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 
 	fg_map = {row.name: row for row in doc.get("po_items") or [] if getattr(row, "name", None)}
 	sfg_map = {row.name: row for row in doc.get("sub_assembly_items") or [] if getattr(row, "name", None)}
-	print("........schedule......",schedule)
 	for so_data in (schedule or {}).values():
 		for fg_data in so_data.get("fg") or []:
 			row = fg_map.get((fg_data or {}).get("row_name"))
@@ -524,6 +526,7 @@ class BulkPreProductionPlan(Document):
 
 		# Calculate total planned qty
 		self.calculate_total_planned_qty()
+		# self.check_machine_available()
 
 		# Set status
 		self.set_status()
@@ -537,6 +540,179 @@ class BulkPreProductionPlan(Document):
 			self.total_planned_qty += flt(d.planned_qty)
 			self.total_produced_qty += flt(d.produced_qty)
 
+	def before_submit(self):
+		self.check_machine_available()
+  
+	def check_machine_available(self):
+		for idx, row in enumerate(self.po_items or [], start=1): 
+
+			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
+				continue
+
+			row_machines = [m.strip().lower() for m in row.custom_workstations_csv.split(",") if m.strip()]
+			new_start = get_datetime(row.planned_start_date)
+			new_end = get_datetime(row.custom_planned_end_date)
+
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			for pp in production_plans:
+				doc = frappe.get_doc("Production Plan", pp.name)
+				for item in doc.po_items:
+					if not item.custom_workstation:
+						continue
+
+					item_machines = [m.strip().lower() for m in item.custom_workstation.split(",") if m.strip()]
+
+					common_machines = set(row_machines).intersection(set(item_machines))
+
+					if not common_machines:
+						continue
+					
+					existing_start = get_datetime(item.planned_start_date)
+					existing_end = get_datetime(item.custom_planned_end_date)
+					if existing_start <= new_end and existing_end >= new_start:
+						frappe.throw(_(
+							f"""
+							<div>
+							<b style="color:red;">⚠ Machine Conflict</b><br><br>
+
+							<b>Machine :</b> {', '.join(common_machines)}<br>
+							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
+
+							<b>Machine already allocated in FG: </b><br>
+							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
+							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
+
+							</div>
+							"""
+						))
+	
+		for idx, row in enumerate(self.po_items or [], start=1): 
+
+			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
+				continue
+
+			row_machines = [m.strip().lower() for m in row.custom_workstations_csv.split(",") if m.strip()]
+			new_start = get_datetime(row.planned_start_date)
+			new_end = get_datetime(row.custom_planned_end_date)
+
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			for pp in production_plans:
+				doc = frappe.get_doc("Production Plan", pp.name)
+				for item in doc.sub_assembly_items:
+					if not item.custom_workstation:
+						continue
+
+					item_machines = [m.strip().lower() for m in item.custom_workstation.split(",") if m.strip()]
+
+					common_machines = set(row_machines).intersection(set(item_machines))
+
+					if not common_machines:
+						continue
+					
+					existing_start = get_datetime(item.schedule_date)
+					existing_end = get_datetime(item.custom_schedule_end_date)
+					if existing_start <= new_end and existing_end >= new_start:
+						frappe.throw(_(
+							f"""
+							<div>
+							<b style="color:red;">⚠ Machine Conflict</b><br><br>
+
+							<b>Machine :</b> {', '.join(common_machines)}<br>
+							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
+
+							<b>Machine already allocated in SFG: </b><br>
+							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
+							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
+
+							</div>
+							"""
+						))
+		
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+
+			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
+				continue
+
+			row_machines = [m.strip().lower() for m in row.custom_workstations_csv.split(",") if m.strip()]
+			new_start = get_datetime(row.schedule_date)
+			new_end = get_datetime(row.custom_schedule_end_date)
+
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			for pp in production_plans:
+				doc = frappe.get_doc("Production Plan", pp.name)
+				for item in doc.po_items:
+					if not item.custom_workstation:
+						continue
+
+					item_machines = [m.strip().lower() for m in item.custom_workstation.split(",") if m.strip()]
+
+					common_machines = set(row_machines).intersection(set(item_machines))
+
+					if not common_machines:
+						continue
+					
+					existing_start = get_datetime(item.planned_start_date)
+					existing_end = get_datetime(item.custom_planned_end_date)
+					if existing_start <= new_end and existing_end >= new_start:
+						frappe.throw(_(
+							f"""
+							<div>
+							<b style="color:red;">⚠ Machine Conflict</b><br><br>
+
+							<b>Machine :</b> {', '.join(common_machines)}<br>
+							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
+
+							<b>Machine already allocated in FG: </b><br>
+							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
+							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
+
+							</div>
+							"""
+						))
+	
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+
+			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
+				continue
+
+			row_machines = [m.strip().lower() for m in row.custom_workstations_csv.split(",") if m.strip()]
+			new_start = get_datetime(row.schedule_date)
+			new_end = get_datetime(row.custom_schedule_end_date)
+
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			for pp in production_plans:
+				doc = frappe.get_doc("Production Plan", pp.name)
+				for item in doc.sub_assembly_items:
+					if not item.custom_workstation:
+						continue
+
+					item_machines = [m.strip().lower() for m in item.custom_workstation.split(",") if m.strip()]
+
+					common_machines = set(row_machines).intersection(set(item_machines))
+
+					if not common_machines:
+						continue
+					
+					existing_start = get_datetime(item.schedule_date)
+					existing_end = get_datetime(item.custom_schedule_end_date)
+					if existing_start <= new_end and existing_end >= new_start:
+						frappe.throw(_(
+							f"""
+							<div>
+							<b style="color:red;">⚠ Machine Conflict</b><br><br>
+
+							<b>Machine :</b> {', '.join(common_machines)}<br>
+							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
+
+							<b>Machine already allocated in SFG: </b><br>
+							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
+							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
+
+							</div>
+							"""
+						))
+		
+                        
 	def set_status(self):
 		"""Set document status based on production progress"""
 		if self.docstatus == 0:
@@ -1119,6 +1295,38 @@ def recalculate_existing_schedule(docname: str, planning_mode: str | None = None
 		frappe.db.commit()
 		return schedule
 
+	if mode == "Consolidated":
+		merged_rows = [row for row in doc.sales_orders if getattr(row, "merged", 0)]
+
+		if len(merged_rows) < 2:
+			frappe.throw("Please select at least two Sales Orders with 'Merged' checked before Consolidated Planning.")
+
+		unique_combinations = set()
+		for row in merged_rows:
+			if not row.sales_order:
+				continue
+
+			items = frappe.get_all("Sales Order Item", filters={"parent": row.sales_order},fields=["item_code"],)
+			if not items:
+				frappe.throw(f"Sales Order {row.sales_order} has no items.")
+
+			item_code = items[0].item_code
+			unique_combinations.add((row.delivery_date, item_code))
+   
+		if len(unique_combinations) > 1:
+			frappe.throw("Merged Sales Orders must have same Delivery Date and same Item.")
+ 
+		schedule = calculate_consolidated_batch_schedule(docname)
+		# Write child row dates directly to DB (bypasses doc.save() overwrite issue)
+		_apply_parallel_dates_to_rows(doc, schedule)
+		# Only save parent-level fields — do NOT reload+save full doc (avoids overwriting set_value'd dates)
+		frappe.db.set_value("Bulk Pre Production Plan", docname, {
+			"custom_batch_schedule": json.dumps(schedule),
+			"custom_planning_mode": "Consolidated",
+		})
+		frappe.db.commit()
+		return schedule
+
 	return {
 		"status": "ok",
 		"planning_mode": mode,
@@ -1374,7 +1582,23 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no    = sfg.bom_no or ""
 			item_code = sfg.production_item
-			sales_qty = flt(sfg.qty)
+   
+			default_warehouse = frappe.db.sql("""
+				SELECT id.default_warehouse
+				FROM `tabItem Default` id
+				WHERE id.parent = %s
+				LIMIT 1
+			""", (item_code,), as_dict=1)
+			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
+   
+			sales_qty = 0
+			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
+			# actual_qty = get_reserved_qty(item_code, default_warehouse) or 0
+			if actual_qty:
+				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
+			else:
+				sales_qty = flt(sfg.qty)
+    
 			grn_days  = int(grn_map.get(item_code, 0))
 
 			tool_info = _resolve_bom_tool_info(
@@ -1479,7 +1703,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			sfg_chain_bwd.append({
 				"item_code": item_code, "bom_no": bom_no,
 				"tool": selected_tool, "tools": tool_info.get("tools") or [],
-				"bom_level": sfg.bom_level or 0, "qty": sales_qty,
+				"bom_level": sfg.bom_level or 0, 
+    			"qty": sales_qty,
+    			"qty_as_show": flt(sfg.qty),
+    			"actual_qty": actual_qty,
 				"batchsize": base_batchsize, 
     			"spm": display_spm,
     			"spm_1": display_spm,
@@ -1651,7 +1878,23 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no     = fg.bom_no or ""
 			item_code  = fg.item_code
-			sales_qty  = flt(fg.planned_qty)
+
+			default_warehouse = frappe.db.sql("""
+				SELECT id.default_warehouse
+				FROM `tabItem Default` id
+				WHERE id.parent = %s
+				LIMIT 1
+			""", (item_code,), as_dict=1)
+			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
+   
+			planned_qty = 0
+			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
+			if actual_qty:
+				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
+			else:
+				planned_qty = flt(fg.planned_qty)
+
+			sales_qty  = planned_qty
 			tool_info = _resolve_bom_tool_info(
 				(bom_tool_map.get(bom_no) or {}).get("tools"),
 				selected_tool=getattr(fg, "tool", "") or None,
@@ -1756,7 +1999,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"tool_load_qty":           cint(tool_details.get("tool_load_qty") or 0),
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
-				"planned_qty":             flt(fg.planned_qty),
+				"planned_qty":             planned_qty,
+				"planned_qty_as_show":     flt(fg.planned_qty),
+				"actual_qty":              actual_qty,
 				"batchsize":               base_batchsize,
 				"spm":                     display_spm,
 				"spm_1":                   display_spm,
@@ -1780,6 +2025,737 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			"sfg_chain": sfg_chain_out,
 			"mr":        mr_rows_out,
 		}
+	return result
+
+
+
+# ---------------------------------------------------------------------------
+# Consolidated Batch Schedule API
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def calculate_consolidated_batch_schedule(docname: str) -> dict:
+	"""
+	Calculate consolidated (pipeline) batch schedule for all SOs in Bulk PP.
+
+	Algorithm:
+	  - SFG chain sorted deepest BOM level first → that SFG starts at planning_start_date
+	  - Each subsequent SFG starts exactly when SFG[i-1] row-0 ends (pipeline overlap)
+	  - Within same SFG: batches separated by PM gap (next_start = prev_end + pm_days)
+	  - PM = 0 for last batch of each SFG (no gap after last batch)
+	  - 1st row of 1st SFG: no PM before it
+	  - FG dates: reuse existing sequential logic (backward schedule from delivery date)
+	  - MR: start = deepest SFG row[0].end_date, end = start + grn + lead_time (no PM)
+
+	Returns dict keyed by SO name.
+	"""
+	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	merge_sales_order = []
+	for rec in doc.sales_orders:
+		if rec.merged == 1:
+			merge_sales_order.append(rec.sales_order)
+
+	_apply_parallel_schedule_overrides_to_doc(doc)
+	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_tools_on_doc(doc)
+
+	default_shift_config = _get_effective_shift_config()
+	default_holidays = _get_holiday_set(default_shift_config.get("holiday_list"))
+	allow_backdated = _get_allow_backdated_setting()
+	today_dt = _current_shift_datetime(default_shift_config)
+
+	result = {}
+
+	# Group po_items / sub_assembly_items / mr_items by sales order
+	so_map: dict[str, dict] = {}
+	for fg in doc.po_items:
+		so_map.setdefault(fg.sales_order, {"fg": [], "sfg": [], "mr": []})
+		so_map[fg.sales_order]["fg"].append(fg)
+	for sfg in doc.sub_assembly_items:
+		if sfg.sales_order in so_map:
+			so_map[sfg.sales_order]["sfg"].append(sfg)
+	for mr in doc.mr_items:
+		if mr.sales_order in so_map:
+			so_map[mr.sales_order]["mr"].append(mr)
+
+	merged_fg_qty = {}
+	merged_sfg_qty = {}
+	merged_mr_qty = {}
+	for k in merge_sales_order:
+		fg_obj = so_map.get(k).get('fg')
+		for f_rec in fg_obj:
+			if f_rec.__dict__.get("item_code") in merged_fg_qty:
+				merged_fg_qty[f_rec.__dict__.get("item_code")] = merged_fg_qty[f_rec.__dict__.get("item_code")] + f_rec.__dict__["planned_qty"]
+			else:
+				merged_fg_qty[f_rec.__dict__.get("item_code")] =  f_rec.__dict__["planned_qty"]
+			
+		sfg_obj = so_map.get(k).get('sfg')
+		for sfg_rec in sfg_obj:
+			if sfg_rec.__dict__.get("production_item") in merged_sfg_qty:
+				merged_sfg_qty[sfg_rec.__dict__.get("production_item")] = merged_sfg_qty[sfg_rec.__dict__.get("production_item")] + sfg_rec.__dict__["qty"]
+			else:
+				merged_sfg_qty[sfg_rec.__dict__.get("production_item")] =  sfg_rec.__dict__["qty"]
+
+		mr_obj = so_map.get(k).get('mr')
+		for mr_rec in mr_obj:
+			if mr_rec.__dict__.get("item_code") in merged_mr_qty:
+				merged_mr_qty[mr_rec.__dict__.get("item_code")] = merged_mr_qty[mr_rec.__dict__.get("item_code")] + mr_rec.__dict__["quantity"]
+			else:
+				merged_mr_qty[mr_rec.__dict__.get("item_code")] =  mr_rec.__dict__["quantity"]
+	for m in merge_sales_order:
+		fg_obj = so_map.get(m).get('fg')
+		for f_rec in fg_obj:
+			f_rec.__dict__["planned_qty"] = merged_fg_qty.get(f_rec.__dict__.get("item_code"))
+
+		sfg_obj = so_map.get(m).get('sfg')
+		for sfg_rec in sfg_obj:
+			sfg_rec.__dict__["qty"] = merged_sfg_qty.get(sfg_rec.__dict__.get("production_item"))
+
+		mr_obj = so_map.get(m).get('mr')
+		for mr_rec in mr_obj:
+			mr_rec.__dict__["quantity"] = merged_mr_qty.get(mr_rec.__dict__.get("item_code"))
+	
+	# Batch-fetch BOM tool details and operation batchsize
+	all_bom_nos = list({
+		row.bom_no
+		for rows in so_map.values()
+		for row in rows["sfg"]
+		# for row in rows["fg"]
+		if getattr(row, "bom_no", None)
+	})
+ 
+	all_bom_nos += list({
+		row.bom_no
+		for rows in so_map.values()
+		for row in rows["fg"]
+		if getattr(row, "bom_no", None)
+	})
+	bom_tool_map = _fetch_bom_tool_map(all_bom_nos)     # bom_no → {tools, default_tool, fallback_lot_capacity}
+	bom_ops_map  = _fetch_bom_ops_map(all_bom_nos)      # bom_no → [{operation, custom_batchsize}]
+
+	
+	# Batch-fetch item GRN processing days
+	all_item_codes = list({
+		row.production_item
+		for rows in so_map.values()
+		for row in rows["sfg"]
+		if getattr(row, "production_item", None)
+	} | {
+		row.item_code
+		for rows in so_map.values()
+		for row in rows["mr"]
+		if getattr(row, "item_code", None)
+	} | {
+		row.item_code
+		for rows in so_map.values()
+		for row in rows["fg"]
+		if getattr(row, "item_code	", None)
+	})
+	grn_map = _fetch_grn_days_map(all_item_codes)         # item_code → grn_days
+	lead_map = _fetch_default_lead_time_map(              # item_code → lead_time_days
+		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)],
+		doc.company
+	)
+
+	
+	target_warehouse_map = _get_item_default_warehouse_map(
+		list({
+			row.item_code
+			for rows in so_map.values()
+			for row in rows["fg"]
+			if getattr(row, "item_code", None)
+		} | {
+			row.production_item
+			for rows in so_map.values()
+			for row in rows["sfg"]
+			if getattr(row, "production_item", None)
+		}),
+		doc.company,
+	)
+
+	def _parse_shift_types_csv(csv: str | None) -> list[str]:
+		return _parse_csv_list(csv)
+
+	def _get_row_shift_config(row) -> dict:
+		# If row has an override, build from selected shifts; otherwise use default.
+		try:
+			csv = getattr(row, "custom_shift_types_csv", None) or ""
+		except Exception:
+			csv = ""
+		types = _parse_shift_types_csv(csv)
+		cfg = get_shift_config_for_shift_types(types) or {}
+		return cfg or default_shift_config
+	
+	def _get_row_holidays(shift_config: dict) -> set:
+		return _get_holiday_set(shift_config.get("holiday_list")) if shift_config else default_holidays
+
+	def _shift_start_end_td(shift_config: dict) -> tuple[timedelta, timedelta]:
+		start_td = _as_timedelta(shift_config.get("start_time")) or timedelta(hours=8)
+		end_td = (
+			shift_config.get("last_window_end_td")
+			or _as_timedelta(shift_config.get("end_time"))
+			or timedelta(hours=17)
+		)
+		return start_td, end_td
+
+	def _snap_start(dt: datetime, shift_config: dict) -> datetime:
+		start_td, _ = _shift_start_end_td(shift_config)
+		return datetime.combine(dt.date(), datetime.min.time()) + start_td
+
+	def _snap_end(dt: datetime, shift_config: dict) -> datetime:
+		_, end_td = _shift_start_end_td(shift_config)
+		return datetime.combine(dt.date(), datetime.min.time()) + end_td
+
+	for so_name, items in so_map.items():
+		
+		so_mr_item_codes = list({
+			row.item_code
+			for row in items["mr"]
+			if getattr(row, "item_code", None)
+		})
+		sfg_bom_links: dict[str, set[str]] = {}
+		sfg_bom_nos = list({
+			row.bom_no
+			for row in items["sfg"]
+			if getattr(row, "bom_no", None)
+		})
+		if sfg_bom_nos and so_mr_item_codes:
+			linked_rm_rows = frappe.db.sql("""
+				SELECT parent AS bom_no, item_code
+				FROM `tabBOM Item`
+				WHERE parent IN %(boms)s AND item_code IN %(items)s
+			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
+			for link in linked_rm_rows:
+				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
+		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
+		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
+		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			batch_rows = []
+			for b_idx, batch_qty in enumerate(batches_qty):
+				mfg_days_b = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+				if b_idx == 0:
+					start_dt = get_datetime(start_dt_b0)
+				else:
+					prev_end = get_datetime(batch_rows[b_idx - 1]["end_date"])
+					# Next batch starts exactly when the previous batch ends; only PM days
+					# and holidays are allowed to push the date forward.
+					start_dt = _working_day_add(prev_end, pm_days, holidays)
+				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days_b * shift_minutes)
+				if start_dt.date() in holidays:
+					start_dt = start_dt + timedelta(days=1)
+				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
+				is_last    = (b_idx == len(batches_qty) - 1)
+				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+				
+				holiday_count = 0
+				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
+					holiday_count = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+
+				holiday_dates =[]
+				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
+					for h in holidays:
+						if getdate(start_dt) < h <= getdate(end_dt):
+							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+							holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+      
+				batch_rows.append({
+					"batch": b_idx + 1, "total": len(batches_qty), "qty": batch_qty,
+					"mfg_days": mfg_days_b, "grn_days": grn_days,
+					"pm_days": 0 if (is_last or b_idx == 0) else pm_days,
+					"holiday_count": holiday_count,
+					"holiday_hover": holiday_dates, 
+					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
+				})
+			return batch_rows
+
+		# ── Get FG deadline = SO delivery_date (always fresh) ───────────────────
+		_so_del = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+		fg_deadline_dt = get_datetime(_so_del) if _so_del else today_dt
+		# If delivery_date is in the past and backdating not allowed → anchor from today
+		if not allow_backdated and fg_deadline_dt < today_dt:
+			fg_deadline_dt = today_dt
+
+		# ── SFG chain: BACKWARD from FG.planned_start ────────────────────────
+		# Process level-0 first (direct child of FG), deepest last.
+		# deadline flows: FG.start → SFG_L0.end → SFG_L0.start → SFG_L1.end → ...
+		sfg_rows_sorted = sorted(items["sfg"], key=lambda r: r.bom_level or 0)  # level 0 first
+
+		sfg_chain_bwd: list[dict] = []   # [level0, level1, ..., deepest]
+		# Compute FG start by backward-scheduling FG duration from the SO delivery deadline.
+		# This ensures FG ends at delivery (or as close as possible) rather than starting on delivery.
+		fg_start_anchor_dt = fg_deadline_dt
+		if items.get("fg"):
+			fg0 = items["fg"][0]
+			fg0_cfg = _get_row_shift_config(fg0)
+			_fg0_cache = _fetch_bom_operations_cache([fg0.bom_no]) if getattr(fg0, "bom_no", None) else {}
+			fg0_prod_mins = _calculate_row_production_minutes(fg0, flt(getattr(fg0, "planned_qty", 0) or 0), _fg0_cache)
+			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
+			if fg0_prod_mins and fg0_prod_mins > 0:
+				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
+				if not allow_backdated and _fg0_start < today_dt:
+					_fg0_start = _snap_start(today_dt, fg0_cfg)
+				fg_start_anchor_dt = _fg0_start
+			else:
+				fg_start_anchor_dt = _fg0_deadline
+
+		# Initial SFG deadline = FG start (row-wise shift snapping for first SFG)
+		first_sfg_cfg = _get_row_shift_config(sfg_rows_sorted[0]) if sfg_rows_sorted else default_shift_config
+		deadline_dt = _snap_start(fg_start_anchor_dt, first_sfg_cfg)
+
+		for sfg in sfg_rows_sorted:
+			sfg.spm = 0
+			shift_config = _get_row_shift_config(sfg)
+			holidays = _get_row_holidays(shift_config)
+			shift_minutes = _get_shift_working_minutes(shift_config)
+			# For display: "Per Shift Qty" should be per single shift, not per combined day.
+			shift_count = max(len(_parse_shift_types_csv(getattr(sfg, "custom_shift_types_csv", "") or "")), 1)
+
+			bom_no    = sfg.bom_no or ""
+			item_code = sfg.production_item
+   
+			default_warehouse = frappe.db.sql("""
+				SELECT id.default_warehouse
+				FROM `tabItem Default` id
+				WHERE id.parent = %s
+				LIMIT 1
+			""", (item_code,), as_dict=1)
+			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
+   
+			sales_qty = 0
+			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
+			# actual_qty = get_reserved_qty(item_code, default_warehouse) or 0
+			if actual_qty:
+				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
+			else:
+				sales_qty = flt(sfg.qty)
+    
+			grn_days  = int(grn_map.get(item_code, 0))
+
+			tool_info = _resolve_bom_tool_info(
+				(bom_tool_map.get(bom_no) or {}).get("tools"),
+				selected_tool=getattr(sfg, "tool", "") or None,
+				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
+			)
+			selected_tool = tool_info.get("tool") or ""
+   
+			item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			supplier_list = [d.supplier for d in item_suppliers]
+   
+			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
+   
+			pm_days = 0
+			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
+				pm_days       = int(tool_info.get("pm_days", 0))
+
+			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
+    
+			base_batchsize = cint(spm_details.get("batchsize") or 0)
+			machine_count  = cint(spm_details.get("machine_count") or 0)
+			row_spm        = cint(getattr(sfg, "spm", 0) or 0)
+
+			display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
+			
+			if spm_details.get("subcontract_per_shift_qty") != 0:
+				display_spm    = spm_details.get("spm")
+				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+				per_day_qty   = per_shift_qty * shift_count
+			else:
+				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				per_shift_qty     = real_spm * minutes_per_shift
+				per_day_qty       = per_shift_qty * shift_count
+
+
+			# Calculations use per-day capacity (combined shifts); UI shows per-shift.
+			split_qty = tool_load_qty or per_day_qty
+			batches   = _split_batches(sales_qty, split_qty)
+
+			# ── Batch 0: backward schedule from deadline ──────────────────────
+			# Parallel SFG chain: backward from mfg_deadline = deadline - grn_days.
+			# b0_end is forced to deadline_dt for a tight chain connection.
+			batch0_qty       = batches[0]
+			batch0_prod_mins = (batch0_qty / real_spm) if real_spm > 0 else shift_minutes
+			# Subtract grn_days (skipping weekends + holidays) to get the mfg completion deadline
+			mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
+			               if grn_days > 0 else deadline_dt
+			b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
+			b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
+			# Force b0_end = deadline_dt so the chain is visually tight (SFG_i.end = SFG_(i-1).start)
+			b0_end     = deadline_dt
+
+			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
+   
+			hc_b0 = 0
+			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
+				hc_b0 = sum(1 for h in holidays if getdate(b0_start) < h <= getdate(b0_end))
+    
+			batch_rows: list[dict] = [{
+				"batch": 1, "total": len(batches), "qty": batch0_qty,
+				"mfg_days": mfg_days_b0, "grn_days": grn_days,
+				"pm_days": 0,  # First batch: no pm_days (no maintenance needed before the very first run)
+				"holiday_count": hc_b0,
+				"start_date": str(b0_start), "mfg_end_date": str(b0_mfg_end), "end_date": str(b0_end),
+			}]
+
+			# ── Batches 1..N: forward from batch 0 end ────────────────────────
+			for b_idx, batch_qty in enumerate(batches[1:], start=1):
+				mfg_days_bn = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+				prev_end    = get_datetime(batch_rows[b_idx - 1]["end_date"])
+				start_dt    = _working_day_add(prev_end, pm_days, holidays)
+				bp_mins     = (batch_qty / real_spm) if real_spm > 0 else (mfg_days_bn * shift_minutes)
+				mfg_end_dt  = shift_aware_forward_schedule(start_dt, bp_mins, shift_config)
+				is_last     = (b_idx == len(batches) - 1)
+				end_dt      = _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config) \
+				              if grn_days > 0 else mfg_end_dt
+				hc = 0
+				if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
+					hc = sum(1 for h in holidays if getdate(start_dt) < h <= getdate(end_dt))
+	
+				holiday_dates =[]
+				if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
+					for h in holidays:
+						if getdate(start_dt) < h <= getdate(end_dt):
+							description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+							holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+      
+				batch_rows.append({
+					"batch": b_idx + 1, "total": len(batches), "qty": batch_qty,
+					"mfg_days": mfg_days_bn, "grn_days": grn_days,
+					"pm_days": 0 if is_last else pm_days,
+					"holiday_count": hc,
+					"holiday_hover": holiday_dates, 
+					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
+				})
+
+			# Next deadline = this SFG's batch[0].start_date
+			deadline_dt = b0_start
+			sfg_chain_bwd.append({
+				"item_code": item_code, "bom_no": bom_no,
+				"tool": selected_tool, "tools": tool_info.get("tools") or [],
+				"bom_level": sfg.bom_level or 0, 
+    			"qty": sales_qty,
+    			"qty_as_show": flt(sfg.qty),
+    			"actual_qty": actual_qty,
+				"batchsize": base_batchsize, 
+    			"spm": display_spm,
+    			"spm_1": display_spm,
+				"machine_count": machine_count,
+				"custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				"custom_shift_types_csv": getattr(sfg, "custom_shift_types_csv", "") or "",
+				"per_shift_qty": per_shift_qty,
+				"per_day_qty": per_day_qty,
+				"tool_load_qty": tool_load_qty, "pm_days": pm_days,
+				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
+				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
+				"supplier": sfg.supplier or "", "supplier_list": supplier_list,
+    			"row_name": sfg.name, "batches": batch_rows,
+			})
+
+		# ── Backdate cascade: deepest SFG start < today → push forward ───────
+		# sfg_chain_bwd[-1] = deepest (last processed), sfg_chain_bwd[0] = level 0
+		sfg_chain_out: list[dict] = []
+		fg_start_override: "datetime | None" = None
+		# Push forward only when backdating is disallowed and the computed plan would start in the past.
+		# Do NOT force-forward just because there are no RM links; Bulk PP is a planner and must
+		# still anchor to the SO delivery date for future delivery scenarios (e.g., Sept delivery).
+		if sfg_chain_bwd and (not allow_backdated) and (
+			get_datetime(sfg_chain_bwd[-1]["batches"][0]["start_date"]) < today_dt
+		):
+			# Preserve original behaviour: the cascade anchor is "today" in the
+			# default/global shift context. Row-wise shifts only affect the row's
+			# own forward scheduling calculations.
+			new_start = _snap_start(today_dt, default_shift_config)
+			for sfg_data in reversed(sfg_chain_bwd):   # deepest → level 0
+				row_cfg = get_shift_config_for_shift_types(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv"))) or default_shift_config
+				row_holidays = _get_row_holidays(row_cfg)
+				row_shift_minutes = _get_shift_working_minutes(row_cfg)
+				ic_f  = sfg_data["item_code"]
+				gd_f  = int(grn_map.get(ic_f, 0))
+				espm  = sfg_data["spm"]
+				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
+				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				psq_day = sfg_data.get("per_day_qty") or 0
+				pmd   = sfg_data["pm_days"]
+				tlq   = sfg_data["tool_load_qty"]
+				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
+				                                  row_cfg, row_holidays, row_shift_minutes)
+				entry = dict(sfg_data)
+				entry["batches"] = br_f
+				sfg_chain_out.append(entry)               # deepest first in output
+				new_start = get_datetime(br_f[0]["end_date"])
+			# FG must be pushed to after the level-0 SFG's batch[0].end
+			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+		else:
+			# No backdate: reverse bwd list so output is deepest-first
+			sfg_chain_out = list(reversed(sfg_chain_bwd))
+
+		# top SFG (level 0) batch[0].end = FG start (may be overridden by cascade)
+		top_sfg_batch0_end = (
+			str(fg_start_override) if fg_start_override
+			else (sfg_chain_bwd[0]["batches"][0]["end_date"] if sfg_chain_bwd else None)
+		)
+		# ── MR: backward schedule from deepest SFG batch[0].start ─────────────
+		# Material must ARRIVE by the time deepest SFG starts its first batch.
+		# rm_end (Receive By) = deepest SFG batch[0].start
+		# rm_start (Order By) = rm_end - (grn_days + lead_days) working days backward
+		# If rm_start < today → can't go back → push forward from today,
+		#   and cascade-shift the entire SFG chain + FG by the delay.
+		deepest_sfg_batch0_start = (
+			get_datetime(sfg_chain_out[0]["batches"][0]["start_date"])
+			if sfg_chain_out and sfg_chain_out[0]["batches"]
+			else None
+		)
+
+		max_mr_end_dt: "datetime | None" = None
+		mr_rows_out: list[dict] = []
+		for mr in items["mr"]:
+			item_code  = mr.item_code
+			grn_days   = int(grn_map.get(item_code, 0))
+			lead_days  = int(lead_map.get(item_code, 0))
+			total_days = grn_days + lead_days
+
+			if deepest_sfg_batch0_start:
+				# Ideal: receive exactly when deepest SFG starts
+				rm_end_ideal   = deepest_sfg_batch0_start
+				rm_start_ideal = _working_day_subtract(rm_end_ideal, total_days, default_holidays)
+				if rm_start_ideal < today_dt:
+					# Too late to order in time → push MR forward from today
+					rm_start = _snap_start(today_dt, default_shift_config)
+					rm_end   = _snap_end(_working_day_add(today_dt, total_days, default_holidays), default_shift_config)
+				else:
+					# We have enough time: keep the plan anchored to the delivery-driven schedule.
+					# Receive material exactly when deepest SFG starts, and place the order by rm_start_ideal.
+					rm_start = _snap_start(get_datetime(rm_start_ideal), default_shift_config)
+					rm_end   = _snap_end(get_datetime(rm_end_ideal), default_shift_config)
+			else:
+				rm_start = _snap_start(today_dt, default_shift_config)
+				rm_end   = _snap_end(_working_day_add(today_dt, total_days, default_holidays), default_shift_config)
+
+			rm_end_dt = get_datetime(rm_end) if not isinstance(rm_end, datetime) else rm_end
+			if max_mr_end_dt is None or rm_end_dt > max_mr_end_dt:
+				max_mr_end_dt = rm_end_dt
+
+			mr_rows_out.append({
+				"item_code":  item_code,
+				"item_name":  mr.item_name or item_code,
+				"qty":        flt(mr.quantity),
+				"uom":        mr.uom or "",
+				"grn_days":   grn_days,
+				"lead_days":  lead_days,
+				"start_date": str(rm_start),
+				"end_date":   str(rm_end),
+				"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+				"row_name":   mr.name,
+			})
+
+		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
+		# If MR ends earlier than the deepest SFG's planned start, re-run the
+		# SFG must always start exactly when MR arrives (material available).
+		# Cascade runs whether MR arrives early (pull forward) or late (push forward).
+		if max_mr_end_dt and sfg_chain_out:
+			# Preserve original behaviour: MR-driven cascade anchor uses default/global
+			# shift boundaries. Row-wise shifts only affect each row's scheduling windows.
+			new_start = _snap_start(max_mr_end_dt, default_shift_config)
+			sfg_chain_rebuilt: list[dict] = []
+			for sfg_data in sfg_chain_out:   # deepest-first
+				row_cfg = get_shift_config_for_shift_types(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv"))) or default_shift_config
+				row_holidays = _get_row_holidays(row_cfg)
+				row_shift_minutes = _get_shift_working_minutes(row_cfg)
+				ic_f  = sfg_data["item_code"]
+				gd_f  = int(grn_map.get(ic_f, 0))
+				espm  = sfg_data["spm"]
+				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
+				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				psq_day = sfg_data.get("per_day_qty") or 0
+				pmd   = sfg_data["pm_days"]
+				tlq   = sfg_data["tool_load_qty"]
+				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
+				                                  row_cfg, row_holidays, row_shift_minutes)
+				entry = dict(sfg_data)
+				entry["batches"] = br_f
+				sfg_chain_rebuilt.append(entry)
+				new_start = get_datetime(br_f[0]["end_date"])
+			sfg_chain_out = sfg_chain_rebuilt
+			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+			top_sfg_batch0_end = str(fg_start_override)
+
+		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
+
+		fg_rows_out: list[dict] = []
+		_fg_bom_nos = [fg.bom_no for fg in items["fg"] if fg.bom_no]
+		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
+		for fg in items["fg"]:
+			fg_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
+			prod_minutes = _calculate_row_production_minutes(fg, flt(fg.planned_qty), _fg_bom_cache)
+			fg.spm = 0
+			tool_details = _get_bom_spm_details_map(fg.bom_no, selected_tool=getattr(fg, "tool", "") or None)
+			if prod_minutes and prod_minutes > 0:
+				fg_end = shift_aware_forward_schedule(fg_start, prod_minutes, shift_config)
+			else:
+				fg_end = fg_start
+
+		fg_rows_sorted =  items["fg"]
+		
+		prev_fg_row0_end: str | None = None
+		for fg_idx, fg in enumerate(fg_rows_sorted):	
+			shift_config = _get_row_shift_config(fg)
+			holidays = _get_row_holidays(shift_config)
+			shift_minutes = _get_shift_working_minutes(shift_config)
+			shift_count = max(len(_parse_shift_types_csv(getattr(fg, "custom_shift_types_csv", "") or "")), 1)
+
+			bom_no     = fg.bom_no or ""
+			item_code  = fg.item_code
+
+			default_warehouse = frappe.db.sql("""
+				SELECT id.default_warehouse
+				FROM `tabItem Default` id
+				WHERE id.parent = %s
+				LIMIT 1
+			""", (item_code,), as_dict=1)
+			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
+   
+			planned_qty = 0
+			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
+			if actual_qty:
+				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
+			else:
+				planned_qty = flt(fg.planned_qty)
+
+			sales_qty  = planned_qty
+			tool_info = _resolve_bom_tool_info(
+				(bom_tool_map.get(bom_no) or {}).get("tools"),
+				selected_tool=getattr(fg, "tool", "") or None,
+				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
+			)
+   
+			item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			supplier_list = [d.supplier for d in item_suppliers]
+   
+			selected_tool = tool_info.get("tool") or ""
+			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
+   
+			pm_days = 0
+			if fg.manufacturing_type in ("In House", "In House - Vendor"):
+				pm_days       = int(tool_info.get("pm_days", 0))
+    
+			grn_days      = int(grn_map.get(item_code, 0))
+			spm_details = _get_row_spm_details(fg, bom_no, bom_ops_map)
+			base_batchsize = cint(spm_details.get("batchsize") or 0)
+			row_spm = cint(getattr(fg, "spm", 0) or 0)
+			machine_count = cint(spm_details.get("machine_count") or 0)
+			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
+   
+			if spm_details.get("subcontract_per_shift_qty") != 0:
+				display_spm = spm_details.get("spm")
+				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+				per_day_qty = per_shift_qty * shift_count
+			else:
+				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				per_shift_qty = real_spm * minutes_per_shift
+				per_day_qty = per_shift_qty * shift_count
+
+			# Split into batches.
+			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
+			split_qty = tool_load_qty or per_day_qty
+			batches = _split_batches(sales_qty, split_qty)
+   
+			batch_rows: list[dict] = []
+			for b_idx, batch_qty in enumerate(batches):
+				mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+
+				# Start date
+				if b_idx == 0:
+					if fg_idx == 0:
+						# First FG, first batch → starts when top SFG batch-0 ends
+						start_dt = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
+					else:
+						# Multiple FGs: start when prev FG batch-0 ended
+						start_dt = get_datetime(prev_fg_row0_end)
+				else:
+					# Next FG batch starts exactly when the previous batch ends; only PM days
+					# and holidays are allowed to push the date forward.
+					prev_end = get_datetime(batch_rows[b_idx - 1]["end_date"])
+					start_dt = _working_day_add(prev_end, pm_days, holidays)
+
+				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
+				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
+				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_end after grn_days
+				end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+
+				is_last_batch = (b_idx == len(batches) - 1)
+				# Count holidays strictly between start_date and end_date
+
+				holiday_count = 0
+				if fg.manufacturing_type in ("In House", "In House - Vendor"):
+					holiday_count = sum(
+						1 for h in holidays
+						if getdate(start_dt) < h <= getdate(end_dt)
+					)
+    
+				holiday_dates =[]
+				for h in holidays:
+					if getdate(start_dt) < h <= getdate(end_dt):
+						description = frappe.get_value("Holiday",{'holiday_date':h} ,'description')
+						holiday_dates.append(h.strftime("%d-%m-%Y") + ' - ' + description)
+				
+				batch_rows.append({
+					"batch":         b_idx + 1,
+					"total":         len(batches),
+					"qty":           batch_qty,
+					"mfg_days":      mfg_days,
+					"grn_days":      grn_days,
+					"pm_days":       0 if is_last_batch else pm_days,
+					"holiday_count": holiday_count,
+					"holiday_hover": holiday_dates, 
+					"start_date":    str(start_dt),
+					"mfg_end_date":  str(mfg_end_dt),
+					"end_date":      str(end_dt),
+				})
+    
+			# Update prev_fg_row0_end for next FG in chain
+			if batch_rows:
+				prev_fg_row0_end = batch_rows[0]["end_date"]
+
+			fg_rows_out.append({
+				"item_code":               fg.item_code,
+				"bom_no":                  fg.bom_no or "",
+				"tool":                    tool_details.get("tool") or "",
+				"tools":                   tool_details.get("tools") or [],
+				"tool_load_qty":           cint(tool_details.get("tool_load_qty") or 0),
+				"pm_days":                 cint(tool_details.get("pm_days") or 0),
+				"sales_order":             fg.sales_order or "",
+				"planned_qty":             planned_qty,
+				"planned_qty_as_show":     flt(fg.planned_qty),
+				"actual_qty":              actual_qty,
+				"batchsize":               base_batchsize,
+				"spm":                     display_spm,
+				"spm_1":                   display_spm,
+				"per_shift_qty":           per_shift_qty,
+				"per_day_qty":             per_day_qty,
+				"manufacturing_type":      fg.manufacturing_type or "In House",
+				"supplier_list": supplier_list,
+				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
+				"custom_shift_types_csv": getattr(fg, "custom_shift_types_csv", "") or "",
+				"target_warehouse": (
+					getattr(fg, "target_warehouse", "") or target_warehouse_map.get(fg.item_code, "")
+				),
+				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(fg_start),
+				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(fg_end),
+				"row_name":                fg.name,
+				"batches":                batch_rows,
+			})
+
+		result[so_name] = {
+			"fg":        fg_rows_out,
+			"sfg_chain": sfg_chain_out,
+			"mr":        mr_rows_out,
+		}
+	# print("...................",result)
 	return result
 
 

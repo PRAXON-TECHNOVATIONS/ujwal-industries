@@ -171,9 +171,9 @@ doc_events = {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
  
-	"Stock Settings" :{
-		"validate": "ujwal_industries.ujwal_industries.overrides.stock_settings.validate",
-    },
+	# "Stock Settings" :{
+	# 	"validate": "ujwal_industries.ujwal_industries.overrides.stock_settings.validate",
+    # },
  
  	"Stock Entry": {
         "validate": [

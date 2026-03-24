@@ -133,7 +133,7 @@
    "fieldtype": "Select",
    "hidden": 1,
    "label": "Planning Mode",
-   "options": "Sequential\nParallel"
+   "options": "Sequential\nParallel\nConsolidated"
   },
   {
    "fieldname": "production_items_html",
@@ -251,7 +251,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-03-17 13:58:10.340106",
+ "modified": "2026-03-24 20:03:42.046951",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",
