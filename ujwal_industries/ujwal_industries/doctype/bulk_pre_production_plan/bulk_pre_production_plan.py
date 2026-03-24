@@ -1573,7 +1573,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		deadline_dt = _snap_start(fg_start_anchor_dt, first_sfg_cfg)
 
 		for sfg in sfg_rows_sorted:
-			sfg.spm = 0
 			shift_config = _get_row_shift_config(sfg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -1753,6 +1752,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
+				# Tight pipeline: if batch[0].start was pushed forward (e.g. holiday), patch
+				# the previous SFG's end_date to match so there is no visible gap in the chain.
+				actual_b0_start = get_datetime(br_f[0]["start_date"])
+				if sfg_chain_out and actual_b0_start > new_start:
+					sfg_chain_out[-1]["batches"][0]["end_date"] = str(actual_b0_start)
 				sfg_chain_out.append(entry)               # deepest first in output
 				new_start = get_datetime(br_f[0]["end_date"])
 			# FG must be pushed to after the level-0 SFG's batch[0].end
@@ -1846,6 +1850,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
+				# Tight pipeline: patch previous SFG's end_date if holiday pushed current start forward.
+				actual_b0_start = get_datetime(br_f[0]["start_date"])
+				if sfg_chain_rebuilt and actual_b0_start > new_start:
+					sfg_chain_rebuilt[-1]["batches"][0]["end_date"] = str(actual_b0_start)
 				sfg_chain_rebuilt.append(entry)
 				new_start = get_datetime(br_f[0]["end_date"])
 			sfg_chain_out = sfg_chain_rebuilt
@@ -1857,15 +1865,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		fg_rows_out: list[dict] = []
 		_fg_bom_nos = [fg.bom_no for fg in items["fg"] if fg.bom_no]
 		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
-		for fg in items["fg"]:
-			fg_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
-			prod_minutes = _calculate_row_production_minutes(fg, flt(fg.planned_qty), _fg_bom_cache)
-			fg.spm = 0
-			tool_details = _get_bom_spm_details_map(fg.bom_no, selected_tool=getattr(fg, "tool", "") or None)
-			if prod_minutes and prod_minutes > 0:
-				fg_end = shift_aware_forward_schedule(fg_start, prod_minutes, shift_config)
-			else:
-				fg_end = fg_start
 
 		fg_rows_sorted =  items["fg"]
 		
@@ -1906,6 +1905,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
    
 			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
+			tool_details  = _get_bom_spm_details_map(bom_no, selected_tool=selected_tool or None)
    
 			pm_days = 0
 			if fg.manufacturing_type in ("In House", "In House - Vendor"):
@@ -3891,6 +3891,7 @@ def create_production_plans_document(bulk_pp_name) :
 					'custom_mfg_days' : k.get('mfg_days'),
 					'custom_grn_days' : k.get('grn_days'),
 					'custom_pm_days' : k.get('pm_days'),
+					'custom_shift_types_csv' : j.get('custom_shift_types_csv') or '',
 				})
 		
 		for j in so_details.get('sfg_chain')[::-1]:
@@ -3913,6 +3914,7 @@ def create_production_plans_document(bulk_pp_name) :
 					'custom_mfg_days' : k.get('mfg_days'),
 					'custom_grn_days' : k.get('grn_days'),
 					'custom_pm_days' : k.get('pm_days'),
+					'custom_shift_types_csv' : j.get('custom_shift_types_csv') or '',
 				})
 		
 		for j in so_details.get('mr'):

@@ -31,6 +31,7 @@ from .pp_utils import (
     _calculate_production_minutes,
     _get_supplier_lead_time,
     shift_aware_forward_schedule,
+    get_shift_config_for_shift_types,
 )
 
 
@@ -1704,3 +1705,358 @@ def create_importer_from_selection(pp_names: list | str) -> dict:
     doc.insert(ignore_permissions=False)
     frappe.db.commit()
     return {"name": doc.name}
+
+
+# ---------------------------------------------------------------------------
+# Parallel planning — cascade date recalculation
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def recalculate_parallel_cascade(
+    production_plan_name: str,
+    changed_row_name: str,
+    changed_field: str,   # "start" | "end"
+    new_value: str,       # "YYYY-MM-DD HH:MM:SS"
+    row_type: str,        # "fg" | "sfg" | "mr"
+) -> dict:
+    """
+    Cascade date changes for parallel-planning Production Plans.
+
+    When the user edits a batch start or end date in the Manage Dates dialog,
+    this API recomputes all downstream rows using:
+      - mfg_days / grn_days / pm_days already stored on each PP row (static)
+      - per-row custom_shift_types_csv → holiday list for that shift
+      - pipeline rule: deeper SFG B1.end → next SFG B1.start → ... → FG B1.start
+
+    Returns: {row_name: {"start": "YYYY-MM-DD HH:MM:SS", "end": "YYYY-MM-DD HH:MM:SS"}}
+    """
+    doc = frappe.get_doc("Production Plan", production_plan_name)
+    default_shift_config = _get_effective_shift_config()
+    default_holidays = _get_holiday_set(default_shift_config.get("holiday_list"))
+
+    new_dt = get_datetime(new_value) if new_value else None
+    if not new_dt:
+        return {}
+
+    updates: dict[str, dict] = {}
+
+    # ── Working-day arithmetic (holiday-aware, Sat/Sun count as working) ──
+    def _wd_add(dt: datetime, n_days: int, holidays: set) -> datetime:
+        if n_days <= 0:
+            return dt
+        d = getdate(dt)
+        added = 0
+        while added < n_days:
+            d = getdate(add_days(d, 1))
+            if d not in holidays:
+                added += 1
+        return get_datetime(str(d) + " " + dt.strftime("%H:%M:%S"))
+
+    def _row_holidays(shift_csv: str | None) -> set:
+        if shift_csv:
+            types = [s.strip() for s in shift_csv.split(",") if s.strip()]
+            if types:
+                cfg = get_shift_config_for_shift_types(types) or {}
+                if cfg:
+                    return _get_holiday_set(cfg.get("holiday_list"))
+        return default_holidays
+
+    def _compute_end(start: datetime, mfg_days: Any, grn_days: Any, holidays: set) -> datetime:
+        total = int(mfg_days or 0) + int(grn_days or 0)
+        return _wd_add(start, total, holidays) if total > 0 else start
+
+    def _wd_sub(dt: datetime, n_days: int, holidays: set) -> datetime:
+        """Step backward n working days from dt (holidays not counted)."""
+        if n_days <= 0:
+            return dt
+        d = getdate(dt)
+        removed = 0
+        while removed < n_days:
+            d = getdate(add_days(d, -1))
+            if d not in holidays:
+                removed += 1
+        return get_datetime(str(d) + " " + dt.strftime("%H:%M:%S"))
+
+    def _skip_holiday(dt: datetime, holidays: set) -> datetime:
+        """If dt falls on a holiday, advance to the next non-holiday date."""
+        d = getdate(dt)
+        while d in holidays:
+            d = getdate(add_days(d, 1))
+        return get_datetime(str(d) + " " + dt.strftime("%H:%M:%S"))
+
+    # ── SFG cascade ────────────────────────────────────────────────────────
+    if row_type == "sfg":
+        sfg_rows = doc.sub_assembly_items or []
+
+        # Group rows by production_item preserving first-appearance order
+        seen_items: list[str] = []
+        item_groups: dict[str, list] = {}
+        for r in sfg_rows:
+            ic = r.production_item
+            if ic not in item_groups:
+                seen_items.append(ic)
+                item_groups[ic] = []
+            item_groups[ic].append(r)
+
+        # sfg_groups_ordered[0] = top SFG (level 0), sfg_groups_ordered[-1] = deepest
+        # Forward time: deepest runs first → top runs last → FG starts
+        sfg_groups_ordered = [item_groups[ic] for ic in seen_items]
+
+        # Find which group+batch the changed row belongs to
+        changed_group_idx: int | None = None
+        changed_batch_idx: int | None = None
+        for gi, grp in enumerate(sfg_groups_ordered):
+            for bi, row in enumerate(grp):
+                if row.name == changed_row_name:
+                    changed_group_idx = gi
+                    changed_batch_idx = bi
+                    break
+            if changed_group_idx is not None:
+                break
+
+        if changed_group_idx is None:
+            return {}
+
+        changed_row = sfg_groups_ordered[changed_group_idx][changed_batch_idx]
+        row_holidays = _row_holidays(getattr(changed_row, "custom_shift_types_csv", None))
+
+        if changed_field == "start":
+            new_start = _skip_holiday(new_dt, row_holidays)
+            new_end = _compute_end(new_start, changed_row.custom_mfg_days, changed_row.custom_grn_days, row_holidays)
+            updates[changed_row_name] = {"start": str(new_start), "end": str(new_end)}
+        else:
+            new_end = new_dt
+            updates[changed_row_name] = {"end": str(new_end)}
+
+        def _cascade_sfg_group_fwd(group_idx: int, from_batch_idx: int, anchor_end: datetime) -> None:
+            """Cascade all batches from from_batch_idx onward in the group."""
+            grp = sfg_groups_ordered[group_idx]
+            prev_end = anchor_end
+            for i in range(from_batch_idx, len(grp)):
+                row = grp[i]
+                pm = int(getattr(row, "custom_pm_days", 0) or 0)
+                h = _row_holidays(getattr(row, "custom_shift_types_csv", None))
+                new_s = _wd_add(prev_end, pm, h) if pm > 0 else prev_end
+                new_e = _compute_end(new_s, row.custom_mfg_days, row.custom_grn_days, h)
+                updates[row.name] = {"start": str(new_s), "end": str(new_e)}
+                prev_end = new_e
+
+        # Cascade remaining batches in the changed SFG group
+        if changed_batch_idx + 1 < len(sfg_groups_ordered[changed_group_idx]):
+            _cascade_sfg_group_fwd(changed_group_idx, changed_batch_idx + 1, new_end)
+
+        # Cross-SFG pipeline: only B1 (batch_idx == 0) drives the next SFG's B1.start
+        if changed_batch_idx == 0:
+            b1_end = new_end
+            # Walk from changed_group_idx - 1 down to 0 (toward top SFG in forward time)
+            for gidx in range(changed_group_idx - 1, -1, -1):
+                grp = sfg_groups_ordered[gidx]
+                b1_row = grp[0]
+                h = _row_holidays(getattr(b1_row, "custom_shift_types_csv", None))
+                new_b1_end = _compute_end(b1_end, b1_row.custom_mfg_days, b1_row.custom_grn_days, h)
+                updates[b1_row.name] = {"start": str(b1_end), "end": str(new_b1_end)}
+                # Cascade remaining batches in this group
+                if len(grp) > 1:
+                    _cascade_sfg_group_fwd(gidx, 1, new_b1_end)
+                b1_end = new_b1_end
+
+            # After all SFGs, cascade FG batches from top SFG's B1.end
+            top_b1_name = sfg_groups_ordered[0][0].name
+            fg_start = get_datetime(updates.get(top_b1_name, {}).get("end") or str(new_end))
+            fg_rows = doc.po_items or []
+            prev_end = fg_start
+            for i, row in enumerate(fg_rows):
+                pm = int(getattr(row, "custom_pm_days", 0) or 0)
+                h = _row_holidays(getattr(row, "custom_shift_types_csv", None))
+                new_s = _wd_add(prev_end, pm, h) if (pm > 0 and i > 0) else prev_end
+                new_e = _compute_end(new_s, row.custom_mfg_days, row.custom_grn_days, h)
+                updates[row.name] = {"start": str(new_s), "end": str(new_e)}
+                prev_end = new_e
+
+        # When the deepest SFG's B0 changes, also update MR rows
+        deepest_idx = len(sfg_groups_ordered) - 1
+        if changed_batch_idx == 0 and changed_group_idx == deepest_idx:
+            mr_anchor = new_end  # deepest SFG B0.end = MR start
+            for mr_row in (doc.mr_items or []):
+                lt = 0
+                supplier = getattr(mr_row, "custom_supplier", None)
+                if supplier and mr_row.item_code:
+                    lt_v = frappe.db.get_value(
+                        "Item Subcontracting Supplier",
+                        {"parent": mr_row.item_code, "supplier": supplier},
+                        "lead_time_days",
+                    )
+                    lt = int(lt_v or 0)
+                gd_mr = 0
+                if mr_row.item_code:
+                    gd_v = frappe.db.get_value(
+                        "Item", mr_row.item_code, "custom_expected_grn_processing_days"
+                    )
+                    gd_mr = int(gd_v or 0)
+                new_mr_end = _wd_add(mr_anchor, lt + gd_mr, default_holidays)
+                updates[mr_row.name] = {"start": str(mr_anchor), "end": str(new_mr_end)}
+
+    # ── FG cascade ─────────────────────────────────────────────────────────
+    elif row_type == "fg":
+        fg_rows = doc.po_items or []
+        changed_idx = next((i for i, r in enumerate(fg_rows) if r.name == changed_row_name), None)
+        if changed_idx is None:
+            return {}
+
+        changed_row = fg_rows[changed_idx]
+        row_holidays = _row_holidays(getattr(changed_row, "custom_shift_types_csv", None))
+
+        if changed_field == "start":
+            new_start = _skip_holiday(new_dt, row_holidays)
+            new_end = _compute_end(new_start, changed_row.custom_mfg_days, changed_row.custom_grn_days, row_holidays)
+            updates[changed_row_name] = {"start": str(new_start), "end": str(new_end)}
+        else:
+            new_end = new_dt
+            updates[changed_row_name] = {"end": str(new_end)}
+
+        # Cascade subsequent FG batches
+        prev_end = new_end
+        for row in fg_rows[changed_idx + 1:]:
+            pm = int(getattr(row, "custom_pm_days", 0) or 0)
+            h = _row_holidays(getattr(row, "custom_shift_types_csv", None))
+            new_s = _wd_add(prev_end, pm, h) if pm > 0 else prev_end
+            new_e = _compute_end(new_s, row.custom_mfg_days, row.custom_grn_days, h)
+            updates[row.name] = {"start": str(new_s), "end": str(new_e)}
+            prev_end = new_e
+
+        # When the first FG batch start changes, backward-cascade through the SFG chain
+        # and then update MR items.  Pipeline rule: FG B0.start = top SFG B0.end.
+        if changed_field == "start" and changed_idx == 0:
+            sfg_rows_all = doc.sub_assembly_items or []
+            seen_sfg: list[str] = []
+            sfg_grp_map: dict[str, list] = {}
+            for r in sfg_rows_all:
+                ic = r.production_item
+                if ic not in sfg_grp_map:
+                    seen_sfg.append(ic)
+                    sfg_grp_map[ic] = []
+                sfg_grp_map[ic].append(r)
+            sfg_groups = [sfg_grp_map[ic] for ic in seen_sfg]
+
+            if sfg_groups:
+                # Walk forward through groups (0 = top SFG, -1 = deepest)
+                # backward in time: FG B0.start → top SFG B0.end → ... → deepest SFG B0.end
+                anchor = new_start
+                deepest_b0_end = anchor
+                for gidx, grp in enumerate(sfg_groups):
+                    b0_end = anchor
+                    if gidx == len(sfg_groups) - 1:
+                        deepest_b0_end = b0_end
+                    b0_row = grp[0]
+                    h = _row_holidays(getattr(b0_row, "custom_shift_types_csv", None))
+                    total = int(b0_row.custom_mfg_days or 0) + int(b0_row.custom_grn_days or 0)
+                    new_b0_start = _wd_sub(b0_end, total, h)
+                    updates[b0_row.name] = {"start": str(new_b0_start), "end": str(b0_end)}
+                    # Cascade subsequent batches in this group forward from b0_end
+                    prev_e = b0_end
+                    for i in range(1, len(grp)):
+                        row = grp[i]
+                        pm = int(getattr(row, "custom_pm_days", 0) or 0)
+                        h2 = _row_holidays(getattr(row, "custom_shift_types_csv", None))
+                        s2 = _wd_add(prev_e, pm, h2) if pm > 0 else prev_e
+                        e2 = _compute_end(s2, row.custom_mfg_days, row.custom_grn_days, h2)
+                        updates[row.name] = {"start": str(s2), "end": str(e2)}
+                        prev_e = e2
+                    anchor = new_b0_start
+
+                # MR: start = deepest SFG B0.end
+                mr_rows = doc.mr_items or []
+                for mr_row in mr_rows:
+                    lt = 0
+                    supplier = getattr(mr_row, "custom_supplier", None)
+                    if supplier and mr_row.item_code:
+                        lt_v = frappe.db.get_value(
+                            "Item Subcontracting Supplier",
+                            {"parent": mr_row.item_code, "supplier": supplier},
+                            "lead_time_days",
+                        )
+                        lt = int(lt_v or 0)
+                    gd_mr = 0
+                    if mr_row.item_code:
+                        gd_v = frappe.db.get_value(
+                            "Item", mr_row.item_code, "custom_expected_grn_processing_days"
+                        )
+                        gd_mr = int(gd_v or 0)
+                    new_mr_end = _wd_add(deepest_b0_end, lt + gd_mr, default_holidays)
+                    updates[mr_row.name] = {"start": str(deepest_b0_end), "end": str(new_mr_end)}
+
+    # ── MR cascade ─────────────────────────────────────────────────────────
+    elif row_type == "mr":
+        if changed_field != "start":
+            return {}
+        mr_rows = doc.mr_items or []
+        changed_mr = next((r for r in mr_rows if r.name == changed_row_name), None)
+        if not changed_mr:
+            return {}
+
+        # lead_time from default subcontracting supplier
+        lead_time = 0
+        supplier = getattr(changed_mr, "custom_supplier", None)
+        if supplier and changed_mr.item_code:
+            lt = frappe.db.get_value(
+                "Item Subcontracting Supplier",
+                {"parent": changed_mr.item_code, "supplier": supplier},
+                "lead_time_days",
+            )
+            lead_time = int(lt or 0)
+
+        grn_days = 0
+        if changed_mr.item_code:
+            gd = frappe.db.get_value("Item", changed_mr.item_code, "custom_expected_grn_processing_days")
+            grn_days = int(gd or 0)
+
+        mr_start = _skip_holiday(new_dt, default_holidays)
+        new_end = _wd_add(mr_start, lead_time + grn_days, default_holidays)
+        updates[changed_row_name] = {"start": str(mr_start), "end": str(new_end)}
+
+        # Forward cascade: new MR end → deepest SFG B0.start → ... → top SFG B0.end → FG
+        sfg_rows_all = doc.sub_assembly_items or []
+        seen_sfg: list[str] = []
+        sfg_grp_map: dict[str, list] = {}
+        for r in sfg_rows_all:
+            ic = r.production_item
+            if ic not in sfg_grp_map:
+                seen_sfg.append(ic)
+                sfg_grp_map[ic] = []
+            sfg_grp_map[ic].append(r)
+        sfg_groups = [sfg_grp_map[ic] for ic in seen_sfg]
+
+        if sfg_groups:
+            anchor = new_end  # MR end = deepest SFG B0.start
+            # Forward cascade: gidx from N-1 (deepest) to 0 (top)
+            for gidx in range(len(sfg_groups) - 1, -1, -1):
+                grp = sfg_groups[gidx]
+                b0_row = grp[0]
+                h = _row_holidays(getattr(b0_row, "custom_shift_types_csv", None))
+                new_b0_end = _compute_end(anchor, b0_row.custom_mfg_days, b0_row.custom_grn_days, h)
+                updates[b0_row.name] = {"start": str(anchor), "end": str(new_b0_end)}
+                # Cascade subsequent batches in this group
+                prev_e = new_b0_end
+                for i in range(1, len(grp)):
+                    row = grp[i]
+                    pm = int(getattr(row, "custom_pm_days", 0) or 0)
+                    h2 = _row_holidays(getattr(row, "custom_shift_types_csv", None))
+                    s2 = _wd_add(prev_e, pm, h2) if pm > 0 else prev_e
+                    e2 = _compute_end(s2, row.custom_mfg_days, row.custom_grn_days, h2)
+                    updates[row.name] = {"start": str(s2), "end": str(e2)}
+                    prev_e = e2
+                anchor = new_b0_end
+
+            # FG cascade from top SFG B0.end
+            fg_anchor = anchor
+            fg_rows = doc.po_items or []
+            prev_e = fg_anchor
+            for i, fg_row in enumerate(fg_rows):
+                pm = int(getattr(fg_row, "custom_pm_days", 0) or 0)
+                h = _row_holidays(getattr(fg_row, "custom_shift_types_csv", None))
+                s = _wd_add(prev_e, pm, h) if (pm > 0 and i > 0) else prev_e
+                e = _compute_end(s, fg_row.custom_mfg_days, fg_row.custom_grn_days, h)
+                updates[fg_row.name] = {"start": str(s), "end": str(e)}
+                prev_e = e
+
+    return updates
