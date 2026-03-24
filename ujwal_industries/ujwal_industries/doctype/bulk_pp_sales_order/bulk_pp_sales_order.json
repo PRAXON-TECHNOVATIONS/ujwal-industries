@@ -13,7 +13,8 @@
   "column_break_1",
   "is_selected",
   "for_warehouse",
-  "items_generated"
+  "items_generated",
+  "custom_pp_created"
  ],
  "fields": [
   {
@@ -80,6 +81,13 @@
    "fieldname": "items_generated",
    "fieldtype": "Check",
    "label": "Items Generated",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "custom_pp_created",
+   "fieldtype": "Check",
+   "label": "Production Plan Created",
    "read_only": 1
   }
  ],
