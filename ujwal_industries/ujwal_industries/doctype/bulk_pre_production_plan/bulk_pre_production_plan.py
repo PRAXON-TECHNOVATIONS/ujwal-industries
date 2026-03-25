@@ -365,6 +365,69 @@ def _ensure_default_tools_on_doc(doc: Document) -> None:
 		row.pm_days = cint(details.get("pm_days") or 0)
 
 
+def _get_submitted_so_sfg_anchors(doc: Document) -> dict:
+	"""
+	Scan the stored custom_batch_schedule for SOs that are already submitted
+	(custom_pp_created = 1 in the sales_orders child table) and return their
+	SFG-level-0 anchor info keyed by SO name.
+
+	Returns:
+		dict: so_name -> {
+			"last_sfg1_end": datetime | None,   # last batch end of SFG BOM-level-0
+			"submitted_sfg1_qty": float,         # total qty across all SFG-level-0 batches
+			"tool_load_qty": int,
+			"pm_days": int,
+		}
+	"""
+	if not getattr(doc, "custom_batch_schedule", None):
+		return {}
+
+	try:
+		schedule = json.loads(doc.custom_batch_schedule)
+	except Exception:
+		return {}
+
+	submitted_set = {
+		row.sales_order
+		for row in (doc.get("sales_orders") or [])
+		if cint(getattr(row, "custom_pp_created", 0))
+	}
+
+	result = {}
+	for so_name in submitted_set:
+		so_data = schedule.get(so_name)
+		if not so_data:
+			continue
+
+		# SFG chain is stored deepest-first in custom_batch_schedule output.
+		# Level-0 (direct child of FG) is the LAST entry in sfg_chain.
+		sfg_chain = so_data.get("sfg_chain") or []
+		if not sfg_chain:
+			continue
+
+		# Find the SFG entry with the lowest bom_level (= level 0 = direct FG child)
+		sfg1_entry = min(sfg_chain, key=lambda s: cint(s.get("bom_level", 0)), default=None)
+		if not sfg1_entry:
+			continue
+
+		batches = sfg1_entry.get("batches") or []
+		if not batches:
+			continue
+
+		last_end_str = batches[-1].get("end_date")
+		last_end_dt  = get_datetime(last_end_str) if last_end_str else None
+		total_qty    = sum(flt(b.get("qty") or 0) for b in batches)
+
+		result[so_name] = {
+			"last_sfg1_end": last_end_dt,
+			"submitted_sfg1_qty": total_qty,
+			"tool_load_qty": cint(sfg1_entry.get("tool_load_qty") or 0),
+			"pm_days":       cint(sfg1_entry.get("pm_days") or 0),
+		}
+
+	return result
+
+
 def _apply_parallel_dates_to_rows(doc: Document, schedule: dict) -> None:
 	"""Write parallel batch schedule dates directly to DB child rows via set_value."""
 	for so_data in (schedule or {}).values():
@@ -1352,6 +1415,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 	result = {}
 
+	# ── Submitted SO anchors: read from already-created Production Plans ───────
+	# Any SO with custom_pp_created=1 is already locked; its last SFG1 end date
+	# becomes the anchor for the next unsubmitted SO's SFG1 first batch.
+	submitted_anchors = _get_submitted_so_sfg_anchors(doc)
+	submitted_so_names = set(submitted_anchors.keys())
+
+	# Build set of submitted SOs from child table (for order-aware iteration)
+	so_submission_status = {
+		row.sales_order: cint(getattr(row, "custom_pp_created", 0))
+		for row in (doc.get("sales_orders") or [])
+		if getattr(row, "sales_order", None)
+	}
+
 	# Group po_items / sub_assembly_items / mr_items by sales order
 	so_map: dict[str, dict] = {}
 	for fg in doc.po_items:
@@ -1363,6 +1439,44 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	for mr in doc.mr_items:
 		if mr.sales_order in so_map:
 			so_map[mr.sales_order]["mr"].append(mr)
+
+	# Sort SO iteration order by delivery_date (ascending) so the pipeline chain
+	# follows chronological delivery order consistently on every recalculation.
+	so_delivery_dates = {
+		row.sales_order: getdate(row.delivery_date)
+		for row in (doc.get("sales_orders") or [])
+		if getattr(row, "sales_order", None) and getattr(row, "delivery_date", None)
+	}
+	so_map_ordered = dict(
+		sorted(
+			so_map.items(),
+			key=lambda kv: so_delivery_dates.get(kv[0]) or getdate("2099-12-31")
+		)
+	)
+	so_map = so_map_ordered
+
+	# Rolling SFG1-anchor: updated each time we finish processing an SO (submitted or not).
+	# Starts as None — the very first SO anchors itself via the normal backward-schedule logic.
+	rolling_sfg1_end: datetime | None = None
+	rolling_tool_load_qty: int = 0
+	rolling_pm_days: int = 0
+	rolling_cumulative_qty: float = 0.0  # cumulative SFG1 qty across submitted SOs (for tool PM)
+
+	# Seed the rolling anchor from the LATEST submitted SO (by delivery date) if any exist.
+	# This ensures that even on re-open, the anchor correctly follows already-locked SOs.
+	if submitted_anchors:
+		latest_submitted_so = max(
+			submitted_anchors.keys(),
+			key=lambda s: so_delivery_dates.get(s) or getdate("1900-01-01")
+		)
+		anc = submitted_anchors[latest_submitted_so]
+		rolling_sfg1_end     = anc["last_sfg1_end"]
+		rolling_tool_load_qty = anc["tool_load_qty"]
+		rolling_pm_days      = anc["pm_days"]
+		# Sum all submitted SFG1 qtys for cumulative load
+		rolling_cumulative_qty = sum(
+			v["submitted_sfg1_qty"] for v in submitted_anchors.values()
+		)
 	# Batch-fetch BOM tool details and operation batchsize
 	all_bom_nos = list({
 		row.bom_no
@@ -1452,6 +1566,20 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		return datetime.combine(dt.date(), datetime.min.time()) + end_td
 
 	for so_name, items in so_map.items():
+		# Skip SOs already submitted — their schedule in custom_batch_schedule is locked.
+		# We still need to carry their anchor forward via rolling_sfg1_end.
+		if so_submission_status.get(so_name):  # custom_pp_created = 1
+			if so_name in submitted_anchors:
+				# The anchor from this SO is already seeded above; just preserve the
+				# existing result entry from stored JSON so the UI still renders it.
+				if doc.custom_batch_schedule:
+					try:
+						_stored = json.loads(doc.custom_batch_schedule)
+						if so_name in _stored:
+							result[so_name] = _stored[so_name]
+					except Exception:
+						pass
+			continue
 		so_mr_item_codes = list({
 			row.item_code
 			for row in items["mr"]
@@ -1615,18 +1743,35 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			split_qty = tool_load_qty or per_day_qty
 			batches   = _split_batches(sales_qty, split_qty)
 
-			# ── Batch 0: backward schedule from deadline ──────────────────────
+			# ── Batch 0: backward schedule from deadline (or anchor override) ─
 			# Parallel SFG chain: backward from mfg_deadline = deadline - grn_days.
 			# b0_end is forced to deadline_dt for a tight chain connection.
+			#
+			# SUBMITTED-SO ANCHOR OVERRIDE (deepest SFG only):
+			# When a previous SO was already submitted (PP created), its machine/tool
+			# time is locked. For the DEEPEST SFG (== sfg_rows_sorted[-1], the first
+			# processed in the bwd chain), override b0_start so that this SO starts
+			# exactly where the submitted SO's last SFG1 batch ended.
+			_is_deepest_sfg = (sfg == sfg_rows_sorted[-1])
 			batch0_qty       = batches[0]
 			batch0_prod_mins = (batch0_qty / real_spm) if real_spm > 0 else shift_minutes
-			# Subtract grn_days (skipping weekends + holidays) to get the mfg completion deadline
-			mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
-			               if grn_days > 0 else deadline_dt
-			b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
-			b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
-			# Force b0_end = deadline_dt so the chain is visually tight (SFG_i.end = SFG_(i-1).start)
-			b0_end     = deadline_dt
+			if _is_deepest_sfg and rolling_sfg1_end is not None:
+				# Determine anchor: add PM days if tool capacity was exhausted
+				if rolling_tool_load_qty > 0 and rolling_cumulative_qty >= rolling_tool_load_qty:
+					_anchor = _working_day_add(rolling_sfg1_end, rolling_pm_days, holidays)
+				else:
+					_anchor = rolling_sfg1_end
+				b0_start   = _snap_start(_anchor, shift_config)
+				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
+				b0_end     = deadline_dt  # visual chain anchor unchanged
+			else:
+				# Normal backward-schedule from SO delivery deadline
+				mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
+				               if grn_days > 0 else deadline_dt
+				b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
+				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
+				# Force b0_end = deadline_dt so the chain is visually tight
+				b0_end     = deadline_dt
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
    
@@ -2000,6 +2145,24 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			"sfg_chain": sfg_chain_out,
 			"mr":        mr_rows_out,
 		}
+
+		# ── Update rolling anchor for next SO in the chain ─────────────────────
+		# After computing this SO's schedule, update the rolling anchor so that
+		# the NEXT SO can chain off this one's SFG1 last batch end.
+		if sfg_chain_out:
+			# sfg_chain_out is deepest-first; the LAST entry is BOM level 0 (SFG1).
+			sfg1_entry_out = max(sfg_chain_out, key=lambda s: cint(s.get("bom_level", 0)), default=None)
+			if sfg1_entry_out:
+				sbatches = sfg1_entry_out.get("batches") or []
+				if sbatches:
+					rolling_sfg1_end      = get_datetime(sbatches[-1]["end_date"])
+					rolling_tool_load_qty = cint(sfg1_entry_out.get("tool_load_qty") or 0)
+					rolling_pm_days       = cint(sfg1_entry_out.get("pm_days") or 0)
+					rolling_cumulative_qty += sum(flt(b.get("qty") or 0) for b in sbatches)
+					# Reset cumulative qty when it passes a full tool_load_qty cycle
+					if rolling_tool_load_qty > 0 and rolling_cumulative_qty >= rolling_tool_load_qty:
+						rolling_cumulative_qty -= rolling_tool_load_qty
+
 	return result
 
 
@@ -3909,6 +4072,38 @@ def create_production_plans_document(bulk_pp_name) :
 		pp_doc.save()
 
 
+def _recalculate_parallel_after_submit(bulk_pp_name: str) -> None:
+	"""
+	After a Production Plan is created for one SO in Parallel mode, re-run the
+	parallel batch schedule so remaining (unsubmitted) SOs are re-anchored to
+	start after the submitted SO's last SFG1 batch end date.
+
+	This writes updated dates to both custom_batch_schedule (parent) and the
+	child SFG/FG/MR rows via set_value (same as the normal Calculate Schedule flow).
+	"""
+	try:
+		doc = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+		if (doc.custom_planning_mode or "Sequential") != "Parallel":
+			return
+
+		_apply_parallel_schedule_overrides_to_doc(doc)
+		_ensure_default_workstations_on_doc(doc)
+		_ensure_default_tools_on_doc(doc)
+
+		schedule = calculate_parallel_batch_schedule(bulk_pp_name)
+		_apply_parallel_dates_to_rows(doc, schedule)
+		frappe.db.set_value("Bulk Pre Production Plan", bulk_pp_name, {
+			"custom_batch_schedule": json.dumps(schedule),
+			"custom_planning_mode": "Parallel",
+		})
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			title=f"Parallel re-schedule after submit failed for {bulk_pp_name}",
+			message=frappe.get_traceback(),
+		)
+
+
 @frappe.whitelist()
 def create_selected_production_plans(bulk_pp_name, sales_orders):
 	"""
@@ -4032,6 +4227,14 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		bulk_pp.save()
 		bulk_pp.flags.ignore_mandatory = False
 		frappe.db.commit()
+
+		# ── Parallel mode: re-schedule remaining unsubmitted SOs ───────────────
+		# Now that the submitted SO's machine time is locked in a real Production
+		# Plan, re-run the parallel calculation so subsequent SOs are re-anchored
+		# to start right after the submitted SO's last SFG batch ends.
+		bulk_pp_refreshed = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+		if (bulk_pp_refreshed.custom_planning_mode or "Sequential") == "Parallel":
+			_recalculate_parallel_after_submit(bulk_pp_name)
 
 	return created_plans
 
