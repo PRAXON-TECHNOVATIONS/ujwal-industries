@@ -4017,6 +4017,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				'quantity' :  j.get('qty'),
 				'custom_supplier' :  j.get('supplier'),
 			})
+		_run_machine_availability_check_for_production_plan(pp_doc)
 		pp_doc.save()
 		created_plans.append(pp_doc.name)
 
@@ -4033,6 +4034,30 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		frappe.db.commit()
 
 	return created_plans
+
+
+def _run_machine_availability_check_for_production_plan(pp_doc):
+	"""Reuse Bulk PP machine validation for Production Plan rows before save."""
+	validation_doc = frappe._dict({
+		"po_items": [],
+		"sub_assembly_items": [],
+	})
+
+	for row in pp_doc.po_items or []:
+		validation_doc.po_items.append(frappe._dict({
+			"custom_workstations_csv": row.custom_workstation,
+			"planned_start_date": row.planned_start_date,
+			"custom_planned_end_date": row.custom_planned_end_date,
+		}))
+
+	for row in pp_doc.sub_assembly_items or []:
+		validation_doc.sub_assembly_items.append(frappe._dict({
+			"custom_workstations_csv": row.custom_workstation,
+			"schedule_date": row.schedule_date,
+			"custom_schedule_end_date": row.custom_schedule_end_date,
+		}))
+
+	BulkPreProductionPlan.check_machine_available(validation_doc)
  
  
 @frappe.whitelist()
