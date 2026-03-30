@@ -7,6 +7,9 @@ def autoname(doc, method=None):
     if frappe.flags.in_install or frappe.flags.in_migrate:
         return
 
+    if not is_tool_asset_category(doc.asset_category):
+        return
+
     item_prefix = _get_item_prefix(doc.item_code)
     category_prefix = _get_word_prefix(doc.asset_category)
     tool_type_letter = _get_tool_type_letter(doc.tool_type)
@@ -23,6 +26,18 @@ def autoname(doc, method=None):
     series_prefix = f"{item_prefix}-{category_prefix}-{tool_type_letter}-"
     next_number = _get_next_sequence(series_prefix)
     doc.name = f"{series_prefix}{next_number:02d}"
+
+
+@frappe.whitelist()
+def is_tool_asset_category(asset_category):
+    category_name = (asset_category or "").strip()
+    if not category_name:
+        return False
+
+    parent_category = frappe.get_cached_value(
+        "Asset Category", category_name, "parent_asset_category"
+    )
+    return (parent_category or "").strip().casefold() == "tool"
 
 
 def _get_item_prefix(item_code):
