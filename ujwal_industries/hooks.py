@@ -64,6 +64,11 @@ doctype_js = {
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
 	"Item": "public/js/item.js",
+	"Asset": "public/js/asset.js",
+	"Asset Category": "public/js/asset_category.js",
+}
+doctype_tree_js = {
+	"Asset Category": "public/js/asset_category_tree.js",
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
@@ -159,6 +164,7 @@ permission_query_conditions = {
 
 override_doctype_class = {
 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
+	"Asset Category": "ujwal_industries.ujwal_industries.overrides.asset_category.CustomAssetCategory",
 }
 
 # Document Events
@@ -408,4 +414,3 @@ from ujwal_industries.overrides.bom import apply_bom_overrides
 
 apply_work_order_overrides()
 apply_bom_overrides()
-
