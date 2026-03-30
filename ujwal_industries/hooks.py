@@ -171,9 +171,9 @@ doc_events = {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
  
-	# "Stock Settings" :{
-	# 	"validate": "ujwal_industries.ujwal_industries.overrides.stock_settings.validate",
-    # },
+	"Customer": {
+		"autoname": "ujwal_industries.ujwal_industries.overrides.customer.autoname"
+	},
  
  	"Stock Entry": {
         "validate": [
@@ -196,7 +196,8 @@ doc_events = {
 		]
 	},
 	"Supplier": {
-		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
+		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",
+		"autoname"	 : "ujwal_industries.api.supplier_gstin_check.autoname"
 	},
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"

@@ -474,6 +474,7 @@ function setup_production_tabs(frm) {
 	so_list.forEach((so_data, idx) => {
 		const active = idx === 0 ? 'active' : '';
 		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
+		const isMerged = so_row.merged == 1;
 		const del_date = frappe.format(so_row.delivery_date, { fieldtype: 'Date' });
 		tabs_li += `
     
@@ -481,7 +482,10 @@ function setup_production_tabs(frm) {
 				<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
 					href="#bpp-so-${idx}" role="tab"
 					style="padding:8px 18px; font-size:12px; cursor:pointer;
-					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};">
+					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};
+					background:${isMerged ? '#FEF3C7' : ''};
+					border:${isMerged ? '1px solid #F59E0B' : ''};"
+
 					<i class="fa ${so_row.custom_pp_created ? 'fa-check-circle' : 'fa-file-text-o'}" 
 						style="margin-right:4px; font-size:11px; color:${so_row.custom_pp_created ? '#16A34A' : 'inherit'};"></i>
 					${so_data.so_name}

@@ -10,10 +10,7 @@ from typing import Any
 import math
 from datetime import datetime, timedelta
 import json
-from erpnext.stock.utils import get_latest_stock_qty
-from erpnext.stock.stock_balance import get_reserved_qty
 from frappe.utils import get_datetime, format_datetime
-
 # Import helper functions from production_plan overrides
 from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_get_allow_backdated_setting,
@@ -282,6 +279,7 @@ def _get_row_spm_details(
 			if i.get('is_per_day_qty_based') == 1:
 				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
 				per_shift_qty = i.get('per_day_qty') if i.get('per_day_qty') != 0 else 0
+				# print(".....per_shift_qty.......",per_shift_qty)
 
 	if row.doctype == 'Bulk PP Item' and row.manufacturing_type == 'Subcontract':
 		spm = 0
@@ -299,7 +297,8 @@ def _get_row_spm_details(
 			if i.get('is_per_day_qty_based') == 1:
 				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
 				per_shift_qty = i.get('per_day_qty') if i.get('	') != 0 else 0
-    
+				# print(".....per_shift_qty 11111.......",per_shift_qty)
+	
 	return {
 		"bom_no": bom_no or "",
 		"batchsize": batchsize,
@@ -574,11 +573,11 @@ class BulkPreProductionPlan(Document):
 							f"""
 							<div>
 							<b style="color:red;">⚠ Machine Conflict</b><br><br>
-
+							<b>Item : </b> {row.item_code} <br>
 							<b>Machine :</b> {', '.join(common_machines)}<br>
 							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
 
-							<b>Machine already allocated in FG: </b><br>
+							<b>Machine already allocated in FG ({item.item_code}): </b><br>
 							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
 							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
 
@@ -616,11 +615,11 @@ class BulkPreProductionPlan(Document):
 							f"""
 							<div>
 							<b style="color:red;">⚠ Machine Conflict</b><br><br>
-
+							<b>Item : </b> {row.item_code} <br>
 							<b>Machine :</b> {', '.join(common_machines)}<br>
 							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
 
-							<b>Machine already allocated in SFG: </b><br>
+							<b>Machine already allocated in SFG ({item.production_item}) : </b><br>
 							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
 							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
 
@@ -658,11 +657,11 @@ class BulkPreProductionPlan(Document):
 							f"""
 							<div>
 							<b style="color:red;">⚠ Machine Conflict</b><br><br>
-
+							<b>Item : </b> {row.production_item} <br>
 							<b>Machine :</b> {', '.join(common_machines)}<br>
 							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
 
-							<b>Machine already allocated in FG: </b><br>
+							<b>Machine already allocated in FG ({item.item_code}): </b><br>
 							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
 							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
 
@@ -700,11 +699,11 @@ class BulkPreProductionPlan(Document):
 							f"""
 							<div>
 							<b style="color:red;">⚠ Machine Conflict</b><br><br>
-
+							<b>Item : </b> {row.production_item} <br>
 							<b>Machine :</b> {', '.join(common_machines)}<br>
 							<b>Production Plan : </b> {frappe.utils.get_link_to_form("Production Plan", doc.name)}<br>
 
-							<b>Machine already allocated in SFG: </b><br>
+							<b>Machine already allocated in SFG ({item.production_item}): </b><br>
 							From: {format_datetime(existing_start, "dd-MM-yyyy HH:mm")}<br>
 							To: {format_datetime(existing_end, "dd-MM-yyyy HH:mm")}<br><br>
 
@@ -1477,7 +1476,14 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
 			batch_rows = []
 			for b_idx, batch_qty in enumerate(batches_qty):
-				mfg_days_b = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+       
+				mfg_days_b = 0
+				if sfg_row.get('type_of_manufacturing') == "Subcontract" and real_spm:
+					total_minutes = batch_qty / real_spm
+					mfg_days_b =  round(total_minutes / 600 , 2)
+				else:
+					mfg_days_b = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+
 				if b_idx == 0:
 					start_dt = get_datetime(start_dt_b0)
 				else:
@@ -1490,7 +1496,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					start_dt = start_dt + timedelta(days=1)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
 				is_last    = (b_idx == len(batches_qty) - 1)
-				end_dt     = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+
+				if sfg_row.get('type_of_manufacturing') == "Subcontract":
+					end_dt = mfg_end_dt + timedelta(days=grn_days)
+				else:
+					end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+				# end_dt = mfg_end_dt if (grn_days == 0) else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
 				
 				holiday_count = 0
 				if sfg_row.get('type_of_manufacturing') in ('In House', 'In House - Vendor'):
@@ -1505,7 +1516,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
       
 				batch_rows.append({
 					"batch": b_idx + 1, "total": len(batches_qty), "qty": batch_qty,
-					"mfg_days": mfg_days_b, "grn_days": grn_days,
+					"mfg_days": mfg_days_b, 
+     				"grn_days": grn_days,
 					"pm_days": 0 if (is_last or b_idx == 0) else pm_days,
 					"holiday_count": holiday_count,
 					"holiday_hover": holiday_dates, 
@@ -1548,6 +1560,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		deadline_dt = _snap_start(fg_start_anchor_dt, first_sfg_cfg)
 
 		for sfg in sfg_rows_sorted:
+			sfg.spm = 0
 			shift_config = _get_row_shift_config(sfg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -1566,9 +1579,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
    
 			sales_qty = 0
-			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
-			# actual_qty = get_reserved_qty(item_code, default_warehouse) or 0
-			if actual_qty:
+			bin_data = get_bin_data(item_code,default_warehouse)
+			actual_qty = 0
+			if bin_data:
+				actual_qty = bin_data[0].get("projected_qty", 0)
+    
+			if actual_qty > 0:
 				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
 			else:
 				sales_qty = flt(sfg.qty)
@@ -1629,17 +1645,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			b0_end     = deadline_dt
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
-   
 			hc_b0 = 0
 			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 				hc_b0 = sum(1 for h in holidays if getdate(b0_start) < h <= getdate(b0_end))
     
 			batch_rows: list[dict] = [{
 				"batch": 1, "total": len(batches), "qty": batch0_qty,
-				"mfg_days": mfg_days_b0, "grn_days": grn_days,
+				"mfg_days": mfg_days_b0, 
+    			"grn_days": grn_days,
 				"pm_days": 0,  # First batch: no pm_days (no maintenance needed before the very first run)
 				"holiday_count": hc_b0,
-				"start_date": str(b0_start), "mfg_end_date": str(b0_mfg_end), "end_date": str(b0_end),
+				"start_date": str(b0_start), 
+				"mfg_end_date": str(b0_mfg_end), 
+				"end_date": str(b0_end),
 			}]
 
 			# ── Batches 1..N: forward from batch 0 end ────────────────────────
@@ -1845,6 +1863,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		
 		prev_fg_row0_end: str | None = None
 		for fg_idx, fg in enumerate(fg_rows_sorted):	
+			fg.spm = 0
 			shift_config = _get_row_shift_config(fg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -1862,8 +1881,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
    
 			planned_qty = 0
-			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
-			if actual_qty:
+			bin_data = get_bin_data(item_code,default_warehouse)
+			actual_qty = 0
+			if bin_data:
+				actual_qty = bin_data[0].get("projected_qty", 0)
+		
+			if actual_qty > 0:
 				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
 			else:
 				planned_qty = flt(fg.planned_qty)
@@ -1911,8 +1934,14 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
    
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
-				mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
-
+				mfg_days = 0
+				display_spm = spm_details.get("spm")
+				if fg.manufacturing_type == "Subcontract" and display_spm:
+					total_minutes = batch_qty / display_spm
+					mfg_days =  round(total_minutes / 600 , 2)
+				else: 
+					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+     
 				# Start date
 				if b_idx == 0:
 					if fg_idx == 0:
@@ -1929,8 +1958,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_end after grn_days
-				end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+    
+				if fg.manufacturing_type == "Subcontract":
+					end_dt = mfg_end_dt + timedelta(days=grn_days)
+				else:
+					end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+				# end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
 
 				is_last_batch = (b_idx == len(batches) - 1)
 				# Count holidays strictly between start_date and end_date
@@ -2297,9 +2330,12 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
    
 			sales_qty = 0
-			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
-			# actual_qty = get_reserved_qty(item_code, default_warehouse) or 0
-			if actual_qty:
+			bin_data = get_bin_data(item_code,default_warehouse)
+			actual_qty = 0
+			if bin_data:
+				actual_qty = bin_data[0].get("projected_qty", 0)
+    
+			if actual_qty > 0:
 				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
 			else:
 				sales_qty = flt(sfg.qty)
@@ -2593,8 +2629,12 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
    
 			planned_qty = 0
-			actual_qty = get_latest_stock_qty(item_code, default_warehouse) or 0
-			if actual_qty:
+			bin_data = get_bin_data(item_code,default_warehouse)
+			actual_qty = 0
+			if bin_data:
+				actual_qty = bin_data[0].get("projected_qty", 0)
+    
+			if actual_qty > 0:
 				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
 			else:
 				planned_qty = flt(fg.planned_qty)
@@ -2623,7 +2663,6 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			machine_count = cint(spm_details.get("machine_count") or 0)
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
-   
 			if spm_details.get("subcontract_per_shift_qty") != 0:
 				display_spm = spm_details.get("spm")
 				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
@@ -4285,3 +4324,24 @@ def get_bulk_pp_for_production_plan(production_plan):
 		"status": bulk_pp.status,
 		"company": bulk_pp.company
 	}
+
+def get_bin_data(item_code=None, warehouse=None):
+	bin = frappe.qb.DocType("Bin")
+
+	query = (
+		frappe.qb.from_(bin)
+		.select(
+			bin.item_code,
+			bin.warehouse,
+			bin.projected_qty
+		)
+	)
+
+	if item_code:
+		query = query.where(bin.item_code == item_code)
+
+	if warehouse:
+		query = query.where(bin.warehouse == warehouse)
+
+	p_qty = query.run(as_dict=True)
+	return p_qty
