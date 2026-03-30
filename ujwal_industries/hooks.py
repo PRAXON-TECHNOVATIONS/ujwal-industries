@@ -170,6 +170,9 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
+	"Asset": {
+		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
+	},
  
 	# "Stock Settings" :{
 	# 	"validate": "ujwal_industries.ujwal_industries.overrides.stock_settings.validate",
@@ -405,5 +408,4 @@ from ujwal_industries.overrides.bom import apply_bom_overrides
 
 apply_work_order_overrides()
 apply_bom_overrides()
-
 
