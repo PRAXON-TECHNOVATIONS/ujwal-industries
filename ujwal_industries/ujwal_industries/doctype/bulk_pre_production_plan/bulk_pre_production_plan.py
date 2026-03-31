@@ -1957,6 +1957,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					start_dt = _working_day_add(prev_end, pm_days, holidays)
 
 				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
+
+				# if fg.manufacturing_type == "Subcontract":
+				# 	mfg_end_dt = start_dt + timedelta(days=mfg_days)
+				# else:
+				# 	mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
+    
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
     
 				if fg.manufacturing_type == "Subcontract":
@@ -1964,7 +1970,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				else:
 					end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
 				# end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
-
+    
 				is_last_batch = (b_idx == len(batches) - 1)
 				# Count holidays strictly between start_date and end_date
 
@@ -2040,6 +2046,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 # ---------------------------------------------------------------------------
 # Consolidated Batch Schedule API
 # ---------------------------------------------------------------------------
+
 
 @frappe.whitelist()
 def calculate_consolidated_batch_schedule(docname: str) -> dict:
@@ -2598,20 +2605,12 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		fg_rows_out: list[dict] = []
 		_fg_bom_nos = [fg.bom_no for fg in items["fg"] if fg.bom_no]
 		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
-		for fg in items["fg"]:
-			fg_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
-			prod_minutes = _calculate_row_production_minutes(fg, flt(fg.planned_qty), _fg_bom_cache)
-			fg.spm = 0
-			tool_details = _get_bom_spm_details_map(fg.bom_no, selected_tool=getattr(fg, "tool", "") or None)
-			if prod_minutes and prod_minutes > 0:
-				fg_end = shift_aware_forward_schedule(fg_start, prod_minutes, shift_config)
-			else:
-				fg_end = fg_start
 
 		fg_rows_sorted =  items["fg"]
 		
 		prev_fg_row0_end: str | None = None
 		for fg_idx, fg in enumerate(fg_rows_sorted):	
+			fg.spm = 0
 			shift_config = _get_row_shift_config(fg)
 			holidays = _get_row_holidays(shift_config)
 			shift_minutes = _get_shift_working_minutes(shift_config)
@@ -2633,7 +2632,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			actual_qty = 0
 			if bin_data:
 				actual_qty = bin_data[0].get("projected_qty", 0)
-    
+		
 			if actual_qty > 0:
 				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
 			else:
@@ -2651,6 +2650,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
    
 			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
+			tool_details  = _get_bom_spm_details_map(bom_no, selected_tool=selected_tool or None)
    
 			pm_days = 0
 			if fg.manufacturing_type in ("In House", "In House - Vendor"):
@@ -2663,6 +2663,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			machine_count = cint(spm_details.get("machine_count") or 0)
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
+   
 			if spm_details.get("subcontract_per_shift_qty") != 0:
 				display_spm = spm_details.get("spm")
 				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
@@ -2680,8 +2681,14 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
    
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
-				mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
-
+				mfg_days = 0
+				display_spm = spm_details.get("spm")
+				if fg.manufacturing_type == "Subcontract" and display_spm:
+					total_minutes = batch_qty / display_spm
+					mfg_days =  round(total_minutes / 600 , 2)
+				else: 
+					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
+     
 				# Start date
 				if b_idx == 0:
 					if fg_idx == 0:
@@ -2698,8 +2705,12 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
 				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-				# grn_days=0 -> available at actual mfg completion; grn_days>0 -> shift_end after grn_days
-				end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+    
+				if fg.manufacturing_type == "Subcontract":
+					end_dt = mfg_end_dt + timedelta(days=grn_days)
+				else:
+					end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
+				# end_dt = mfg_end_dt if grn_days == 0 else _snap_end(_working_day_add(mfg_end_dt, grn_days, holidays), shift_config)
 
 				is_last_batch = (b_idx == len(batches) - 1)
 				# Count holidays strictly between start_date and end_date
@@ -2771,7 +2782,6 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		}
 	# print("...................",result)
 	return result
-
 
 # ---------------------------------------------------------------------------
 # Parallel schedule helpers
@@ -3323,7 +3333,7 @@ def _apply_bin_stock_check(doc: "Document", so_name: str) -> None:
 	"""
 	Reduce MR item quantities by available stock at each item's own warehouse.
 
-	Checks projected_qty in tabBin for each MR item at its assigned warehouse
+	Checks projected_qty in tabBin for each MR item at its assigned warehouse	
 	(set by _apply_item_default_warehouses). Items with no warehouse assigned
 	are skipped. Items fully covered by stock are removed; partially covered
 	get reduced qty.
