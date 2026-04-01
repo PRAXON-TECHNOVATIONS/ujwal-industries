@@ -13,6 +13,8 @@
   "column_break_1",
   "is_selected",
   "for_warehouse",
+  "select_items_btn",
+  "selected_items",
   "items_generated",
   "merged",
   "custom_pp_created"
@@ -76,6 +78,18 @@
    "in_list_view": 1,
    "label": "Raw Materials Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "select_items_btn",
+   "fieldtype": "Button",
+   "in_list_view": 1,
+   "label": "Select Items"
+  },
+  {
+   "fieldname": "selected_items",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Selected Items"
   },
   {
    "default": "0",

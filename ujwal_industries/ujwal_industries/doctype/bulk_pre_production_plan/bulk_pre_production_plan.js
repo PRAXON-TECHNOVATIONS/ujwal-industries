@@ -49,8 +49,8 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			}
 		});
 
-		frm.refresh_field('sales_orders')
-    
+		frm.refresh_field('sales_orders');
+		add_sales_order_filters(frm);
 
 		set_bom_selection_query(frm);
 
@@ -127,8 +127,8 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 	},
 
 	get_sales_orders: function (frm) {
-		if (!frm.doc.from_delivery_date || !frm.doc.to_delivery_date) {
-			frappe.msgprint(__('Please set From Delivery Date and To Delivery Date'));
+		if (!frm.doc.to_delivery_date) {
+			frappe.msgprint(__('Please set Till Delivery Date'));
 			return;
 		}
 
@@ -140,7 +140,6 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
-				from_delivery_date: frm.doc.from_delivery_date,
 				to_delivery_date: frm.doc.to_delivery_date,
 				company: frm.doc.company
 			},
@@ -164,6 +163,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 					// Refresh the sales_orders field to show the data
 					frm.refresh_field('sales_orders');
+					add_sales_order_filters(frm);
 					load_bom_selections(frm);
 
 					frappe.show_alert({
@@ -215,6 +215,77 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 // Child table events for Sales Orders
 frappe.ui.form.on('Bulk PP Sales Order', {
+	select_items_btn: function (frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.sales_order) {
+			frappe.msgprint(__('Please set a Sales Order first'));
+			return;
+		}
+
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_order_item_bom_rows',
+			args: { sales_orders: [row.sales_order] },
+			callback(r) {
+				if (!r.message || !r.message.length) {
+					frappe.msgprint(__('No items found for this Sales Order'));
+					return;
+				}
+
+				const items = r.message;
+				let already_selected = [];
+				try {
+					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
+				} catch (_) { already_selected = []; }
+
+				// Build dialog fields — one Check per item
+				const fields = items.map(item => ({
+					fieldtype: 'Check',
+					fieldname: item.item_code,
+					label: `${item.item_code}  —  ${item.item_name || ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+					default: already_selected.length === 0 || already_selected.includes(item.item_code) ? 1 : 0,
+				}));
+
+				const d = new frappe.ui.Dialog({
+					title: __('Select Items — {0}', [row.sales_order]),
+					fields: fields,
+					primary_action_label: __('Confirm'),
+					primary_action(values) {
+						const selected = items
+							.filter(item => values[item.item_code])
+							.map(item => item.item_code);
+
+						frappe.model.set_value(cdt, cdn, 'selected_items', JSON.stringify(selected));
+
+						// Update button label to show count
+						const $btn = frm.fields_dict['sales_orders'].grid.wrapper
+							.find(`[data-name="${cdn}"] [data-fieldname="select_items_btn"] button`);
+						$btn.text(selected.length === items.length
+							? __('Select Items')
+							: __('Items: {0}/{1}', [selected.length, items.length]));
+
+						d.hide();
+					}
+				});
+
+				// Add Select All / Deselect All buttons
+				d.$wrapper.find('.modal-header').append(
+					`<div style="margin-top:6px;">
+						<button class="btn btn-xs btn-default so-select-all">${__('Select All')}</button>
+						<button class="btn btn-xs btn-default so-deselect-all" style="margin-left:6px;">${__('Deselect All')}</button>
+					</div>`
+				);
+				d.$wrapper.on('click', '.so-select-all', () => {
+					items.forEach(item => d.set_value(item.item_code, 1));
+				});
+				d.$wrapper.on('click', '.so-deselect-all', () => {
+					items.forEach(item => d.set_value(item.item_code, 0));
+				});
+
+				d.show();
+			}
+		});
+	},
+
 	before_sales_orders_remove: function (frm, cdt, cdn) {
 		// Store the sales order before it's removed
 		const row = locals[cdt][cdn];
@@ -4348,5 +4419,77 @@ function _format_bpp_date(value, empty_value = '—', show_time = false) {
 	return date_str;
 }
 
+function add_sales_order_filters(frm) {
+	const grid = frm.fields_dict['sales_orders'].grid;
+	const $wrapper = grid.wrapper;
+
+	// Attach filter input handler once
+	$wrapper.off('input.sofilter').on('input.sofilter', '.so-filter', function () {
+		_apply_so_filters(frm);
+	});
+
+	// (Re-)render the filter row after grid header is in DOM
+	setTimeout(() => {
+		$wrapper.find('.so-filter-row').remove();
+
+		const $heading_row = $wrapper.find('.grid-heading-row .grid-row .data-row');
+		if (!$heading_row.length) return;
+
+		const $filter_row = $('<div class="so-filter-row" style="display:flex;background:#f5f7fa;border-bottom:1px solid #d1d8dd;"></div>');
+
+		const label_map = {
+			sales_order: 'Sales Order…',
+			customer: 'Customer…',
+			delivery_date: 'Date…',
+			grand_total: 'Amount…',
+		};
+
+		$heading_row.children().each(function () {
+			const $th = $(this);
+			const fieldname = $th.data('fieldname');
+			const w = $th.outerWidth(true);
+
+			const $td = $('<div></div>').css({
+				width: w, minWidth: w, maxWidth: w,
+				padding: '3px 4px', boxSizing: 'border-box',
+			});
+
+			if (label_map[fieldname]) {
+				$td.append(
+					`<input type="text" class="so-filter form-control form-control-sm"
+					 data-col="${fieldname}" placeholder="${label_map[fieldname]}"
+					 style="height:22px;font-size:11px;padding:1px 5px;width:100%;">`
+				);
+			}
+			$filter_row.append($td);
+		});
+
+		$heading_row.closest('.grid-heading-row').after($filter_row);
+	}, 150);
+}
+
+function _apply_so_filters(frm) {
+	const grid = frm.fields_dict['sales_orders'].grid;
+	const $wrapper = grid.wrapper;
+	const doctype = grid.doctype;
+
+	const filters = {};
+	$wrapper.find('.so-filter').each(function () {
+		const val = $(this).val().trim().toLowerCase();
+		if (val) filters[$(this).data('col')] = val;
+	});
+
+	$wrapper.find('.grid-body .rows .grid-row').each(function () {
+		const row = locals[doctype]?.[$(this).attr('data-name')];
+		if (!row) return;
+		let show = true;
+		for (const [col, val] of Object.entries(filters)) {
+			if (!String(row[col] || '').toLowerCase().includes(val)) {
+				show = false; break;
+			}
+		}
+		$(this).toggle(show);
+	});
+}
 
 

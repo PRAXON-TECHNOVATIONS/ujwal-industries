@@ -581,11 +581,6 @@ def _get_item_default_warehouse_map(item_codes: list[str], company: str) -> dict
 class BulkPreProductionPlan(Document):
 	def validate(self):
 		"""Validate the document before save"""
-		# Validate delivery date range for bulk SO workflow
-		if self.from_delivery_date and self.to_delivery_date:
-			if getdate(self.from_delivery_date) > getdate(self.to_delivery_date):
-				frappe.throw(_("From Delivery Date cannot be greater than To Delivery Date"))
-
 		# Calculate total planned qty
 		self.calculate_total_planned_qty()
 		# self.check_machine_available()
@@ -1100,25 +1095,24 @@ class BulkPreProductionPlan(Document):
 # ============================================================================
 
 @frappe.whitelist()
-def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: str) -> dict[str, Any]:
+def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 	"""
-	Fetch Sales Orders based on delivery_date range (Bulk PP workflow)
+	Fetch Sales Orders with delivery_date up to to_delivery_date (Bulk PP workflow)
 
 	Args:
-		from_delivery_date: Start date of delivery range
-		to_delivery_date: End date of delivery range
+		to_delivery_date: Show all SOs up to this delivery date
 		company: Company name
 
 	Returns:
 		Dict with sales_orders list
 	"""
-	if not from_delivery_date or not to_delivery_date:
-		frappe.throw(_("Please set From Delivery Date and To Delivery Date"))
+	if not to_delivery_date:
+		frappe.throw(_("Please set Till Delivery Date"))
 
 	if not company:
 		frappe.throw(_("Please set Company"))
 
-	# Fetch Sales Orders with delivery_date in range
+	# Fetch Sales Orders with delivery_date <= to_delivery_date
 	sales_orders = frappe.db.sql("""
 		SELECT
 			so.name as sales_order,
@@ -1131,12 +1125,11 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 		WHERE
 			so.docstatus = 1
 			AND so.status NOT IN ('Closed', 'Cancelled', 'Completed')
-			AND so.delivery_date BETWEEN %(from_date)s AND %(to_date)s
+			AND so.delivery_date <= %(to_date)s
 			AND so.company = %(company)s
 		ORDER BY
 			so.delivery_date ASC
 	""", {
-		'from_date': from_delivery_date,
 		'to_date': to_delivery_date,
 		'company': company
 	}, as_dict=True)
@@ -1144,7 +1137,7 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 	# Just return the sales_orders data - don't save to avoid naming series issues
 	# The frontend will populate the child table
 
-	frappe.msgprint(_("Found {0} Sales Orders in the date range").format(len(sales_orders)))
+	frappe.msgprint(_("Found {0} Sales Orders till delivery date").format(len(sales_orders)))
 
 	# Return formatted data for frontend to populate
 	return {
@@ -3216,12 +3209,20 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	Returns:
 		Dict with counts of generated items
 	"""
-	# Get the warehouse for this sales order from sales_orders table
+	# Get the warehouse and item selection for this sales order from sales_orders table
 	so_warehouse = None
 	selected_boms = _get_selected_bom_map(doc, so_name)
+	selected_item_codes = None
+	has_item_selection = False
 	for so_row in doc.sales_orders:
 		if so_row.sales_order == so_name:
 			so_warehouse = so_row.for_warehouse
+			if so_row.selected_items is not None and so_row.selected_items != '':
+				try:
+					selected_item_codes = set(frappe.parse_json(so_row.selected_items))
+					has_item_selection = True
+				except Exception:
+					pass
 			break
 
 	# Get Sales Order items
@@ -3251,9 +3252,12 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	sfg_count = 0
 	mr_count = 0
 
+	# Filter to user-selected items only (if selection dialog was opened)
+	if has_item_selection:
+		so_items = [item for item in so_items if item.item_code in selected_item_codes]
+
 	target_warehouse_map = _get_item_default_warehouse_map([item.item_code for item in so_items], doc.company)
 	existing_fg_ws_map = (getattr(doc.flags, "existing_fg_workstation_maps", {}) or {}).get(so_name, {})
-
 
 	# Process each SO item
 	for item in so_items:
