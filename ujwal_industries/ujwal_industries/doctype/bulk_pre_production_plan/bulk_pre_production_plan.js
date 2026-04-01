@@ -366,7 +366,21 @@ function load_bom_selections(frm) {
 			const rows = r.message || [];
 			frm.clear_table('bom_selections');
 
+			// Build a map of SO -> selected item_codes (null means no filter)
+			const so_selected_map = {};
+			(frm.doc.sales_orders || []).forEach(so_row => {
+				if (so_row.selected_items) {
+					try {
+						so_selected_map[so_row.sales_order] = new Set(JSON.parse(so_row.selected_items));
+					} catch (_) {}
+				}
+			});
+
 			rows.forEach(function (item) {
+				// Skip if this SO has a selection and this item is not in it
+				const sel = so_selected_map[item.sales_order];
+				if (sel && !sel.has(item.item_code)) return;
+
 				const row = frappe.model.add_child(frm.doc, 'Bulk PP BOM Selection', 'bom_selections');
 				row.sales_order = item.sales_order;
 				row.sales_order_item = item.sales_order_item;
