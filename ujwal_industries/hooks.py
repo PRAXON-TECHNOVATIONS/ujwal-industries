@@ -34,7 +34,7 @@ app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
-	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.36",
+	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.38",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -116,7 +116,7 @@ doctype_list_js = {
 after_install = "ujwal_industries.install.after_install"
 after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all",
                  "ujwal_industries.install.after_install"]
-                
+
 # Uninstallation
 # ------------
 
@@ -179,11 +179,11 @@ doc_events = {
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
 	},
- 
+
 	"Customer": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.customer.autoname"
 	},
- 
+
  	"Stock Entry": {
         "validate": [
             "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
@@ -285,7 +285,7 @@ override_whitelisted_methods = {
 # along with any modifications made in other Frappe apps
 
 override_doctype_dashboards = {
-    
+
 	"Purchase Order" : "ujwal_industries.ujwal_industries.custom_dashboard.update_po_dashboard",
 }
 
@@ -396,7 +396,7 @@ fixtures = [
 	# 		]
 	# 	],
 	# },
-	
+
  {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
 ]
 

@@ -859,15 +859,8 @@ function _render_sequential_grid(frm, so_data, container) {
 		container.style.pointerEvents = 'none';
 	}
 
-	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
-	container.appendChild(fg_div);
-	_bind_fg_bom_selects(frm, fg_div);
-	_bind_fg_tool_selects(frm, fg_div);
-	_bind_fg_machine_selects(frm, fg_div);
-	_bind_fg_shift_selects(frm, fg_div);
-	_bind_fg_mfg_type_selects(frm, fg_div);
-	_bind_fg_supplier_inputs(frm, fg_div);
+	// ── MR section ──────────────────────────────────────────────────────────
+	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -1014,8 +1007,16 @@ function _render_sequential_grid(frm, so_data, container) {
 	});
 	_grids['seq_sfg_' + so_data.so_name] = sfg_grid;
 
-	// ── MR section ──────────────────────────────────────────────────────────
-	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+	// ── FG section ──────────────────────────────────────────────────────────
+	const fg_div = document.createElement('div');
+	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
+	container.appendChild(fg_div);
+	_bind_fg_bom_selects(frm, fg_div);
+	_bind_fg_tool_selects(frm, fg_div);
+	_bind_fg_machine_selects(frm, fg_div);
+	_bind_fg_shift_selects(frm, fg_div);
+	_bind_fg_mfg_type_selects(frm, fg_div);
+	_bind_fg_supplier_inputs(frm, fg_div);
 }
 
 
@@ -1120,6 +1121,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	const total_batche = (par_data.fg || []).reduce((s, fg) => s + (fg.batches || []).length, 0);
 	const f_g_label = document.createElement('div');
 	const fg_label = document.createElement('div');
+	fg_label.setAttribute('data-bpp-section', 'fg');
 	fg_label.innerHTML = _section_header(
 		`FG Batch Schedule — Parallel Pipeline <span style="font-size:11px;font-weight:400;opacity:.7;"> (${total_batche} batches)</span>`,
 		'#6D28D9', '#F5F3FF', 'fa-sitemap');
@@ -4380,6 +4382,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	if (!mr_items || !mr_items.length) return;
 
 	const label = document.createElement('div');
+	label.setAttribute('data-bpp-section', 'mr');
 	label.innerHTML = _section_header(
 		`Raw Material Items <span style="font-size:11px;font-weight:400;opacity:.7;">(${mr_items.length})</span>`,
 		'#065F46', '#ECFDF5', 'fa-flask');

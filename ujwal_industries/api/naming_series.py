@@ -8,7 +8,7 @@ def numeric_series(doc, method=None):
 
     if doc.doctype == "Asset":
         return
-    
+
     if doc.doctype in ["Document Series Settings", "Document Series Table"]:
         return
 

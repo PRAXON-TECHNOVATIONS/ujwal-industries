@@ -68,7 +68,30 @@ function open_parallel_manage_dates_dialog(frm) {
 		method: 'ujwal_industries.ujwal_industries.overrides.pp_fg_dates.get_items_suppliers_batch',
 		args: { item_codes: JSON.stringify([...new Set(_all_item_codes)]) },
 		callback(r) {
-			_build_manage_dates_dialog(frm, r.message || {});
+			const suppliers_by_item = r.message || {};
+			// Fetch item names for FG items (po_items) that may not have item_name stored
+			const fg_codes = [...new Set((frm.doc.po_items || []).map(r => r.item_code).filter(Boolean))];
+			if (fg_codes.length) {
+				frappe.call({
+					method: 'frappe.client.get_list',
+					args: {
+						doctype: 'Item',
+						filters: [['name', 'in', fg_codes]],
+						fields: ['name', 'item_name'],
+						limit_page_length: fg_codes.length + 10,
+					},
+					callback(ir) {
+						const name_map = {};
+						(ir.message || []).forEach(i => { name_map[i.name] = i.item_name; });
+						(frm.doc.po_items || []).forEach(row => {
+							if (!row.item_name) row._fetched_item_name = name_map[row.item_code] || '';
+						});
+						_build_manage_dates_dialog(frm, suppliers_by_item);
+					},
+				});
+			} else {
+				_build_manage_dates_dialog(frm, suppliers_by_item);
+			}
 		},
 	});
 }
@@ -88,9 +111,9 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	const has_mr  = mr_items.length  > 0;
 
 	const ALL_STEPS = [
-		{ id: 'fg',  label: 'FG Items',      icon: '1' },
-		...(has_sfg ? [{ id: 'sfg', label: 'Sub Assembly', icon: '2' }] : []),
-		...(has_mr  ? [{ id: 'mr',  label: 'MR Items',     icon: has_sfg ? '3' : '2' }] : []),
+		...(has_mr  ? [{ id: 'mr',  label: 'MR Items',     icon: '1' }] : []),
+		...(has_sfg ? [{ id: 'sfg', label: 'Sub Assembly', icon: has_mr ? '2' : '1' }] : []),
+		{ id: 'fg',  label: 'FG Items',      icon: has_mr && has_sfg ? '3' : (has_mr || has_sfg ? '2' : '1') },
 	];
 
 	// ── Chain color palette ────────────────────────────────────────────────
@@ -189,6 +212,9 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 				<td style="padding:6px 12px;border-bottom:1px solid #ede9fe;">
 					<div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap;">
 						<span style="font-weight:700;color:#1e1b4b;font-size:12px;white-space:nowrap;">${esc(row.item_code)}</span>
+						${(row.item_name || row._fetched_item_name) && (row.item_name || row._fetched_item_name) !== row.item_code
+							? `<span style="color:#64748b;font-size:10px;white-space:nowrap;">${esc(row.item_name || row._fetched_item_name)}</span>`
+							: ''}
 						${so_short
 							? `<span style="background:#ede9fe;color:#4c1d95;border-radius:6px;
 									padding:1px 6px;font-size:9px;font-weight:700;white-space:nowrap;flex-shrink:0;">SO·${esc(so_short)}</span>`
@@ -672,8 +698,18 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 
 			<div class="md-content" style="flex:1;padding:20px 18px 16px;min-width:0;">
 
+				<!-- Step MR -->
+				<div id="md-step-mr" class="md-step-pane">
+					${has_mr ? build_mr_table() : ''}
+				</div>
+
+				<!-- Step SFG -->
+				<div id="md-step-sfg" class="md-step-pane" style="display:none;">
+					${has_sfg ? build_sfg_table() : ''}
+				</div>
+
 				<!-- Step FG -->
-				<div id="md-step-fg" class="md-step-pane">
+				<div id="md-step-fg" class="md-step-pane" style="display:none;">
 					<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
 						<div style="display:flex;align-items:center;gap:10px;">
 							<div style="width:5px;height:24px;background:linear-gradient(180deg,#4f46e5,#7c3aed);border-radius:3px;flex-shrink:0;"></div>
@@ -689,16 +725,6 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 						</span>
 					</div>
 					${build_fg_table()}
-				</div>
-
-				<!-- Step SFG -->
-				<div id="md-step-sfg" class="md-step-pane" style="display:none;">
-					${has_sfg ? build_sfg_table() : ''}
-				</div>
-
-				<!-- Step MR -->
-				<div id="md-step-mr" class="md-step-pane" style="display:none;">
-					${has_mr ? build_mr_table() : ''}
 				</div>
 
 			</div>
@@ -724,6 +750,8 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	let _step = 0;
 
 	d.$wrapper.find('.btn-modal-secondary').hide();
+	// Initialize to first step
+	setTimeout(() => _go_to_step(0), 50);
 
 	function _go_to_step(idx) {
 		_step = Math.max(0, Math.min(idx, ALL_STEPS.length - 1));
