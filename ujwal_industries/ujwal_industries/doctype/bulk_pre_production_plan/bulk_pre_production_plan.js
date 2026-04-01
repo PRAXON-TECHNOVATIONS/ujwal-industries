@@ -52,6 +52,27 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		frm.refresh_field('sales_orders');
 		add_sales_order_filters(frm);
 
+		// Restore Select Items button labels after reload
+		setTimeout(() => {
+			(frm.doc.sales_orders || []).forEach(so_row => {
+				if (!so_row.selected_items) return;
+				let selected;
+				try { selected = JSON.parse(so_row.selected_items); } catch (_) { return; }
+				if (!selected || !selected.length) return;
+
+				// Get total items for this SO from bom_selections to compute total
+				const total_for_so = (frm.doc.bom_selections || []).filter(b => b.sales_order === so_row.sales_order).length;
+				// Fallback: if bom_selections not loaded yet, just show count
+				const label = (total_for_so && selected.length === total_for_so)
+					? __('Select Items')
+					: __('Items: {0}', [selected.length]);
+
+				const $row = frm.fields_dict['sales_orders'].grid.wrapper
+					.find(`.grid-row[data-name="${so_row.name}"]`);
+				$row.find('[data-fieldname="select_items_btn"] button').text(label);
+			});
+		}, 300);
+
 		set_bom_selection_query(frm);
 
 		if ((frm.doc.sales_orders || []).length > 0 && (frm.doc.bom_selections || []).length === 0 && (frm.doc.po_items || []).length === 0) {

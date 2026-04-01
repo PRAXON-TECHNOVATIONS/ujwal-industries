@@ -1737,9 +1737,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm    = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm    = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -2055,9 +2055,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
    
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty = per_shift_qty * shift_count
 			else:
 				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -2523,9 +2523,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm    = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm    = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -2819,9 +2819,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			machine_count = cint(spm_details.get("machine_count") or 0)
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty = per_shift_qty * shift_count
 			else:
 				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
