@@ -1366,13 +1366,11 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 
 	// ── Event bindings — FG Step ───────────────────────────────────────────
 
-	// DATE picker: validate then recalculate
+	// DATE picker: validate only (recalculation disabled)
 	d.$wrapper.on('change', '.md-start-date', function() {
 		const rn    = $(this).data('row-name');
 		const $time = d.$wrapper.find(`.md-start-time[data-row-name="${rn}"]`);
 		_validate_date_change($(this), $time, constraints);
-		_refresh_end_date(rn);
-		_refresh_sfg_dates_for_chain(rn);
 	});
 
 	// TIME input: auto-colon on keystroke
@@ -1382,13 +1380,11 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		$(this).val(v);
 	});
 
-	// TIME input: validate on blur, then recalculate
+	// TIME input: validate on blur only (recalculation disabled)
 	d.$wrapper.on('blur', '.md-start-time', function() {
 		const rn    = $(this).data('row-name');
 		const $date = d.$wrapper.find(`.md-start-date[data-row-name="${rn}"]`);
 		_validate_time_blur($date, $(this), constraints);
-		_refresh_end_date(rn);
-		_refresh_sfg_dates_for_chain(rn);
 	});
 
 	// Focus ring on FG date/time inputs
@@ -1398,7 +1394,7 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		$(this).css({ 'border-color': '#c7d2fe', background: '#fafafe', 'box-shadow': 'none' });
 	});
 
-	// MFG TYPE: recolor pill + show/hide supplier dropdown + recalculate
+	// MFG TYPE: recolor pill + show/hide supplier dropdown (recalculation disabled)
 	d.$wrapper.on('change', '.md-mfg-select', function() {
 		const val = $(this).val();
 		const rn  = $(this).data('row-name');
@@ -1406,15 +1402,13 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		const clr = val === 'In House' ? '#1e40af' : val === 'Subcontract' ? '#92400e' : '#64748b';
 		$(this).css({ background: bg, color: clr });
 		d.$wrapper.find(`.md-supplier-wrap[data-row-name="${rn}"]`).toggle(val === 'Subcontract');
-		_refresh_end_date(rn);
 	});
 
-	// SUPPLIER: update lead-time hint + recalculate
+	// SUPPLIER: update lead-time hint only (recalculation disabled)
 	d.$wrapper.on('change', '.md-supplier-select', function() {
 		const rn   = $(this).data('row-name');
 		const lead = $(this).find(':selected').data('lead') || 0;
 		d.$wrapper.find(`.md-lead-info[data-row-name="${rn}"]`).text(lead ? `Lead time: ${lead}d` : '');
-		_refresh_end_date(rn);
 	});
 
 	// ── SFG bidirectional row-level date recalculation ────────────────────
@@ -1659,15 +1653,13 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		const rn    = $(this).data('sfg-name');
 		const $time = d.$wrapper.find(`.md-sfg-stime[data-sfg-name="${rn}"]`);
 		_validate_date_change($(this), $time, constraints);
-		_recalc_sfg_row(rn, 'schedule_date');
 	});
 
-	// SFG: SCHEDULE END date change — holiday guard → recalc start
+	// SFG: SCHEDULE END date change — holiday guard only
 	d.$wrapper.on('change', '.md-sfg-edate', function() {
 		const rn    = $(this).data('sfg-name');
 		const $time = d.$wrapper.find(`.md-sfg-etime[data-sfg-name="${rn}"]`);
 		_validate_date_change($(this), $time, constraints);
-		_recalc_sfg_row(rn, 'custom_schedule_end_date');
 	});
 
 	// SFG: auto-colon on time inputs
@@ -1677,23 +1669,20 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		$(this).val(v);
 	});
 
-	// SFG: SCHEDULE START time blur — validate format + shift/lunch → recalc end
+	// SFG: SCHEDULE START time blur — validate format + shift/lunch only
 	d.$wrapper.on('blur', '.md-sfg-stime', function() {
 		const rn    = $(this).data('sfg-name');
 		const $date = d.$wrapper.find(`.md-sfg-sdate[data-sfg-name="${rn}"]`);
 		_validate_time_blur($date, $(this), constraints);
-		_recalc_sfg_row(rn, 'schedule_date');
 	});
 
-	// SFG: SCHEDULE END time blur — validate format → recalc start
+	// SFG: SCHEDULE END time blur — validate format only
 	d.$wrapper.on('blur', '.md-sfg-etime', function() {
-		const rn       = $(this).data('sfg-name');
 		const time_val = $(this).val().trim();
 		if (!time_val) return;
 		if (!/^\d{2}:\d{2}$/.test(time_val)) { $(this).val(''); return; }
 		const [h, m] = time_val.split(':').map(Number);
 		if (h > 23 || m > 59) { $(this).val(''); return; }
-		_recalc_sfg_row(rn, 'custom_schedule_end_date');
 	});
 
 	// SFG: MFG TYPE recolor pill + show/hide supplier + recalc
@@ -1712,18 +1701,10 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 		$(this).css({ background: bg, color: clr });
 		d.$wrapper.find(`.md-sfg-supplier-wrap[data-sfg-name="${rn}"]`)
 			.css('display', val === 'Subcontract' ? 'block' : 'none');
-		// Recalc + cascade: always for In House; for Subcontract only when supplier is set
-		const has_supplier = !!d.$wrapper.find(`.md-sfg-supplier[data-sfg-name="${rn}"]`).val();
-		if (val !== 'Subcontract' || has_supplier) {
-			_recalc_sfg_row(rn, 'schedule_date');
-		}
 	});
 
-	// SFG: SUPPLIER change — recalc dates with new supplier (passes override to server)
-	d.$wrapper.on('change', '.md-sfg-supplier', function() {
-		const rn = $(this).data('sfg-name');
-		_recalc_sfg_row(rn, 'schedule_date');
-	});
+	// SFG: SUPPLIER change — show/hide only, no recalc
+	d.$wrapper.on('change', '.md-sfg-supplier', function() {});
 
 	// SFG: focus ring on date/time inputs
 	d.$wrapper.on('focusin', '.md-sfg-sdate, .md-sfg-stime, .md-sfg-edate, .md-sfg-etime', function() {
@@ -1734,49 +1715,21 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 
 	// ── Event bindings — MR Step ────────────────────────────────────────────────────
 
-	// MR: START DATE change → backdate guard + auto-calc schedule_date from server
+	// MR: START DATE change → backdate guard only
 	d.$wrapper.on('change', '.md-mr-sdate', function() {
-		const rn    = $(this).data('mr-name');
 		const sdate = $(this).val();
 		if (!sdate) return;
-
-		// Backdate guard
 		const today_str = frappe.datetime.get_today();
 		if (!constraints.allow_backdate && sdate < today_str) {
 			frappe.show_alert({ message: __('Start date cannot be in the past.'), indicator: 'orange' });
 			$(this).val($(this).data('original') || today_str);
 			return;
 		}
-		// Update the stored original so re-validation works
 		$(this).data('original', sdate);
-
-		// Auto-calculate schedule_date via server (lead_time + grn_days)
-		// Always pass the currently-selected supplier so the server uses the right lead time
-		const _sup_rn = d.$wrapper.find(`.md-mr-supplier[data-mr-name="${rn}"]`).val() || '';
-		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.overrides.pp_mr_dates.recalculate_mr_schedule_date',
-			args: {
-				production_plan_name: frm.doc.name,
-				mr_row_name:          rn,
-				new_start_date:       sdate,
-				supplier_override:    _sup_rn,
-			},
-			callback(r) {
-				const res = r.message || {};
-				if (res.schedule_date) {
-					const sched = res.schedule_date.slice(0, 10);
-					d.$wrapper.find(`.md-mr-edate[data-mr-name="${rn}"]`)
-						.val(sched).data('original', sched);
-				}
-				// Cascade upward, scoped to this chain only
-				_propagate_mr_upward(rn);
-			},
-		});
 	});
 
 	// MR: SCHEDULE DATE change — backdate guard only
 	d.$wrapper.on('change', '.md-mr-edate', function() {
-		const rn    = $(this).data('mr-name');
 		const sdate = $(this).val();
 		if (!sdate) return;
 		const today_str = frappe.datetime.get_today();
@@ -1786,35 +1739,10 @@ function _build_manage_dates_dialog(frm, constraints, suppliers_by_item) {
 			return;
 		}
 		$(this).data('original', sdate);
-		// Cascade upward, scoped to this chain
-		_propagate_mr_upward(rn);
 	});
 
-	// MR: SUPPLIER change — recalculate schedule_date with new supplier's lead time
-	d.$wrapper.on('change', '.md-mr-supplier', function() {
-		const rn    = $(this).data('mr-name');
-		const sup   = $(this).val();
-		const sdate = d.$wrapper.find(`.md-mr-sdate[data-mr-name="${rn}"]`).val();
-		if (!sdate) return;
-		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.overrides.pp_mr_dates.recalculate_mr_schedule_date',
-			args: {
-				production_plan_name: frm.doc.name,
-				mr_row_name:          rn,
-				new_start_date:       sdate,
-				supplier_override:    sup,
-			},
-			callback(r) {
-				const res = r.message || {};
-				if (res.schedule_date) {
-					const sched = res.schedule_date.slice(0, 10);
-					d.$wrapper.find(`.md-mr-edate[data-mr-name="${rn}"]`)
-						.val(sched).data('original', sched);
-				}
-				_propagate_mr_upward(rn);
-			},
-		});
-	});
+	// MR: SUPPLIER change — no recalc
+	d.$wrapper.on('change', '.md-mr-supplier', function() {});
 
 	// MR: focus ring on date inputs
 	d.$wrapper.on('focusin', '.md-mr-sdate, .md-mr-edate', function() {

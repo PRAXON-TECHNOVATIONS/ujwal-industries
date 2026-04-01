@@ -304,7 +304,7 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			transition:border-color 0.15s,box-shadow 0.15s;width:60px;text-align:center;
 			letter-spacing:1px;font-variant-numeric:tabular-nums;font-weight:600;`;
 
-		// ── Build ordered groups (first-appearance = top SFG first) ───────
+		// ── Build ordered groups (deepest SFG first → top SFG last) ───────
 		const _group_order = [];
 		const _group_map   = {};  // production_item → { rows, item_name, chain_id }
 		sfg_items.forEach(row => {
@@ -315,6 +315,7 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			}
 			_group_map[key].rows.push(row);
 		});
+		_group_order.reverse();
 
 		// ── Generate one collapsible card per SFG group ────────────────────
 		const groups_html = _group_order.map((item_code, g_idx) => {
@@ -996,54 +997,54 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	d.$wrapper.on('change', '.md-fg-sdate', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-fg-stime[data-row-name="${rn}"]`));
-		_fire_cascade(rn, 'start', dt, 'fg');
+		// _fire_cascade(rn, 'start', dt, 'fg');
 	});
 	d.$wrapper.on('blur', '.md-fg-stime', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-fg-sdate[data-row-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'start', dt, 'fg');
+		// _fire_cascade(rn, 'start', dt, 'fg');
 	});
 
 	// FG — end date/time change
 	d.$wrapper.on('change', '.md-fg-edate', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-fg-etime[data-row-name="${rn}"]`));
-		_fire_cascade(rn, 'end', dt, 'fg');
+		// _fire_cascade(rn, 'end', dt, 'fg');
 	});
 	d.$wrapper.on('blur', '.md-fg-etime', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-fg-edate[data-row-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'end', dt, 'fg');
+		// _fire_cascade(rn, 'end', dt, 'fg');
 	});
 
 	// SFG — start date/time change
 	d.$wrapper.on('change', '.md-sfg-sdate', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-sfg-stime[data-sfg-name="${rn}"]`));
-		_fire_cascade(rn, 'start', dt, 'sfg');
+		// _fire_cascade(rn, 'start', dt, 'sfg');
 	});
 	d.$wrapper.on('blur', '.md-sfg-stime', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-sfg-sdate[data-sfg-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'start', dt, 'sfg');
+		// _fire_cascade(rn, 'start', dt, 'sfg');
 	});
 
 	// SFG — end date/time change
 	d.$wrapper.on('change', '.md-sfg-edate', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-sfg-etime[data-sfg-name="${rn}"]`));
-		_fire_cascade(rn, 'end', dt, 'sfg');
+		// _fire_cascade(rn, 'end', dt, 'sfg');
 	});
 	d.$wrapper.on('blur', '.md-sfg-etime', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-sfg-edate[data-sfg-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'end', dt, 'sfg');
+		// _fire_cascade(rn, 'end', dt, 'sfg');
 	});
 
 	// MR — start date change only (end = start + lead_time + grn_days, server computes)
 	d.$wrapper.on('change', '.md-mr-sdate', function() {
 		const rn = $(this).data('mr-name');
 		const dv = $(this).val();
-		if (dv) _fire_cascade(rn, 'start', `${dv} 10:00:00`, 'mr');
+		// if (dv) _fire_cascade(rn, 'start', `${dv} 10:00:00`, 'mr');
 	});
 }
