@@ -252,13 +252,23 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					return;
 				}
 
-				const items = r.message;
+				// Deduplicate by item_code, summing qty across multiple SO lines
+				const item_map = {};
+				r.message.forEach(item => {
+					if (item_map[item.item_code]) {
+						item_map[item.item_code].qty = (item_map[item.item_code].qty || 0) + (item.qty || 0);
+					} else {
+						item_map[item.item_code] = Object.assign({}, item);
+					}
+				});
+				const items = Object.values(item_map);
+
 				let already_selected = [];
 				try {
 					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
 				} catch (_) { already_selected = []; }
 
-				// Build dialog fields — one Check per item
+				// Build dialog fields — one Check per unique item_code
 				const fields = items.map(item => ({
 					fieldtype: 'Check',
 					fieldname: item.item_code,
