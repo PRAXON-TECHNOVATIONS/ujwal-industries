@@ -1119,7 +1119,16 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 			so.customer,
 			so.delivery_date,
 			so.grand_total,
-			so.status
+			so.status,
+			EXISTS(
+				SELECT 1
+				FROM `tabSales Order Item` soi
+				INNER JOIN `tabItem` item ON item.name = soi.item_code
+				WHERE
+					soi.parent = so.name
+					AND soi.docstatus = 1
+					AND COALESCE(item.custom_planning_type, '') = '2'
+			) as has_level_2_item
 		FROM
 			`tabSales Order` so
 		WHERE
@@ -1148,6 +1157,7 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 				'delivery_date': so.delivery_date,
 				'grand_total': so.grand_total,
 				'status': so.status,
+				'has_level_2_item': cint(so.has_level_2_item),
 				'is_selected': 1,
 				'for_warehouse': '',
 				'items_generated': 0
@@ -1194,8 +1204,10 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			soi.item_name,
 			soi.qty,
 			soi.stock_uom,
-			soi.bom_no
+			soi.bom_no,
+			COALESCE(item.custom_planning_type, '') AS custom_planning_type
 		FROM `tabSales Order Item` soi
+		LEFT JOIN `tabItem` item ON item.name = soi.item_code
 		WHERE
 			soi.parent IN %(sales_orders)s
 			AND soi.docstatus = 1

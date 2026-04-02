@@ -177,6 +177,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 						row.delivery_date = so.delivery_date;
 						row.grand_total = so.grand_total;
 						row.status = so.status;
+						row.has_level_2_item = so.has_level_2_item;
 						row.is_selected = so.is_selected;
 						row.for_warehouse = so.for_warehouse || 'Stores - UI';
 						row.items_generated = so.items_generated;
@@ -186,6 +187,14 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 					frm.refresh_field('sales_orders');
 					add_sales_order_filters(frm);
 					load_bom_selections(frm);
+
+					const level_2_count = (r.message.sales_orders || []).filter(so => Number(so.has_level_2_item) === 1).length;
+					if (level_2_count) {
+						frappe.show_alert({
+							message: __('{0} Sales Order(s) contain item(s) with Planning Type 2', [level_2_count]),
+							indicator: 'orange'
+						}, 7);
+					}
 
 					frappe.show_alert({
 						message: __('{0} Sales Orders loaded', [r.message.sales_orders.length]),
@@ -272,7 +281,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 				const fields = items.map(item => ({
 					fieldtype: 'Check',
 					fieldname: item.item_code,
-					label: `${item.item_code}  —  ${item.item_name || ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+					label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
 					default: already_selected.length === 0 || already_selected.includes(item.item_code) ? 1 : 0,
 				}));
 
@@ -4539,5 +4548,3 @@ function _apply_so_filters(frm) {
 		$(this).toggle(show);
 	});
 }
-
-

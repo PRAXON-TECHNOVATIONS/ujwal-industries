@@ -10,6 +10,7 @@
   "delivery_date",
   "grand_total",
   "status",
+  "has_level_2_item",
   "column_break_1",
   "is_selected",
   "for_warehouse",
@@ -58,6 +59,14 @@
    "fieldname": "status",
    "fieldtype": "Data",
    "label": "Status",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_level_2_item",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Has Level 2 Item",
    "read_only": 1
   },
   {
