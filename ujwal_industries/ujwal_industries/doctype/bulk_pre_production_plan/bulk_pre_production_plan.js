@@ -177,6 +177,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 						row.delivery_date = so.delivery_date;
 						row.grand_total = so.grand_total;
 						row.status = so.status;
+						row.order_type = so.order_type || "";
 						row.has_level_2_item = so.has_level_2_item;
 						row.is_selected = so.is_selected;
 						row.for_warehouse = so.for_warehouse || 'Stores - UI';
@@ -277,37 +278,66 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
 				} catch (_) { already_selected = []; }
 
+				// Determine if an item is selectable based on the SO's order_type
+				// Sales SO: only planning_type 1 items are selectable (level 2 items are read-only)
+				// Forecast SO: only planning_type 2 items are selectable (other items are read-only)
+				// Use so_order_type from the API response (reliable for all SOs regardless of child table state)
+				const so_order_type = (r.message[0] && r.message[0].so_order_type) || row.order_type || '';
+				const is_selectable = (item) => {
+					if (so_order_type === 'Sales') return item.custom_planning_type === '1';
+					if (so_order_type === 'Forecast') return item.custom_planning_type === '2';
+					return true;
+				};
+
 				// Build dialog fields — one Check per unique item_code
-				const fields = items.map(item => ({
-					fieldtype: 'Check',
-					fieldname: item.item_code,
-					label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
-					default: already_selected.length === 0 || already_selected.includes(item.item_code) ? 1 : 0,
-				}));
+				const fields = items.map(item => {
+					const selectable = is_selectable(item);
+					return {
+						fieldtype: 'Check',
+						fieldname: item.item_code,
+						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+						default: selectable && (already_selected.length === 0 || already_selected.includes(item.item_code)) ? 1 : 0,
+					};
+				});
 
 				const d = new frappe.ui.Dialog({
 					title: __('Select Items — {0}', [row.sales_order]),
 					fields: fields,
 					primary_action_label: __('Confirm'),
 					primary_action(values) {
+						// Only include selectable items; disabled items are excluded
 						const selected = items
-							.filter(item => values[item.item_code])
+							.filter(item => is_selectable(item) && values[item.item_code])
 							.map(item => item.item_code);
 
 						frappe.model.set_value(cdt, cdn, 'selected_items', JSON.stringify(selected));
 
 						// Update button label to show count
+						const selectable_items = items.filter(item => is_selectable(item));
 						const $btn = frm.fields_dict['sales_orders'].grid.wrapper
 							.find(`[data-name="${cdn}"] [data-fieldname="select_items_btn"] button`);
-						$btn.text(selected.length === items.length
+						$btn.text(selected.length === selectable_items.length
 							? __('Select Items')
-							: __('Items: {0}/{1}', [selected.length, items.length]));
+							: __('Items: {0}/{1}', [selected.length, selectable_items.length]));
 
 						d.hide();
 					}
 				});
 
-				// Add Select All / Deselect All buttons
+				// Disable non-selectable item checkboxes after dialog renders
+				setTimeout(() => {
+					items.forEach(item => {
+						if (!is_selectable(item)) {
+							const $field = d.get_field(item.item_code);
+							if ($field) {
+								$field.$wrapper.find('input[type="checkbox"]').prop('disabled', true);
+								$field.$wrapper.css('opacity', '0.45');
+							}
+						}
+					});
+				}, 100);
+
+				// Add Select All / Deselect All buttons (only affect selectable items)
 				d.$wrapper.find('.modal-header').append(
 					`<div style="margin-top:6px;">
 						<button class="btn btn-xs btn-default so-select-all">${__('Select All')}</button>
@@ -315,10 +345,10 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					</div>`
 				);
 				d.$wrapper.on('click', '.so-select-all', () => {
-					items.forEach(item => d.set_value(item.item_code, 1));
+					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 1); });
 				});
 				d.$wrapper.on('click', '.so-deselect-all', () => {
-					items.forEach(item => d.set_value(item.item_code, 0));
+					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 0); });
 				});
 
 				d.show();

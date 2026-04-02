@@ -1120,6 +1120,7 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 			so.delivery_date,
 			so.grand_total,
 			so.status,
+			so.order_type,
 			EXISTS(
 				SELECT 1
 				FROM `tabSales Order Item` soi
@@ -1157,6 +1158,7 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 				'delivery_date': so.delivery_date,
 				'grand_total': so.grand_total,
 				'status': so.status,
+				'order_type': so.order_type or '',
 				'has_level_2_item': cint(so.has_level_2_item),
 				'is_selected': 1,
 				'for_warehouse': '',
@@ -1205,9 +1207,12 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			soi.qty,
 			soi.stock_uom,
 			soi.bom_no,
-			COALESCE(item.custom_planning_type, '') AS custom_planning_type
+			so.order_type AS so_order_type,
+			COALESCE(item.custom_planning_type, '') AS custom_planning_type,
+			COALESCE(item.custom_forecast_threashold, 0) AS custom_forecast_threashold
 		FROM `tabSales Order Item` soi
 		LEFT JOIN `tabItem` item ON item.name = soi.item_code
+		LEFT JOIN `tabSales Order` so ON so.name = soi.parent
 		WHERE
 			soi.parent IN %(sales_orders)s
 			AND soi.docstatus = 1
@@ -1216,6 +1221,11 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 		{"sales_orders": sales_orders},
 		as_dict=True,
 	)
+
+	# For Forecast SOs, show forecast threshold as qty for planning_type=2 items
+	for row in rows:
+		if row.so_order_type == 'Forecast' and row.custom_planning_type == '2':
+			row.qty = flt(row.custom_forecast_threashold) or row.qty
 
 	for row in rows:
 		row.bom_no = (
@@ -3247,7 +3257,10 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			soi.warehouse,
 			soi.delivery_date,
 			so.delivery_date as so_delivery_date,
+			so.order_type as so_order_type,
 			i.is_sub_contracted_item,
+			i.custom_planning_type,
+			COALESCE(i.custom_forecast_threashold, 0) as custom_forecast_threashold,
 			soi.bom_no
 		FROM
 			`tabSales Order Item` soi
@@ -3259,6 +3272,11 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			soi.parent = %(so_name)s
 			AND soi.docstatus = 1
 	""", {'so_name': so_name}, as_dict=True)
+
+	# For Forecast SOs, replace qty with the item's forecast threshold for planning_type=2 items
+	for item in so_items:
+		if item.so_order_type == 'Forecast' and item.custom_planning_type == '2':
+			item.qty = flt(item.custom_forecast_threashold) or item.qty
 
 	po_count = 0
 	sfg_count = 0

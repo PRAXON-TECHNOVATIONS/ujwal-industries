@@ -70,6 +70,14 @@
    "read_only": 1
   },
   {
+   "fetch_from": "sales_order.order_type",
+   "fieldname": "order_type",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Order Type",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_1",
    "fieldtype": "Column Break"
   },
