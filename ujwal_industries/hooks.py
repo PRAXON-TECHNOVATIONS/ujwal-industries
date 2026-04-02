@@ -246,7 +246,11 @@ doc_events = {
     },
 	"*": {
         "autoname": "ujwal_industries.api.naming_series.numeric_series"
-    }
+    },
+	"Sales Invoice":{
+		"validate": "ujwal_industries.ujwal_industries.overrides.sales_invoice.validate_sales_invoice_sequence"
+	},
+ 
 }
 
 # Scheduled Tasks
