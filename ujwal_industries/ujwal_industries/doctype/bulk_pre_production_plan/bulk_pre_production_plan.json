@@ -12,8 +12,6 @@
   "column_break_1",
   "posting_date",
   "filters",
-  "from_delivery_date",
-  "column_break_knfz",
   "to_delivery_date",
   "section_break_sales_orders",
   "get_sales_orders",
@@ -72,15 +70,9 @@
    "label": "Delivery Date Range"
   },
   {
-   "fieldname": "from_delivery_date",
-   "fieldtype": "Date",
-   "label": "From Delivery Date",
-   "reqd": 1
-  },
-  {
    "fieldname": "to_delivery_date",
    "fieldtype": "Date",
-   "label": "To Delivery Date",
+   "label": "Till Delivery Date",
    "reqd": 1
   },
   {
@@ -89,7 +81,6 @@
    "label": "Sales Orders"
   },
   {
-   "depends_on": "eval: doc.__islocal && doc.from_delivery_date && doc.to_delivery_date",
    "fieldname": "get_sales_orders",
    "fieldtype": "Button",
    "label": "Get Sales Orders"
@@ -237,10 +228,6 @@
    "options": "Bulk Pre Production Plan",
    "print_hide": 1,
    "read_only": 1
-  },
-  {
-   "fieldname": "column_break_knfz",
-   "fieldtype": "Column Break"
   }
  ],
  "icon": "fa fa-calendar",
@@ -252,7 +239,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-03-30 14:30:49.686344",
+ "modified": "2026-04-01 17:37:45.747890",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",

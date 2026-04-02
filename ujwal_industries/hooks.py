@@ -33,8 +33,8 @@ from ujwal_industries.overrides import work_order_override
 app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
-	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.29",
-	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.32",
+	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
+	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -64,6 +64,11 @@ doctype_js = {
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
 	"Item": "public/js/item.js",
+	"Asset": "public/js/asset.js",
+	"Asset Category": "public/js/asset_category.js",
+}
+doctype_tree_js = {
+	"Asset Category": "public/js/asset_category_tree.js",
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
@@ -111,7 +116,7 @@ doctype_list_js = {
 after_install = "ujwal_industries.install.after_install"
 after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all",
                  "ujwal_industries.install.after_install"]
-                
+
 # Uninstallation
 # ------------
 
@@ -159,6 +164,7 @@ permission_query_conditions = {
 
 override_doctype_class = {
 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
+	"Asset Category": "ujwal_industries.ujwal_industries.overrides.asset_category.CustomAssetCategory",
 }
 
 # Document Events
@@ -170,11 +176,14 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
- 
+	"Asset": {
+		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
+	},
+
 	"Customer": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.customer.autoname"
 	},
- 
+
  	"Stock Entry": {
         "validate": [
             "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
@@ -276,7 +285,7 @@ override_whitelisted_methods = {
 # along with any modifications made in other Frappe apps
 
 override_doctype_dashboards = {
-    
+
 	"Purchase Order" : "ujwal_industries.ujwal_industries.custom_dashboard.update_po_dashboard",
 }
 
@@ -387,7 +396,7 @@ fixtures = [
 	# 		]
 	# 	],
 	# },
-	
+
  {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
 ]
 
@@ -406,5 +415,3 @@ from ujwal_industries.overrides.bom import apply_bom_overrides
 
 apply_work_order_overrides()
 apply_bom_overrides()
-
-

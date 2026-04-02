@@ -68,7 +68,30 @@ function open_parallel_manage_dates_dialog(frm) {
 		method: 'ujwal_industries.ujwal_industries.overrides.pp_fg_dates.get_items_suppliers_batch',
 		args: { item_codes: JSON.stringify([...new Set(_all_item_codes)]) },
 		callback(r) {
-			_build_manage_dates_dialog(frm, r.message || {});
+			const suppliers_by_item = r.message || {};
+			// Fetch item names for FG items (po_items) that may not have item_name stored
+			const fg_codes = [...new Set((frm.doc.po_items || []).map(r => r.item_code).filter(Boolean))];
+			if (fg_codes.length) {
+				frappe.call({
+					method: 'frappe.client.get_list',
+					args: {
+						doctype: 'Item',
+						filters: [['name', 'in', fg_codes]],
+						fields: ['name', 'item_name'],
+						limit_page_length: fg_codes.length + 10,
+					},
+					callback(ir) {
+						const name_map = {};
+						(ir.message || []).forEach(i => { name_map[i.name] = i.item_name; });
+						(frm.doc.po_items || []).forEach(row => {
+							if (!row.item_name) row._fetched_item_name = name_map[row.item_code] || '';
+						});
+						_build_manage_dates_dialog(frm, suppliers_by_item);
+					},
+				});
+			} else {
+				_build_manage_dates_dialog(frm, suppliers_by_item);
+			}
 		},
 	});
 }
@@ -88,9 +111,9 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	const has_mr  = mr_items.length  > 0;
 
 	const ALL_STEPS = [
-		{ id: 'fg',  label: 'FG Items',      icon: '1' },
-		...(has_sfg ? [{ id: 'sfg', label: 'Sub Assembly', icon: '2' }] : []),
-		...(has_mr  ? [{ id: 'mr',  label: 'MR Items',     icon: has_sfg ? '3' : '2' }] : []),
+		...(has_mr  ? [{ id: 'mr',  label: 'MR Items',     icon: '1' }] : []),
+		...(has_sfg ? [{ id: 'sfg', label: 'Sub Assembly', icon: has_mr ? '2' : '1' }] : []),
+		{ id: 'fg',  label: 'FG Items',      icon: has_mr && has_sfg ? '3' : (has_mr || has_sfg ? '2' : '1') },
 	];
 
 	// ── Chain color palette ────────────────────────────────────────────────
@@ -154,105 +177,111 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	// ── Step 1: FG table ───────────────────────────────────────────────────
 
 	function build_fg_table() {
-		const input_style = `border:1.5px solid #c7d2fe;border-radius:8px;padding:6px 8px;font-size:12px;
-			color:#3730a3;background:#fafafe;outline:none;font-family:inherit;
-			transition:border-color 0.15s,box-shadow 0.15s;`;
+		const date_inp = `border:1.5px solid #c7d2fe;border-radius:6px;padding:4px 6px;font-size:11px;
+			color:#312e81;background:#fafaff;outline:none;font-family:inherit;
+			transition:border-color 0.15s,box-shadow 0.15s;width:106px;`;
+		const time_inp = `border:1.5px solid #c7d2fe;border-radius:6px;padding:4px 4px;font-size:11px;
+			color:#312e81;background:#fafaff;outline:none;font-family:inherit;
+			transition:border-color 0.15s,box-shadow 0.15s;width:54px;text-align:center;
+			letter-spacing:0.5px;font-variant-numeric:tabular-nums;font-weight:600;`;
 
 		const rows_html = po_items.map((row, i) => {
-			const mfg    = row.custom_manufacturing_type || '';
-			const row_bg = i % 2 === 0 ? '#ffffff' : '#f8f7ff';
+			const mfg     = row.custom_manufacturing_type || '';
+			const mfg_bg  = mfg === 'In House' ? '#dbeafe' : mfg === 'Subcontract' ? '#fef3c7' : '#dcfce7';
+			const mfg_clr = mfg === 'In House' ? '#1d4ed8' : mfg === 'Subcontract' ? '#92400e' : '#14532d';
+			const row_bg  = i % 2 === 0 ? '#ffffff' : '#f5f3ff';
 
 			const start_date = to_date_part(row.planned_start_date);
 			const start_time = to_time_part(row.planned_start_date);
 			const end_date   = to_date_part(row.custom_planned_end_date);
 			const end_time   = to_time_part(row.custom_planned_end_date);
 
+			const so_short = (row.sales_order || '').replace(/\D/g, '').slice(-5);
+			const mfg_d    = row.custom_mfg_days || 0;
+			const grn_d    = row.custom_grn_days || 0;
+			const pm_d     = row.custom_pm_days  || 0;
+
 			return `
-			<tr style="background:${row_bg};" data-row-name="${esc(row.name)}">
-				<td style="padding:10px 12px;color:#94a3b8;font-size:11px;text-align:center;
-					border-bottom:1px solid #f0f0ff;">${i + 1}</td>
+			<tr class="md-fg-row" style="background:${row_bg};" data-row-name="${esc(row.name)}">
 
-				<td style="border-bottom:1px solid #f0f0ff;">
-					<div style="font-weight:600;color:#1e1b4b;font-size:13px;">${esc(row.item_code)}</div>
-					${row.item_name && row.item_name !== row.item_code
-						? `<div style="color:#94a3b8;font-size:11px;margin-top:2px;">${esc(row.item_name)}</div>`
-						: ''}
-					${row.sales_order
-						? `<div style="color:#2563eb;font-size:11px;margin-top:3px;font-weight:600;">SO: ${esc(row.sales_order)}</div>`
-						: ''}
-					${mfg
-						? `<div style="font-size:11px;margin-top:4px;font-weight:600;
-								color:${mfg === 'In House' ? '#1e40af' : '#92400e'};">${mfg}</div>`
-						: ''}
-				</td>
+				<!-- # -->
+				<td style="padding:6px 8px;color:#a5b4fc;font-size:10px;font-weight:700;text-align:center;
+					border-bottom:1px solid #ede9fe;width:28px;white-space:nowrap;">${i + 1}</td>
 
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					${row.custom_mfg_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_mfg_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
-					${row.custom_grn_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_grn_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
-					${row.custom_pm_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_pm_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:10px 14px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					<span style="font-weight:600;color:#1e1b4b;font-size:13px;">${row.planned_qty || 0}</span>
-					<span style="color:#94a3b8;font-size:11px;margin-left:4px;">${esc(row.stock_uom)}</span>
-				</td>
-
-				<!-- PLANNED START (editable) -->
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
-					<div style="display:flex;gap:6px;align-items:center;">
-						<input type="date" class="md-fg-sdate" data-row-name="${esc(row.name)}"
-							value="${start_date}" data-original="${start_date}"
-							style="${input_style}width:130px;"/>
-						<input type="text" class="md-fg-stime" data-row-name="${esc(row.name)}"
-							value="${start_time}" data-original="${start_time}"
-							placeholder="HH:MM" maxlength="5"
-							style="${input_style}width:70px;text-align:center;letter-spacing:1px;
-								font-variant-numeric:tabular-nums;font-weight:600;"/>
+				<!-- Item — all inline, single line -->
+				<td style="padding:6px 12px;border-bottom:1px solid #ede9fe;">
+					<div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap;">
+						<span style="font-weight:700;color:#1e1b4b;font-size:12px;white-space:nowrap;">${esc(row.item_code)}</span>
+						${(row.item_name || row._fetched_item_name) && (row.item_name || row._fetched_item_name) !== row.item_code
+							? `<span style="color:#64748b;font-size:10px;white-space:nowrap;">${esc(row.item_name || row._fetched_item_name)}</span>`
+							: ''}
+						${so_short
+							? `<span style="background:#ede9fe;color:#4c1d95;border-radius:6px;
+									padding:1px 6px;font-size:9px;font-weight:700;white-space:nowrap;flex-shrink:0;">SO·${esc(so_short)}</span>`
+							: ''}
+						${mfg
+							? `<span style="background:${mfg_bg};color:${mfg_clr};border-radius:6px;
+									padding:1px 6px;font-size:9px;font-weight:700;white-space:nowrap;flex-shrink:0;">${esc(mfg)}</span>`
+							: ''}
+						<span style="background:#eef2ff;color:#6366f1;border-radius:6px;
+							padding:1px 6px;font-size:9px;font-weight:600;white-space:nowrap;flex-shrink:0;
+							letter-spacing:0.2px;">${mfg_d}M·${grn_d}G·${pm_d}P</span>
 					</div>
 				</td>
 
-				<!-- PLANNED END (editable) -->
-				<td style="padding:10px 14px;border-bottom:1px solid #f0f0ff;">
-					<div style="display:flex;gap:6px;align-items:center;">
+				<!-- QTY -->
+				<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #ede9fe;
+					white-space:nowrap;width:72px;">
+					<span style="font-weight:700;color:#1e1b4b;font-size:11px;">${row.planned_qty || 0}</span>
+					<span style="color:#a5b4fc;font-size:9px;margin-left:2px;">${esc(row.stock_uom || '')}</span>
+				</td>
+
+				<!-- PLANNED START -->
+				<td style="padding:5px 8px;border-bottom:1px solid #ede9fe;">
+					<div style="display:flex;gap:3px;align-items:center;">
+						<input type="date" class="md-fg-sdate" data-row-name="${esc(row.name)}"
+							value="${start_date}" data-original="${start_date}" style="${date_inp}"/>
+						<input type="text" class="md-fg-stime" data-row-name="${esc(row.name)}"
+							value="${start_time}" data-original="${start_time}"
+							placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
+					</div>
+				</td>
+
+				<!-- arrow -->
+				<td style="padding:6px 4px;border-bottom:1px solid #ede9fe;color:#c4b5fd;
+					font-size:12px;text-align:center;width:16px;">→</td>
+
+				<!-- PLANNED END -->
+				<td style="padding:5px 8px;border-bottom:1px solid #ede9fe;">
+					<div style="display:flex;gap:3px;align-items:center;">
 						<input type="date" class="md-fg-edate" data-row-name="${esc(row.name)}"
-							value="${end_date}" data-original="${end_date}"
-							style="${input_style}width:130px;"/>
+							value="${end_date}" data-original="${end_date}" style="${date_inp}"/>
 						<input type="text" class="md-fg-etime" data-row-name="${esc(row.name)}"
 							value="${end_time}" data-original="${end_time}"
-							placeholder="HH:MM" maxlength="5"
-							style="${input_style}width:70px;text-align:center;letter-spacing:1px;
-								font-variant-numeric:tabular-nums;font-weight:600;"/>
+							placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
 					</div>
 				</td>
 			</tr>`;
 		}).join('');
 
 		return `
-		<div class="md-table-wrap" style="border:1px solid #e2e8f0;border-radius:10px;overflow:auto;
-			box-shadow:0 2px 8px rgba(79,70,229,0.07);-webkit-overflow-scrolling:touch;">
-			<table style="border-collapse:collapse;">
+		<style>
+			.md-fg-row:hover { background: #eef2ff !important; }
+			.md-fg-row:hover input { border-color: #818cf8 !important; }
+		</style>
+		<div style="overflow:auto;border:1.5px solid #ddd6fe;border-radius:10px;
+			box-shadow:0 2px 12px rgba(99,102,241,0.08);">
+			<table style="width:100%;min-width:580px;border-collapse:collapse;">
 				<thead>
-					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#3730a3 100%);">
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
-						<th style="width:25%;padding:10px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
-						<th style="width:10%;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">Mfg Days</th>
-						<th style="width:10%;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">GRN Days</th>
-						<th style="width:10%;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PM Days</th>
-						<th style="width:10%;padding:10px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED START ✏</th>
-						<th style="padding:10px 12px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PLANNED END ✏</th>
+					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#4338ca 100%);position:sticky;top:0;z-index:1;">
+						<th style="padding:8px 8px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:center;width:28px;">#</th>
+						<th style="padding:8px 12px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;">ITEM</th>
+						<th style="padding:8px 10px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:right;width:72px;">QTY</th>
+						<th style="padding:8px 8px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;" colspan="3">PLANNED START → END ✏</th>
 					</tr>
 				</thead>
 				<tbody>${rows_html}</tbody>
@@ -260,7 +289,7 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		</div>`;
 	}
 
-	// ── Step 2: Sub Assembly table ─────────────────────────────────────────
+	// ── Step 2: Sub Assembly table (collapsible tree) ──────────────────────
 
 	function build_sfg_table() {
 		if (!sfg_items.length) {
@@ -275,105 +304,219 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			transition:border-color 0.15s,box-shadow 0.15s;width:60px;text-align:center;
 			letter-spacing:1px;font-variant-numeric:tabular-nums;font-weight:600;`;
 
-		const rows_html = sfg_items.map((row, i) => {
-			const chain_id = row.production_plan_item || '';
-			const pal      = sfg_chain_color[chain_id] || SFG_PALETTE[0];
+		// ── Build ordered groups (deepest SFG first → top SFG last) ───────
+		const _group_order = [];
+		const _group_map   = {};  // production_item → { rows, item_name, chain_id }
+		sfg_items.forEach(row => {
+			const key = row.production_item || '(unknown)';
+			if (!_group_map[key]) {
+				_group_map[key] = { rows: [], item_name: row.item_name || '', chain_id: row.production_plan_item || '' };
+				_group_order.push(key);
+			}
+			_group_map[key].rows.push(row);
+		});
+		_group_order.reverse();
+
+		// ── Generate one collapsible card per SFG group ────────────────────
+		const groups_html = _group_order.map((item_code, g_idx) => {
+			const grp      = _group_map[item_code];
+			const chain_id = grp.chain_id;
+			const pal      = sfg_chain_color[chain_id] || SFG_PALETTE[g_idx % SFG_PALETTE.length];
 			const clabel   = sfg_chain_label[chain_id] || chain_id.slice(-4);
+			const grp_id   = `md-sfg-grp-${g_idx}`;
+			const batch_n  = grp.rows.length;
 
-			const mfg     = row.type_of_manufacturing || '';
-			const sel_bg  = mfg === 'In House'    ? '#dbeafe' : mfg === 'Subcontract' ? '#fef3c7' : '#dcfce7';
-			const sel_clr = mfg === 'In House'    ? '#1e40af' : mfg === 'Subcontract' ? '#92400e' : '#14532d';
+			// Summary stats
+			const total_qty = grp.rows.reduce((s, r) => s + (r.qty || 0), 0);
+			const uom_rep   = grp.rows[0]?.uom || grp.rows[0]?.stock_uom || '';
+			const start_rep = grp.rows[0]?.schedule_date;
+			const end_rep   = grp.rows[grp.rows.length - 1]?.custom_schedule_end_date;
+			const start_d   = start_rep ? frappe.datetime.str_to_user(start_rep.slice(0, 10)) : '—';
+			const end_d     = end_rep   ? frappe.datetime.str_to_user(end_rep.slice(0, 10))   : '—';
+			// Representative MFG type (first row)
+			const mfg_rep   = grp.rows[0]?.type_of_manufacturing || 'In House';
+			const mfg_bg    = mfg_rep === 'In House' ? '#dbeafe' : mfg_rep === 'Subcontract' ? '#fef3c7' : '#dcfce7';
+			const mfg_clr   = mfg_rep === 'In House' ? '#1e40af' : mfg_rep === 'Subcontract' ? '#92400e' : '#14532d';
+			// Aggregate days (from first batch)
+			const mfg_days  = grp.rows[0]?.custom_mfg_days || '';
+			const grn_days  = grp.rows[0]?.custom_grn_days || '';
+			const pm_days   = grp.rows[0]?.custom_pm_days  || '';
 
-			const indent    = row.indent || 0;
-			const item_left = indent * 16;
-			const tree_chr  = indent > 0 ? `<span style="color:${pal.border};margin-right:3px;">└─</span>` : '';
+			// Pipeline position label
+			const pos_label = g_idx === 0 ? 'Top · runs last'
+				: g_idx === _group_order.length - 1 ? 'Deepest · runs first'
+				: `Level ${g_idx + 1}`;
+			const pos_bg    = g_idx === 0 ? '#dcfce7' : g_idx === _group_order.length - 1 ? '#fee2e2' : '#ede9fe';
+			const pos_clr   = g_idx === 0 ? '#14532d' : g_idx === _group_order.length - 1 ? '#991b1b' : '#4c1d95';
 
-			const start_date = to_date_part(row.schedule_date);
-			const start_time = to_time_part(row.schedule_date);
-			const end_date   = to_date_part(row.custom_schedule_end_date);
-			const end_time   = to_time_part(row.custom_schedule_end_date);
+			// ── Batch rows ─────────────────────────────────────────────────
+			const batch_rows_html = grp.rows.map((row, b_idx) => {
+				const mfg     = row.type_of_manufacturing || '';
+				const sel_bg  = mfg === 'In House' ? '#dbeafe' : mfg === 'Subcontract' ? '#fef3c7' : '#dcfce7';
+				const sel_clr = mfg === 'In House' ? '#1e40af' : mfg === 'Subcontract' ? '#92400e' : '#14532d';
+
+				const start_date = to_date_part(row.schedule_date);
+				const start_time = to_time_part(row.schedule_date);
+				const end_date   = to_date_part(row.custom_schedule_end_date);
+				const end_time   = to_time_part(row.custom_schedule_end_date);
+				const row_bg     = b_idx % 2 === 0 ? '#fafafe' : '#ffffff';
+
+				return `
+				<tr class="md-sfg-batch-row" style="border-left:3px solid ${pal.dot};background:${row_bg};"
+					data-sfg-name="${esc(row.name)}" data-chain="${esc(chain_id)}" data-group="${grp_id}">
+
+					<!-- Batch label -->
+					<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;white-space:nowrap;width:52px;">
+						<div style="display:inline-flex;align-items:center;justify-content:center;
+							width:30px;height:20px;border-radius:6px;
+							background:${pal.bg};border:1px solid ${pal.border};">
+							<span style="font-size:9px;font-weight:800;color:${pal.text};">B${b_idx}</span>
+						</div>
+					</td>
+
+					<!-- MFG type (read-only badge) -->
+					<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
+						<span style="display:inline-block;padding:2px 8px;border-radius:12px;
+							font-size:10px;font-weight:600;background:${sel_bg};color:${sel_clr};">
+							${esc(mfg || '—')}
+						</span>
+						${mfg === 'Subcontract' && row.supplier
+							? `<div style="margin-top:3px;font-size:10px;color:#92400e;background:#fffbeb;
+									display:inline-block;padding:2px 6px;border-radius:6px;border:1px solid #fcd34d;">
+									${esc(row.supplier)}
+								</div>`
+							: ''}
+					</td>
+
+					<!-- Mfg / GRN / PM days -->
+					<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;text-align:center;width:60px;">
+						${row.custom_mfg_days ? `<span style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_mfg_days)}</span>` : '<span style="color:#cbd5e1;">—</span>'}
+					</td>
+					<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;text-align:center;width:60px;">
+						${row.custom_grn_days ? `<span style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_grn_days)}</span>` : '<span style="color:#cbd5e1;">—</span>'}
+					</td>
+					<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;text-align:center;width:60px;">
+						${row.custom_pm_days ? `<span style="color:#7c3aed;font-size:11px;font-weight:600;">${esc(row.custom_pm_days)}</span>` : '<span style="color:#cbd5e1;">—</span>'}
+					</td>
+
+					<!-- QTY -->
+					<td style="padding:7px 10px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;width:72px;">
+						<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${row.qty || 0}</span>
+						<span style="color:#94a3b8;font-size:10px;margin-left:2px;">${esc(uom_rep)}</span>
+					</td>
+
+					<!-- SCHEDULE START -->
+					<td style="padding:5px 10px;border-bottom:1px solid #f0f0ff;">
+						<div style="display:flex;gap:4px;align-items:center;">
+							<input type="date" class="md-sfg-sdate" data-sfg-name="${esc(row.name)}"
+								value="${start_date}" data-original="${start_date}" style="${date_inp}"/>
+							<input type="text" class="md-sfg-stime" data-sfg-name="${esc(row.name)}"
+								value="${start_time}" data-original="${start_time}"
+								placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
+						</div>
+					</td>
+
+					<!-- SCHEDULE END -->
+					<td style="padding:5px 10px;border-bottom:1px solid #f0f0ff;">
+						<div style="display:flex;gap:4px;align-items:center;">
+							<input type="date" class="md-sfg-edate" data-sfg-name="${esc(row.name)}"
+								value="${end_date}" data-original="${end_date}" style="${date_inp}"/>
+							<input type="text" class="md-sfg-etime" data-sfg-name="${esc(row.name)}"
+								value="${end_time}" data-original="${end_time}"
+								placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
+						</div>
+					</td>
+				</tr>`;
+			}).join('');
 
 			return `
-			<tr style="border-left:3px solid ${pal.dot};background:${i % 2 === 0 ? '#fff' : '#fafafe'};"
-				data-sfg-name="${esc(row.name)}" data-chain="${esc(chain_id)}">
+			<!-- SFG Group ${g_idx}: ${esc(item_code)} -->
+			<div class="md-sfg-group" data-group-id="${grp_id}"
+				style="border:1.5px solid ${pal.border};border-radius:10px;overflow:hidden;
+					margin-bottom:10px;box-shadow:0 1px 4px rgba(79,70,229,0.06);">
 
-				<td style="padding:8px 10px;color:#94a3b8;font-size:11px;text-align:center;
-					border-bottom:1px solid #f0f0ff;">${i + 1}</td>
+				<!-- Group header (click to toggle) -->
+				<div class="md-sfg-group-header" data-target="${grp_id}"
+					style="display:flex;align-items:center;justify-content:space-between;
+						padding:10px 14px;cursor:pointer;user-select:none;
+						background:linear-gradient(90deg,${pal.bg} 0%,#fff 100%);
+						border-bottom:1.5px solid ${pal.border};transition:background 0.15s;">
 
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					<div style="display:inline-flex;align-items:center;gap:4px;
-						background:${pal.bg};border:1px solid ${pal.border};border-radius:20px;padding:3px 9px;">
-						<div style="width:7px;height:7px;border-radius:50%;background:${pal.dot};flex-shrink:0;"></div>
-						<span style="font-size:9px;font-weight:700;color:${pal.text};letter-spacing:0.2px;">${esc(clabel)}</span>
-					</div>
-				</td>
-
-				<td style="padding:8px 14px;border-bottom:1px solid #f0f0ff;">
-					<div style="padding-left:${item_left}px;">
-						${tree_chr}<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${esc(row.production_item)}</span>
-					</div>
-					${row.item_name && row.item_name !== row.production_item
-						? `<div style="color:#94a3b8;font-size:10px;margin-top:1px;
-								padding-left:${item_left + (indent > 0 ? 18 : 0)}px;">${esc(row.item_name)}</div>`
-						: ''}
-					<div style="margin-top:6px;padding-left:${item_left + (indent > 0 ? 18 : 0)}px;">
-						<div style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600;
-								background:${sel_bg};color:${sel_clr};">
-							${mfg || '—'}
-							${mfg === 'Subcontract' && row.supplier ? `
-							<br><div style="margin-top:4px;font-size:10px;color:#92400e;background:#fffbeb;
-								display:inline-block;padding:2px 6px;border-radius:6px;border:1px solid #fcd34d;">
-								${esc(row.supplier)}
-							</div>` : ''}
+					<div style="display:flex;align-items:center;gap:10px;min-width:0;">
+						<div style="width:4px;height:36px;background:${pal.dot};border-radius:3px;flex-shrink:0;"></div>
+						<div style="min-width:0;">
+							<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+								<span style="font-size:13px;font-weight:700;color:#1e1b4b;">${esc(item_code)}</span>
+								${grp.item_name && grp.item_name !== item_code
+									? `<span style="font-size:10px;color:#94a3b8;">${esc(grp.item_name)}</span>`
+									: ''}
+								<div style="display:inline-flex;align-items:center;gap:4px;
+									background:${pal.bg};border:1px solid ${pal.border};border-radius:20px;padding:2px 8px;">
+									<div style="width:6px;height:6px;border-radius:50%;background:${pal.dot};flex-shrink:0;"></div>
+									<span style="font-size:9px;font-weight:700;color:${pal.text};">Chain ${esc(clabel)}</span>
+								</div>
+								<span style="background:${pos_bg};color:${pos_clr};border-radius:10px;
+									padding:2px 8px;font-size:9px;font-weight:700;">${pos_label}</span>
+							</div>
+							<div style="display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap;">
+								<span style="font-size:10px;color:#64748b;">
+									<span style="font-weight:700;color:${pal.dot};">${batch_n}</span>
+									batch${batch_n !== 1 ? 'es' : ''}
+								</span>
+								<span style="font-size:10px;color:#94a3b8;">·</span>
+								<span style="font-size:10px;color:#64748b;">
+									<span style="font-weight:600;color:#374151;">${total_qty}</span> ${esc(uom_rep)}
+								</span>
+								<span style="font-size:10px;color:#94a3b8;">·</span>
+								<span style="font-size:10px;color:#64748b;">${start_d} → ${end_d}</span>
+								${mfg_days ? `<span style="font-size:10px;color:#2563eb;font-weight:600;">${esc(mfg_days)}M</span>` : ''}
+								${grn_days ? `<span style="font-size:10px;color:#2563eb;font-weight:600;">${esc(grn_days)}G</span>` : ''}
+								${pm_days  ? `<span style="font-size:10px;color:#7c3aed;font-weight:600;">${esc(pm_days)}P</span>` : ''}
+								<span style="background:${mfg_bg};color:${mfg_clr};border-radius:10px;
+									padding:2px 8px;font-size:9px;font-weight:700;">${esc(mfg_rep)}</span>
+							</div>
 						</div>
 					</div>
-				</td>
 
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
-					${row.custom_mfg_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_mfg_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
-					${row.custom_grn_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_grn_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;">
-					${row.custom_pm_days
-						? `<div style="color:#2563eb;font-size:11px;font-weight:600;">${esc(row.custom_pm_days)}</div>`
-						: ''}
-				</td>
-
-				<td style="padding:8px 10px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${row.qty || 0}</span>
-					<span style="color:#94a3b8;font-size:10px;margin-left:3px;">${esc(row.uom || row.stock_uom || '')}</span>
-				</td>
-
-				<!-- SCHEDULE START (editable) -->
-				<td style="padding:6px 10px;border-bottom:1px solid #f0f0ff;">
-					<div style="display:flex;gap:4px;align-items:center;">
-						<input type="date" class="md-sfg-sdate" data-sfg-name="${esc(row.name)}"
-							value="${start_date}" data-original="${start_date}" style="${date_inp}"/>
-						<input type="text" class="md-sfg-stime" data-sfg-name="${esc(row.name)}"
-							value="${start_time}" data-original="${start_time}"
-							placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
+					<div class="md-sfg-chevron" data-target="${grp_id}"
+						style="width:24px;height:24px;border-radius:6px;flex-shrink:0;
+							display:flex;align-items:center;justify-content:center;
+							background:rgba(0,0,0,0.04);transition:transform 0.22s ease;">
+						<svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+							<path d="M2 4.5L6 8L10 4.5" stroke="${pal.dot}" stroke-width="1.8"
+								stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
 					</div>
-				</td>
+				</div>
 
-				<!-- SCHEDULE END (editable) -->
-				<td style="padding:6px 10px;border-bottom:1px solid #f0f0ff;">
-					<div style="display:flex;gap:4px;align-items:center;">
-						<input type="date" class="md-sfg-edate" data-sfg-name="${esc(row.name)}"
-							value="${end_date}" data-original="${end_date}" style="${date_inp}"/>
-						<input type="text" class="md-sfg-etime" data-sfg-name="${esc(row.name)}"
-							value="${end_time}" data-original="${end_time}"
-							placeholder="HH:MM" maxlength="5" style="${time_inp}"/>
-					</div>
-				</td>
-			</tr>`;
+				<!-- Batch rows table -->
+				<div class="md-sfg-group-body" id="${grp_id}"
+					style="overflow:hidden;transition:max-height 0.28s ease,opacity 0.22s ease;max-height:2000px;opacity:1;">
+					<table style="width:100%;min-width:680px;border-collapse:collapse;">
+						<thead>
+							<tr style="background:#f8f7ff;border-bottom:1px solid ${pal.border};">
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;text-align:center;width:52px;">BATCH</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;">MFG TYPE</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;text-align:center;width:60px;">MFG</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;text-align:center;width:60px;">GRN</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;text-align:center;width:60px;">PM</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;text-align:right;width:72px;">QTY</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;">SCHEDULE START ✏</th>
+								<th style="padding:7px 10px;color:${pal.text};font-size:9px;font-weight:700;
+									letter-spacing:0.5px;">SCHEDULE END ✏</th>
+							</tr>
+						</thead>
+						<tbody>${batch_rows_html}</tbody>
+					</table>
+				</div>
+			</div>`;
 		}).join('');
 
 		const chain_legend_html = po_items.map((po, i) => {
@@ -391,41 +534,25 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		<div style="display:flex;align-items:center;justify-content:space-between;
 			margin-bottom:14px;flex-wrap:wrap;gap:8px;">
 			<div style="display:flex;align-items:center;gap:10px;">
-				<div style="width:5px;height:24px;background:linear-gradient(180deg,#4f46e5,#7c3aed);
+				<div style="width:5px;height:24px;background:linear-gradient(180deg,#4338ca,#7c3aed);
 					border-radius:3px;flex-shrink:0;"></div>
 				<div>
 					<div style="font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.2;">Sub Assembly Items</div>
-					<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Edit schedule dates per chain</div>
+					<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Click a group to expand · edit schedule dates</div>
 				</div>
 			</div>
-			<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-				${chain_legend_html}
-				<span style="background:linear-gradient(135deg,#ede9fe,#ddd6fe);color:#5b21b6;
-					padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;
-					box-shadow:0 1px 3px rgba(91,33,182,0.15);white-space:nowrap;">
-					${sfg_items.length} item${sfg_items.length !== 1 ? 's' : ''}
+			<div style="display:flex;align-items:center;gap:8px;">
+				<span style="background:#eef2ff;color:#4338ca;border-radius:8px;padding:3px 10px;
+					font-size:11px;font-weight:700;border:1px solid #c7d2fe;">
+					${_group_order.length} SFG group${_group_order.length !== 1 ? 's' : ''}
+				</span>
+				<span style="background:#f5f3ff;color:#6d28d9;border-radius:8px;padding:3px 10px;
+					font-size:11px;font-weight:700;border:1px solid #ddd6fe;">
+					${sfg_items.length} batch${sfg_items.length !== 1 ? 'es' : ''}
 				</span>
 			</div>
 		</div>
-		<div class="md-table-wrap" style="border:1px solid #e2e8f0;border-radius:10px;overflow:auto;
-			box-shadow:0 2px 8px rgba(79,70,229,0.07);-webkit-overflow-scrolling:touch;">
-			<table style="width:100%;border-collapse:collapse;">
-				<thead>
-					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#3730a3 100%);">
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">CHAIN</th>
-						<th style="width:20%;padding:9px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
-						<th style="width:10%;padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">Mfg Days</th>
-						<th style="width:10%;padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">GRN Days</th>
-						<th style="width:10%;padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">PM Days</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SCHEDULE START ✏</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SCHEDULE END ✏</th>
-					</tr>
-				</thead>
-				<tbody>${rows_html}</tbody>
-			</table>
-		</div>`;
+		<div id="md-sfg-tree">${groups_html}</div>`;
 	}
 
 	// ── Step 3: MR Items table ─────────────────────────────────────────────
@@ -435,19 +562,15 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			return '<div style="padding:20px;text-align:center;color:#94a3b8;font-style:italic;">No material request items.</div>';
 		}
 
-		const date_inp = `border:1.5px solid #c7d2fe;border-radius:7px;padding:5px 7px;font-size:11px;
+		const date_inp = `border:1.5px solid #ddd6fe;border-radius:7px;padding:5px 8px;font-size:11px;
 			color:#3730a3;background:#fafafe;outline:none;font-family:inherit;
-			transition:border-color 0.15s,box-shadow 0.15s;width:118px;`;
+			transition:border-color 0.15s,box-shadow 0.15s;width:112px;`;
 
 		const rows_html = mr_items.map((row, i) => {
-			const so_short = (row.sales_order || '').replace(/\D/g, '').slice(-5);
-			const so_badge = so_short
-				? `<span style="background:#ede9fe;color:#4c1d95;border-radius:10px;padding:2px 8px;
-						font-size:9px;font-weight:700;">SO·${esc(so_short)}</span>`
-				: '';
-
+			const so_short  = (row.sales_order || '').replace(/\D/g, '').slice(-5);
 			const start_val = row.custom_start_date ? row.custom_start_date.slice(0, 10) : '';
 			const sched_val = row.schedule_date     ? row.schedule_date.slice(0, 10)     : '';
+			const row_bg    = i % 2 === 0 ? '#ffffff' : '#faf5ff';
 
 			const mr_suppliers = suppliers_by_item[row.item_code] || [];
 			const mr_sup_opts  = mr_suppliers.map(s => {
@@ -457,84 +580,90 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			}).join('');
 
 			return `
-			<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafe'};" data-mr-name="${esc(row.name)}">
+			<tr class="md-mr-row" style="background:${row_bg};" data-mr-name="${esc(row.name)}">
 
-				<td style="padding:8px 10px;color:#94a3b8;font-size:11px;text-align:center;
-					border-bottom:1px solid #f0f0ff;width:32px;">${i + 1}</td>
+				<td style="padding:6px 8px;color:#a5b4fc;font-size:10px;font-weight:700;text-align:center;
+					border-bottom:1px solid #ede9fe;width:28px;">${i + 1}</td>
 
-				<td style="padding:7px 10px;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					${so_badge}
-				</td>
-
-				<td style="padding:8px 14px;border-bottom:1px solid #f0f0ff;min-width:160px;">
-					<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${esc(row.item_code)}</span>
+				<td style="padding:6px 14px;border-bottom:1px solid #ede9fe;min-width:170px;">
+					<div style="font-weight:700;color:#1e1b4b;font-size:12px;line-height:1.3;">${esc(row.item_code)}</div>
 					${row.item_name && row.item_name !== row.item_code
 						? `<div style="color:#94a3b8;font-size:10px;margin-top:1px;">${esc(row.item_name)}</div>`
 						: ''}
+					${so_short
+						? `<span style="display:inline-block;margin-top:4px;background:#ede9fe;color:#4c1d95;
+								border-radius:8px;padding:1px 7px;font-size:9px;font-weight:700;">SO·${esc(so_short)}</span>`
+						: ''}
 				</td>
 
-				<td style="padding:8px 10px;text-align:right;border-bottom:1px solid #f0f0ff;white-space:nowrap;">
-					<span style="font-weight:600;color:#1e1b4b;font-size:12px;">${row.quantity || 0}</span>
-					<span style="color:#94a3b8;font-size:10px;margin-left:3px;">${esc(row.uom || '')}</span>
+				<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #ede9fe;
+					white-space:nowrap;width:72px;">
+					<span style="font-weight:700;color:#1e1b4b;font-size:12px;">${row.quantity || 0}</span>
+					<div style="color:#a5b4fc;font-size:9px;margin-top:1px;">${esc(row.uom || '')}</div>
 				</td>
 
-				<!-- Supplier (editable) -->
-				<td style="padding:6px 10px;border-bottom:1px solid #f0f0ff;min-width:160px;">
-					<select class="md-mr-supplier" data-mr-name="${esc(row.name)}"
-						style="width:100%;border:1.5px solid #fcd34d;border-radius:8px;padding:4px 8px;
-							font-size:11px;color:#92400e;background:#fffbeb;outline:none;cursor:pointer;font-family:inherit;">
-						<option value="">-- Select Supplier --</option>
-						${mr_sup_opts}
-					</select>
+				<td style="padding:5px 10px;border-bottom:1px solid #ede9fe;min-width:160px;">
+					${mr_suppliers.length
+						? `<select class="md-mr-supplier" data-mr-name="${esc(row.name)}"
+								style="width:100%;border:1.5px solid #fcd34d;border-radius:8px;padding:4px 8px;
+									font-size:11px;color:#92400e;background:#fffbeb;outline:none;cursor:pointer;font-family:inherit;">
+								<option value="">— Select Supplier —</option>
+								${mr_sup_opts}
+							</select>`
+						: `<span style="color:#cbd5e1;font-size:11px;font-style:italic;">No suppliers</span>`
+					}
 				</td>
 
-				<!-- Start Date (editable) -->
-				<td style="padding:6px 10px;border-bottom:1px solid #f0f0ff;">
+				<td style="padding:5px 10px;border-bottom:1px solid #ede9fe;">
+					<div style="font-size:8px;color:#a5b4fc;font-weight:700;margin-bottom:3px;letter-spacing:0.5px;">ORDER DATE</div>
 					<input type="date" class="md-mr-sdate" data-mr-name="${esc(row.name)}"
-						value="${esc(start_val)}" data-original="${esc(start_val)}" style="${date_inp}" />
+						value="${esc(start_val)}" data-original="${esc(start_val)}" style="${date_inp}"/>
 				</td>
 
-				<!-- Schedule Date (editable) -->
-				<td style="padding:6px 10px;border-bottom:1px solid #f0f0ff;">
+				<td style="padding:5px 10px;border-bottom:1px solid #ede9fe;">
+					<div style="font-size:8px;color:#a5b4fc;font-weight:700;margin-bottom:3px;letter-spacing:0.5px;">RECEIVE BY</div>
 					<input type="date" class="md-mr-edate" data-mr-name="${esc(row.name)}"
-						value="${esc(sched_val)}" data-original="${esc(sched_val)}" style="${date_inp}" />
+						value="${esc(sched_val)}" data-original="${esc(sched_val)}" style="${date_inp}"/>
 				</td>
 			</tr>`;
 		}).join('');
 
 		return `
+		<style>
+			.md-mr-row:hover { background: #f5f3ff !important; }
+		</style>
 		<div style="display:flex;align-items:center;justify-content:space-between;
 			margin-bottom:14px;flex-wrap:wrap;gap:8px;">
 			<div style="display:flex;align-items:center;gap:10px;">
-				<div style="width:36px;height:36px;border-radius:50%;
-					background:linear-gradient(135deg,#7c3aed,#4f46e5);
-					display:flex;align-items:center;justify-content:center;
-					box-shadow:0 2px 8px rgba(79,70,229,0.3);flex-shrink:0;">
-					<span style="color:#fff;font-size:16px;">📋</span>
-				</div>
+				<div style="width:5px;height:24px;background:linear-gradient(180deg,#7c3aed,#4338ca);
+					border-radius:3px;flex-shrink:0;"></div>
 				<div>
 					<div style="font-size:15px;font-weight:700;color:#1e1b4b;line-height:1.2;">Material Request Items</div>
 					<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Edit supplier &amp; purchase dates per raw material</div>
 				</div>
 			</div>
-			<span style="background:linear-gradient(135deg,#ede9fe,#ddd6fe);color:#5b21b6;
-				padding:4px 14px;border-radius:20px;font-size:12px;font-weight:700;
-				box-shadow:0 1px 3px rgba(91,33,182,0.15);white-space:nowrap;">
+			<span style="background:#eef2ff;color:#4338ca;border-radius:8px;padding:3px 10px;
+				font-size:11px;font-weight:700;border:1px solid #c7d2fe;white-space:nowrap;">
 				${mr_items.length} item${mr_items.length !== 1 ? 's' : ''}
 			</span>
 		</div>
-		<div style="overflow-x:auto;border-radius:10px;border:1px solid #e2e8f0;
-			box-shadow:0 1px 6px rgba(79,70,229,0.07);">
-			<table style="width:100%;border-collapse:collapse;font-family:inherit;">
+		<div style="overflow-x:auto;border-radius:10px;border:1.5px solid #ddd6fe;
+			box-shadow:0 2px 12px rgba(99,102,241,0.08);">
+			<table style="width:100%;min-width:600px;border-collapse:collapse;">
 				<thead>
-					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#3730a3 100%);">
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:center;">#</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SO</th>
-						<th style="padding:9px 14px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">ITEM</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:right;">QTY</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SUPPLIER ✏</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">START DATE ✏</th>
-						<th style="padding:9px 10px;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:0.6px;text-align:left;">SCHEDULE DATE ✏</th>
+					<tr style="background:linear-gradient(90deg,#1e1b4b 0%,#4338ca 100%);">
+						<th style="padding:8px 8px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:center;width:28px;">#</th>
+						<th style="padding:8px 14px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;">ITEM · SO</th>
+						<th style="padding:8px 10px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:right;width:72px;">QTY</th>
+						<th style="padding:8px 10px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;">SUPPLIER ✏</th>
+						<th style="padding:8px 10px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;">ORDER DATE ✏</th>
+						<th style="padding:8px 10px;color:#a5b4fc;font-size:9px;font-weight:700;
+							letter-spacing:0.8px;text-align:left;">RECEIVE BY ✏</th>
 					</tr>
 				</thead>
 				<tbody>${rows_html}</tbody>
@@ -570,8 +699,18 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 
 			<div class="md-content" style="flex:1;padding:20px 18px 16px;min-width:0;">
 
+				<!-- Step MR -->
+				<div id="md-step-mr" class="md-step-pane">
+					${has_mr ? build_mr_table() : ''}
+				</div>
+
+				<!-- Step SFG -->
+				<div id="md-step-sfg" class="md-step-pane" style="display:none;">
+					${has_sfg ? build_sfg_table() : ''}
+				</div>
+
 				<!-- Step FG -->
-				<div id="md-step-fg" class="md-step-pane">
+				<div id="md-step-fg" class="md-step-pane" style="display:none;">
 					<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
 						<div style="display:flex;align-items:center;gap:10px;">
 							<div style="width:5px;height:24px;background:linear-gradient(180deg,#4f46e5,#7c3aed);border-radius:3px;flex-shrink:0;"></div>
@@ -587,16 +726,6 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 						</span>
 					</div>
 					${build_fg_table()}
-				</div>
-
-				<!-- Step SFG -->
-				<div id="md-step-sfg" class="md-step-pane" style="display:none;">
-					${has_sfg ? build_sfg_table() : ''}
-				</div>
-
-				<!-- Step MR -->
-				<div id="md-step-mr" class="md-step-pane" style="display:none;">
-					${has_mr ? build_mr_table() : ''}
 				</div>
 
 			</div>
@@ -622,6 +751,8 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	let _step = 0;
 
 	d.$wrapper.find('.btn-modal-secondary').hide();
+	// Initialize to first step
+	setTimeout(() => _go_to_step(0), 50);
 
 	function _go_to_step(idx) {
 		_step = Math.max(0, Math.min(idx, ALL_STEPS.length - 1));
@@ -712,6 +843,21 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 			},
 		});
 	}
+
+	// ── Collapse/expand SFG groups ─────────────────────────────────────────
+
+	d.$wrapper.on('click', '.md-sfg-group-header', function() {
+		const target   = $(this).data('target');
+		const $body    = d.$wrapper.find(`#${target}`);
+		const $chevron = d.$wrapper.find(`.md-sfg-chevron[data-target="${target}"]`);
+		if ($body.data('collapsed')) {
+			$body.css({ 'max-height': '2000px', opacity: '1' }).data('collapsed', false);
+			$chevron.css('transform', 'rotate(0deg)');
+		} else {
+			$body.css({ 'max-height': '0', opacity: '0' }).data('collapsed', true);
+			$chevron.css('transform', 'rotate(-90deg)');
+		}
+	});
 
 	// ── Event bindings — UI only (auto-colon + focus ring) ─────────────────
 
@@ -851,54 +997,54 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	d.$wrapper.on('change', '.md-fg-sdate', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-fg-stime[data-row-name="${rn}"]`));
-		_fire_cascade(rn, 'start', dt, 'fg');
+		// _fire_cascade(rn, 'start', dt, 'fg');
 	});
 	d.$wrapper.on('blur', '.md-fg-stime', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-fg-sdate[data-row-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'start', dt, 'fg');
+		// _fire_cascade(rn, 'start', dt, 'fg');
 	});
 
 	// FG — end date/time change
 	d.$wrapper.on('change', '.md-fg-edate', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-fg-etime[data-row-name="${rn}"]`));
-		_fire_cascade(rn, 'end', dt, 'fg');
+		// _fire_cascade(rn, 'end', dt, 'fg');
 	});
 	d.$wrapper.on('blur', '.md-fg-etime', function() {
 		const rn = $(this).data('row-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-fg-edate[data-row-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'end', dt, 'fg');
+		// _fire_cascade(rn, 'end', dt, 'fg');
 	});
 
 	// SFG — start date/time change
 	d.$wrapper.on('change', '.md-sfg-sdate', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-sfg-stime[data-sfg-name="${rn}"]`));
-		_fire_cascade(rn, 'start', dt, 'sfg');
+		// _fire_cascade(rn, 'start', dt, 'sfg');
 	});
 	d.$wrapper.on('blur', '.md-sfg-stime', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-sfg-sdate[data-sfg-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'start', dt, 'sfg');
+		// _fire_cascade(rn, 'start', dt, 'sfg');
 	});
 
 	// SFG — end date/time change
 	d.$wrapper.on('change', '.md-sfg-edate', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt($(this), d.$wrapper.find(`.md-sfg-etime[data-sfg-name="${rn}"]`));
-		_fire_cascade(rn, 'end', dt, 'sfg');
+		// _fire_cascade(rn, 'end', dt, 'sfg');
 	});
 	d.$wrapper.on('blur', '.md-sfg-etime', function() {
 		const rn = $(this).data('sfg-name');
 		const dt = _read_dt(d.$wrapper.find(`.md-sfg-edate[data-sfg-name="${rn}"]`), $(this));
-		_fire_cascade(rn, 'end', dt, 'sfg');
+		// _fire_cascade(rn, 'end', dt, 'sfg');
 	});
 
 	// MR — start date change only (end = start + lead_time + grn_days, server computes)
 	d.$wrapper.on('change', '.md-mr-sdate', function() {
 		const rn = $(this).data('mr-name');
 		const dv = $(this).val();
-		if (dv) _fire_cascade(rn, 'start', `${dv} 10:00:00`, 'mr');
+		// if (dv) _fire_cascade(rn, 'start', `${dv} 10:00:00`, 'mr');
 	});
 }

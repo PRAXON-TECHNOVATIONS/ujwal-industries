@@ -5,7 +5,10 @@ from ujwal_industries.ujwal_industries.doctype.document_series_settings.document
 def numeric_series(doc, method=None):
     if frappe.flags.in_install or frappe.flags.in_migrate:
         return
-    
+
+    if doc.doctype == "Asset":
+        return
+
     if doc.doctype in ["Document Series Settings", "Document Series Table"]:
         return
 

@@ -67,8 +67,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "BOM",
-   "options": "BOM",
-   "reqd": 1
+   "options": "BOM"
   },
   {
    "fieldname": "spm",

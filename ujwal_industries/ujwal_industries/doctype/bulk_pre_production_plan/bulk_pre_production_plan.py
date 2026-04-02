@@ -364,6 +364,69 @@ def _ensure_default_tools_on_doc(doc: Document) -> None:
 		row.pm_days = cint(details.get("pm_days") or 0)
 
 
+def _get_submitted_so_sfg_anchors(doc: Document) -> dict:
+	"""
+	Scan the stored custom_batch_schedule for SOs that are already submitted
+	(custom_pp_created = 1 in the sales_orders child table) and return their
+	SFG-level-0 anchor info keyed by SO name.
+
+	Returns:
+		dict: so_name -> {
+			"last_sfg1_end": datetime | None,   # last batch end of SFG BOM-level-0
+			"submitted_sfg1_qty": float,         # total qty across all SFG-level-0 batches
+			"tool_load_qty": int,
+			"pm_days": int,
+		}
+	"""
+	if not getattr(doc, "custom_batch_schedule", None):
+		return {}
+
+	try:
+		schedule = json.loads(doc.custom_batch_schedule)
+	except Exception:
+		return {}
+
+	submitted_set = {
+		row.sales_order
+		for row in (doc.get("sales_orders") or [])
+		if cint(getattr(row, "custom_pp_created", 0))
+	}
+
+	result = {}
+	for so_name in submitted_set:
+		so_data = schedule.get(so_name)
+		if not so_data:
+			continue
+
+		# SFG chain is stored deepest-first in custom_batch_schedule output.
+		# Level-0 (direct child of FG) is the LAST entry in sfg_chain.
+		sfg_chain = so_data.get("sfg_chain") or []
+		if not sfg_chain:
+			continue
+
+		# Find the SFG entry with the lowest bom_level (= level 0 = direct FG child)
+		sfg1_entry = min(sfg_chain, key=lambda s: cint(s.get("bom_level", 0)), default=None)
+		if not sfg1_entry:
+			continue
+
+		batches = sfg1_entry.get("batches") or []
+		if not batches:
+			continue
+
+		last_end_str = batches[-1].get("end_date")
+		last_end_dt  = get_datetime(last_end_str) if last_end_str else None
+		total_qty    = sum(flt(b.get("qty") or 0) for b in batches)
+
+		result[so_name] = {
+			"last_sfg1_end": last_end_dt,
+			"submitted_sfg1_qty": total_qty,
+			"tool_load_qty": cint(sfg1_entry.get("tool_load_qty") or 0),
+			"pm_days":       cint(sfg1_entry.get("pm_days") or 0),
+		}
+
+	return result
+
+
 def _apply_parallel_dates_to_rows(doc: Document, schedule: dict) -> None:
 	"""Write parallel batch schedule dates directly to DB child rows via set_value."""
 	for so_data in (schedule or {}).values():
@@ -518,11 +581,6 @@ def _get_item_default_warehouse_map(item_codes: list[str], company: str) -> dict
 class BulkPreProductionPlan(Document):
 	def validate(self):
 		"""Validate the document before save"""
-		# Validate delivery date range for bulk SO workflow
-		if self.from_delivery_date and self.to_delivery_date:
-			if getdate(self.from_delivery_date) > getdate(self.to_delivery_date):
-				frappe.throw(_("From Delivery Date cannot be greater than To Delivery Date"))
-
 		# Calculate total planned qty
 		self.calculate_total_planned_qty()
 		# self.check_machine_available()
@@ -1037,43 +1095,51 @@ class BulkPreProductionPlan(Document):
 # ============================================================================
 
 @frappe.whitelist()
-def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: str) -> dict[str, Any]:
+def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 	"""
-	Fetch Sales Orders based on delivery_date range (Bulk PP workflow)
+	Fetch Sales Orders with delivery_date up to to_delivery_date (Bulk PP workflow)
 
 	Args:
-		from_delivery_date: Start date of delivery range
-		to_delivery_date: End date of delivery range
+		to_delivery_date: Show all SOs up to this delivery date
 		company: Company name
 
 	Returns:
 		Dict with sales_orders list
 	"""
-	if not from_delivery_date or not to_delivery_date:
-		frappe.throw(_("Please set From Delivery Date and To Delivery Date"))
+	if not to_delivery_date:
+		frappe.throw(_("Please set Till Delivery Date"))
 
 	if not company:
 		frappe.throw(_("Please set Company"))
 
-	# Fetch Sales Orders with delivery_date in range
+	# Fetch Sales Orders with delivery_date <= to_delivery_date
 	sales_orders = frappe.db.sql("""
 		SELECT
 			so.name as sales_order,
 			so.customer,
 			so.delivery_date,
 			so.grand_total,
-			so.status
+			so.status,
+			so.order_type,
+			EXISTS(
+				SELECT 1
+				FROM `tabSales Order Item` soi
+				INNER JOIN `tabItem` item ON item.name = soi.item_code
+				WHERE
+					soi.parent = so.name
+					AND soi.docstatus = 1
+					AND COALESCE(item.custom_planning_type, '') = '2'
+			) as has_level_2_item
 		FROM
 			`tabSales Order` so
 		WHERE
 			so.docstatus = 1
 			AND so.status NOT IN ('Closed', 'Cancelled', 'Completed')
-			AND so.delivery_date BETWEEN %(from_date)s AND %(to_date)s
+			AND so.delivery_date <= %(to_date)s
 			AND so.company = %(company)s
 		ORDER BY
 			so.delivery_date ASC
 	""", {
-		'from_date': from_delivery_date,
 		'to_date': to_delivery_date,
 		'company': company
 	}, as_dict=True)
@@ -1081,7 +1147,7 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 	# Just return the sales_orders data - don't save to avoid naming series issues
 	# The frontend will populate the child table
 
-	frappe.msgprint(_("Found {0} Sales Orders in the date range").format(len(sales_orders)))
+	frappe.msgprint(_("Found {0} Sales Orders till delivery date").format(len(sales_orders)))
 
 	# Return formatted data for frontend to populate
 	return {
@@ -1092,6 +1158,8 @@ def get_sales_orders(from_delivery_date: str, to_delivery_date: str, company: st
 				'delivery_date': so.delivery_date,
 				'grand_total': so.grand_total,
 				'status': so.status,
+				'order_type': so.order_type or '',
+				'has_level_2_item': cint(so.has_level_2_item),
 				'is_selected': 1,
 				'for_warehouse': '',
 				'items_generated': 0
@@ -1138,8 +1206,13 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			soi.item_name,
 			soi.qty,
 			soi.stock_uom,
-			soi.bom_no
+			soi.bom_no,
+			so.order_type AS so_order_type,
+			COALESCE(item.custom_planning_type, '') AS custom_planning_type,
+			COALESCE(item.custom_forecast_threashold, 0) AS custom_forecast_threashold
 		FROM `tabSales Order Item` soi
+		LEFT JOIN `tabItem` item ON item.name = soi.item_code
+		LEFT JOIN `tabSales Order` so ON so.name = soi.parent
 		WHERE
 			soi.parent IN %(sales_orders)s
 			AND soi.docstatus = 1
@@ -1148,6 +1221,11 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 		{"sales_orders": sales_orders},
 		as_dict=True,
 	)
+
+	# For Forecast SOs, show forecast threshold as qty for planning_type=2 items
+	for row in rows:
+		if row.so_order_type == 'Forecast' and row.custom_planning_type == '2':
+			row.qty = flt(row.custom_forecast_threashold) or row.qty
 
 	for row in rows:
 		row.bom_no = (
@@ -1351,6 +1429,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 	result = {}
 
+	# ── Submitted SO anchors: read from already-created Production Plans ───────
+	# Any SO with custom_pp_created=1 is already locked; its last SFG1 end date
+	# becomes the anchor for the next unsubmitted SO's SFG1 first batch.
+	submitted_anchors = _get_submitted_so_sfg_anchors(doc)
+	submitted_so_names = set(submitted_anchors.keys())
+
+	# Build set of submitted SOs from child table (for order-aware iteration)
+	so_submission_status = {
+		row.sales_order: cint(getattr(row, "custom_pp_created", 0))
+		for row in (doc.get("sales_orders") or [])
+		if getattr(row, "sales_order", None)
+	}
+
 	# Group po_items / sub_assembly_items / mr_items by sales order
 	so_map: dict[str, dict] = {}
 	for fg in doc.po_items:
@@ -1362,6 +1453,44 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	for mr in doc.mr_items:
 		if mr.sales_order in so_map:
 			so_map[mr.sales_order]["mr"].append(mr)
+
+	# Sort SO iteration order by delivery_date (ascending) so the pipeline chain
+	# follows chronological delivery order consistently on every recalculation.
+	so_delivery_dates = {
+		row.sales_order: getdate(row.delivery_date)
+		for row in (doc.get("sales_orders") or [])
+		if getattr(row, "sales_order", None) and getattr(row, "delivery_date", None)
+	}
+	so_map_ordered = dict(
+		sorted(
+			so_map.items(),
+			key=lambda kv: so_delivery_dates.get(kv[0]) or getdate("2099-12-31")
+		)
+	)
+	so_map = so_map_ordered
+
+	# Rolling SFG1-anchor: updated each time we finish processing an SO (submitted or not).
+	# Starts as None — the very first SO anchors itself via the normal backward-schedule logic.
+	rolling_sfg1_end: datetime | None = None
+	rolling_tool_load_qty: int = 0
+	rolling_pm_days: int = 0
+	rolling_cumulative_qty: float = 0.0  # cumulative SFG1 qty across submitted SOs (for tool PM)
+
+	# Seed the rolling anchor from the LATEST submitted SO (by delivery date) if any exist.
+	# This ensures that even on re-open, the anchor correctly follows already-locked SOs.
+	if submitted_anchors:
+		latest_submitted_so = max(
+			submitted_anchors.keys(),
+			key=lambda s: so_delivery_dates.get(s) or getdate("1900-01-01")
+		)
+		anc = submitted_anchors[latest_submitted_so]
+		rolling_sfg1_end     = anc["last_sfg1_end"]
+		rolling_tool_load_qty = anc["tool_load_qty"]
+		rolling_pm_days      = anc["pm_days"]
+		# Sum all submitted SFG1 qtys for cumulative load
+		rolling_cumulative_qty = sum(
+			v["submitted_sfg1_qty"] for v in submitted_anchors.values()
+		)
 	# Batch-fetch BOM tool details and operation batchsize
 	all_bom_nos = list({
 		row.bom_no
@@ -1451,6 +1580,20 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		return datetime.combine(dt.date(), datetime.min.time()) + end_td
 
 	for so_name, items in so_map.items():
+		# Skip SOs already submitted — their schedule in custom_batch_schedule is locked.
+		# We still need to carry their anchor forward via rolling_sfg1_end.
+		if so_submission_status.get(so_name):  # custom_pp_created = 1
+			if so_name in submitted_anchors:
+				# The anchor from this SO is already seeded above; just preserve the
+				# existing result entry from stored JSON so the UI still renders it.
+				if doc.custom_batch_schedule:
+					try:
+						_stored = json.loads(doc.custom_batch_schedule)
+						if so_name in _stored:
+							result[so_name] = _stored[so_name]
+					except Exception:
+						pass
+			continue
 		so_mr_item_codes = list({
 			row.item_code
 			for row in items["mr"]
@@ -1616,9 +1759,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm    = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm    = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -1631,18 +1774,35 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			split_qty = tool_load_qty or per_day_qty
 			batches   = _split_batches(sales_qty, split_qty)
 
-			# ── Batch 0: backward schedule from deadline ──────────────────────
+			# ── Batch 0: backward schedule from deadline (or anchor override) ─
 			# Parallel SFG chain: backward from mfg_deadline = deadline - grn_days.
 			# b0_end is forced to deadline_dt for a tight chain connection.
+			#
+			# SUBMITTED-SO ANCHOR OVERRIDE (deepest SFG only):
+			# When a previous SO was already submitted (PP created), its machine/tool
+			# time is locked. For the DEEPEST SFG (== sfg_rows_sorted[-1], the first
+			# processed in the bwd chain), override b0_start so that this SO starts
+			# exactly where the submitted SO's last SFG1 batch ended.
+			_is_deepest_sfg = (sfg == sfg_rows_sorted[-1])
 			batch0_qty       = batches[0]
 			batch0_prod_mins = (batch0_qty / real_spm) if real_spm > 0 else shift_minutes
-			# Subtract grn_days (skipping weekends + holidays) to get the mfg completion deadline
-			mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
-			               if grn_days > 0 else deadline_dt
-			b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
-			b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
-			# Force b0_end = deadline_dt so the chain is visually tight (SFG_i.end = SFG_(i-1).start)
-			b0_end     = deadline_dt
+			if _is_deepest_sfg and rolling_sfg1_end is not None:
+				# Determine anchor: add PM days if tool capacity was exhausted
+				if rolling_tool_load_qty > 0 and rolling_cumulative_qty >= rolling_tool_load_qty:
+					_anchor = _working_day_add(rolling_sfg1_end, rolling_pm_days, holidays)
+				else:
+					_anchor = rolling_sfg1_end
+				b0_start   = _snap_start(_anchor, shift_config)
+				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
+				b0_end     = deadline_dt  # visual chain anchor unchanged
+			else:
+				# Normal backward-schedule from SO delivery deadline
+				mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
+				               if grn_days > 0 else deadline_dt
+				b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
+				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
+				# Force b0_end = deadline_dt so the chain is visually tight
+				b0_end     = deadline_dt
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
 			hc_b0 = 0
@@ -1917,9 +2077,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
    
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty = per_shift_qty * shift_count
 			else:
 				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -2039,6 +2199,24 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			"sfg_chain": sfg_chain_out,
 			"mr":        mr_rows_out,
 		}
+
+		# ── Update rolling anchor for next SO in the chain ─────────────────────
+		# After computing this SO's schedule, update the rolling anchor so that
+		# the NEXT SO can chain off this one's SFG1 last batch end.
+		if sfg_chain_out:
+			# sfg_chain_out is deepest-first; the LAST entry is BOM level 0 (SFG1).
+			sfg1_entry_out = max(sfg_chain_out, key=lambda s: cint(s.get("bom_level", 0)), default=None)
+			if sfg1_entry_out:
+				sbatches = sfg1_entry_out.get("batches") or []
+				if sbatches:
+					rolling_sfg1_end      = get_datetime(sbatches[-1]["end_date"])
+					rolling_tool_load_qty = cint(sfg1_entry_out.get("tool_load_qty") or 0)
+					rolling_pm_days       = cint(sfg1_entry_out.get("pm_days") or 0)
+					rolling_cumulative_qty += sum(flt(b.get("qty") or 0) for b in sbatches)
+					# Reset cumulative qty when it passes a full tool_load_qty cycle
+					if rolling_tool_load_qty > 0 and rolling_cumulative_qty >= rolling_tool_load_qty:
+						rolling_cumulative_qty -= rolling_tool_load_qty
+
 	return result
 
 
@@ -2374,9 +2552,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm    = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm    = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -2663,10 +2841,11 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			machine_count = cint(spm_details.get("machine_count") or 0)
 			display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
-   
-			if spm_details.get("subcontract_per_shift_qty") != 0:
-				display_spm = spm_details.get("spm")
-				per_shift_qty = spm_details.get("subcontract_per_shift_qty")
+
+			if spm_details.get("subcontract_per_shift_qty"):
+				display_spm = flt(spm_details.get("spm") or 0)
+				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
+
 				per_day_qty = per_shift_qty * shift_count
 			else:
 				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
@@ -3063,12 +3242,20 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	Returns:
 		Dict with counts of generated items
 	"""
-	# Get the warehouse for this sales order from sales_orders table
+	# Get the warehouse and item selection for this sales order from sales_orders table
 	so_warehouse = None
 	selected_boms = _get_selected_bom_map(doc, so_name)
+	selected_item_codes = None
+	has_item_selection = False
 	for so_row in doc.sales_orders:
 		if so_row.sales_order == so_name:
 			so_warehouse = so_row.for_warehouse
+			if so_row.selected_items is not None and so_row.selected_items != '':
+				try:
+					selected_item_codes = set(frappe.parse_json(so_row.selected_items))
+					has_item_selection = True
+				except Exception:
+					pass
 			break
 
 	# Get Sales Order items
@@ -3081,7 +3268,10 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			soi.warehouse,
 			soi.delivery_date,
 			so.delivery_date as so_delivery_date,
+			so.order_type as so_order_type,
 			i.is_sub_contracted_item,
+			i.custom_planning_type,
+			COALESCE(i.custom_forecast_threashold, 0) as custom_forecast_threashold,
 			soi.bom_no
 		FROM
 			`tabSales Order Item` soi
@@ -3094,13 +3284,21 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			AND soi.docstatus = 1
 	""", {'so_name': so_name}, as_dict=True)
 
+	# For Forecast SOs, replace qty with the item's forecast threshold for planning_type=2 items
+	for item in so_items:
+		if item.so_order_type == 'Forecast' and item.custom_planning_type == '2':
+			item.qty = flt(item.custom_forecast_threashold) or item.qty
+
 	po_count = 0
 	sfg_count = 0
 	mr_count = 0
 
+	# Filter to user-selected items only (if selection dialog was opened)
+	if has_item_selection:
+		so_items = [item for item in so_items if item.item_code in selected_item_codes]
+
 	target_warehouse_map = _get_item_default_warehouse_map([item.item_code for item in so_items], doc.company)
 	existing_fg_ws_map = (getattr(doc.flags, "existing_fg_workstation_maps", {}) or {}).get(so_name, {})
-
 
 	# Process each SO item
 	for item in so_items:
@@ -3958,6 +4156,38 @@ def create_production_plans_document(bulk_pp_name) :
 		pp_doc.save()
 
 
+def _recalculate_parallel_after_submit(bulk_pp_name: str) -> None:
+	"""
+	After a Production Plan is created for one SO in Parallel mode, re-run the
+	parallel batch schedule so remaining (unsubmitted) SOs are re-anchored to
+	start after the submitted SO's last SFG1 batch end date.
+
+	This writes updated dates to both custom_batch_schedule (parent) and the
+	child SFG/FG/MR rows via set_value (same as the normal Calculate Schedule flow).
+	"""
+	try:
+		doc = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+		if (doc.custom_planning_mode or "Sequential") != "Parallel":
+			return
+
+		_apply_parallel_schedule_overrides_to_doc(doc)
+		_ensure_default_workstations_on_doc(doc)
+		_ensure_default_tools_on_doc(doc)
+
+		schedule = calculate_parallel_batch_schedule(bulk_pp_name)
+		_apply_parallel_dates_to_rows(doc, schedule)
+		frappe.db.set_value("Bulk Pre Production Plan", bulk_pp_name, {
+			"custom_batch_schedule": json.dumps(schedule),
+			"custom_planning_mode": "Parallel",
+		})
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			title=f"Parallel re-schedule after submit failed for {bulk_pp_name}",
+			message=frappe.get_traceback(),
+		)
+
+
 @frappe.whitelist()
 def create_selected_production_plans(bulk_pp_name, sales_orders):
 	"""
@@ -4066,6 +4296,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				'quantity' :  j.get('qty'),
 				'custom_supplier' :  j.get('supplier'),
 			})
+		_run_machine_availability_check_for_production_plan(pp_doc)
 		pp_doc.save()
 		created_plans.append(pp_doc.name)
 
@@ -4081,7 +4312,39 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		bulk_pp.flags.ignore_mandatory = False
 		frappe.db.commit()
 
+		# ── Parallel mode: re-schedule remaining unsubmitted SOs ───────────────
+		# Now that the submitted SO's machine time is locked in a real Production
+		# Plan, re-run the parallel calculation so subsequent SOs are re-anchored
+		# to start right after the submitted SO's last SFG batch ends.
+		bulk_pp_refreshed = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+		if (bulk_pp_refreshed.custom_planning_mode or "Sequential") == "Parallel":
+			_recalculate_parallel_after_submit(bulk_pp_name)
+
 	return created_plans
+
+
+def _run_machine_availability_check_for_production_plan(pp_doc):
+	"""Reuse Bulk PP machine validation for Production Plan rows before save."""
+	validation_doc = frappe._dict({
+		"po_items": [],
+		"sub_assembly_items": [],
+	})
+
+	for row in pp_doc.po_items or []:
+		validation_doc.po_items.append(frappe._dict({
+			"custom_workstations_csv": row.custom_workstation,
+			"planned_start_date": row.planned_start_date,
+			"custom_planned_end_date": row.custom_planned_end_date,
+		}))
+
+	for row in pp_doc.sub_assembly_items or []:
+		validation_doc.sub_assembly_items.append(frappe._dict({
+			"custom_workstations_csv": row.custom_workstation,
+			"schedule_date": row.schedule_date,
+			"custom_schedule_end_date": row.custom_schedule_end_date,
+		}))
+
+	BulkPreProductionPlan.check_machine_available(validation_doc)
  
  
 @frappe.whitelist()

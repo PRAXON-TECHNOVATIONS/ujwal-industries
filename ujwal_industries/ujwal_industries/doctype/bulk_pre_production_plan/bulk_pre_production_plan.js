@@ -49,8 +49,29 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			}
 		});
 
-		frm.refresh_field('sales_orders')
-    
+		frm.refresh_field('sales_orders');
+		add_sales_order_filters(frm);
+
+		// Restore Select Items button labels after reload
+		setTimeout(() => {
+			(frm.doc.sales_orders || []).forEach(so_row => {
+				if (!so_row.selected_items) return;
+				let selected;
+				try { selected = JSON.parse(so_row.selected_items); } catch (_) { return; }
+				if (!selected || !selected.length) return;
+
+				// Get total items for this SO from bom_selections to compute total
+				const total_for_so = (frm.doc.bom_selections || []).filter(b => b.sales_order === so_row.sales_order).length;
+				// Fallback: if bom_selections not loaded yet, just show count
+				const label = (total_for_so && selected.length === total_for_so)
+					? __('Select Items')
+					: __('Items: {0}', [selected.length]);
+
+				const $row = frm.fields_dict['sales_orders'].grid.wrapper
+					.find(`.grid-row[data-name="${so_row.name}"]`);
+				$row.find('[data-fieldname="select_items_btn"] button').text(label);
+			});
+		}, 300);
 
 		set_bom_selection_query(frm);
 
@@ -127,8 +148,8 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 	},
 
 	get_sales_orders: function (frm) {
-		if (!frm.doc.from_delivery_date || !frm.doc.to_delivery_date) {
-			frappe.msgprint(__('Please set From Delivery Date and To Delivery Date'));
+		if (!frm.doc.to_delivery_date) {
+			frappe.msgprint(__('Please set Till Delivery Date'));
 			return;
 		}
 
@@ -140,7 +161,6 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
-				from_delivery_date: frm.doc.from_delivery_date,
 				to_delivery_date: frm.doc.to_delivery_date,
 				company: frm.doc.company
 			},
@@ -157,6 +177,8 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 						row.delivery_date = so.delivery_date;
 						row.grand_total = so.grand_total;
 						row.status = so.status;
+						row.order_type = so.order_type || "";
+						row.has_level_2_item = so.has_level_2_item;
 						row.is_selected = so.is_selected;
 						row.for_warehouse = so.for_warehouse || 'Stores - UI';
 						row.items_generated = so.items_generated;
@@ -164,7 +186,16 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 					// Refresh the sales_orders field to show the data
 					frm.refresh_field('sales_orders');
+					add_sales_order_filters(frm);
 					load_bom_selections(frm);
+
+					const level_2_count = (r.message.sales_orders || []).filter(so => Number(so.has_level_2_item) === 1).length;
+					if (level_2_count) {
+						frappe.show_alert({
+							message: __('{0} Sales Order(s) contain item(s) with Planning Type 2', [level_2_count]),
+							indicator: 'orange'
+						}, 7);
+					}
 
 					frappe.show_alert({
 						message: __('{0} Sales Orders loaded', [r.message.sales_orders.length]),
@@ -215,6 +246,116 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 // Child table events for Sales Orders
 frappe.ui.form.on('Bulk PP Sales Order', {
+	select_items_btn: function (frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.sales_order) {
+			frappe.msgprint(__('Please set a Sales Order first'));
+			return;
+		}
+
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_order_item_bom_rows',
+			args: { sales_orders: [row.sales_order] },
+			callback(r) {
+				if (!r.message || !r.message.length) {
+					frappe.msgprint(__('No items found for this Sales Order'));
+					return;
+				}
+
+				// Deduplicate by item_code, summing qty across multiple SO lines
+				const item_map = {};
+				r.message.forEach(item => {
+					if (item_map[item.item_code]) {
+						item_map[item.item_code].qty = (item_map[item.item_code].qty || 0) + (item.qty || 0);
+					} else {
+						item_map[item.item_code] = Object.assign({}, item);
+					}
+				});
+				const items = Object.values(item_map);
+
+				let already_selected = [];
+				try {
+					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
+				} catch (_) { already_selected = []; }
+
+				// Determine if an item is selectable based on the SO's order_type
+				// Sales SO: only planning_type 1 items are selectable (level 2 items are read-only)
+				// Forecast SO: only planning_type 2 items are selectable (other items are read-only)
+				// Use so_order_type from the API response (reliable for all SOs regardless of child table state)
+				const so_order_type = (r.message[0] && r.message[0].so_order_type) || row.order_type || '';
+				const is_selectable = (item) => {
+					if (so_order_type === 'Sales') return item.custom_planning_type === '1';
+					if (so_order_type === 'Forecast') return item.custom_planning_type === '2';
+					return true;
+				};
+
+				// Build dialog fields — one Check per unique item_code
+				const fields = items.map(item => {
+					const selectable = is_selectable(item);
+					return {
+						fieldtype: 'Check',
+						fieldname: item.item_code,
+						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+						default: selectable && (already_selected.length === 0 || already_selected.includes(item.item_code)) ? 1 : 0,
+					};
+				});
+
+				const d = new frappe.ui.Dialog({
+					title: __('Select Items — {0}', [row.sales_order]),
+					fields: fields,
+					primary_action_label: __('Confirm'),
+					primary_action(values) {
+						// Only include selectable items; disabled items are excluded
+						const selected = items
+							.filter(item => is_selectable(item) && values[item.item_code])
+							.map(item => item.item_code);
+
+						frappe.model.set_value(cdt, cdn, 'selected_items', JSON.stringify(selected));
+
+						// Update button label to show count
+						const selectable_items = items.filter(item => is_selectable(item));
+						const $btn = frm.fields_dict['sales_orders'].grid.wrapper
+							.find(`[data-name="${cdn}"] [data-fieldname="select_items_btn"] button`);
+						$btn.text(selected.length === selectable_items.length
+							? __('Select Items')
+							: __('Items: {0}/{1}', [selected.length, selectable_items.length]));
+
+						d.hide();
+					}
+				});
+
+				// Disable non-selectable item checkboxes after dialog renders
+				setTimeout(() => {
+					items.forEach(item => {
+						if (!is_selectable(item)) {
+							const $field = d.get_field(item.item_code);
+							if ($field) {
+								$field.$wrapper.find('input[type="checkbox"]').prop('disabled', true);
+								$field.$wrapper.css('opacity', '0.45');
+							}
+						}
+					});
+				}, 100);
+
+				// Add Select All / Deselect All buttons (only affect selectable items)
+				d.$wrapper.find('.modal-header').append(
+					`<div style="margin-top:6px;">
+						<button class="btn btn-xs btn-default so-select-all">${__('Select All')}</button>
+						<button class="btn btn-xs btn-default so-deselect-all" style="margin-left:6px;">${__('Deselect All')}</button>
+					</div>`
+				);
+				d.$wrapper.on('click', '.so-select-all', () => {
+					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 1); });
+				});
+				d.$wrapper.on('click', '.so-deselect-all', () => {
+					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 0); });
+				});
+
+				d.show();
+			}
+		});
+	},
+
 	before_sales_orders_remove: function (frm, cdt, cdn) {
 		// Store the sales order before it's removed
 		const row = locals[cdt][cdn];
@@ -295,7 +436,21 @@ function load_bom_selections(frm) {
 			const rows = r.message || [];
 			frm.clear_table('bom_selections');
 
+			// Build a map of SO -> selected item_codes (null means no filter)
+			const so_selected_map = {};
+			(frm.doc.sales_orders || []).forEach(so_row => {
+				if (so_row.selected_items) {
+					try {
+						so_selected_map[so_row.sales_order] = new Set(JSON.parse(so_row.selected_items));
+					} catch (_) {}
+				}
+			});
+
 			rows.forEach(function (item) {
+				// Skip if this SO has a selection and this item is not in it
+				const sel = so_selected_map[item.sales_order];
+				if (sel && !sel.has(item.item_code)) return;
+
 				const row = frappe.model.add_child(frm.doc, 'Bulk PP BOM Selection', 'bom_selections');
 				row.sales_order = item.sales_order;
 				row.sales_order_item = item.sales_order_item;
@@ -743,15 +898,8 @@ function _render_sequential_grid(frm, so_data, container) {
 		container.style.pointerEvents = 'none';
 	}
 
-	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
-	container.appendChild(fg_div);
-	_bind_fg_bom_selects(frm, fg_div);
-	_bind_fg_tool_selects(frm, fg_div);
-	_bind_fg_machine_selects(frm, fg_div);
-	_bind_fg_shift_selects(frm, fg_div);
-	_bind_fg_mfg_type_selects(frm, fg_div);
-	_bind_fg_supplier_inputs(frm, fg_div);
+	// ── MR section ──────────────────────────────────────────────────────────
+	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -898,8 +1046,16 @@ function _render_sequential_grid(frm, so_data, container) {
 	});
 	_grids['seq_sfg_' + so_data.so_name] = sfg_grid;
 
-	// ── MR section ──────────────────────────────────────────────────────────
-	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+	// ── FG section ──────────────────────────────────────────────────────────
+	const fg_div = document.createElement('div');
+	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
+	container.appendChild(fg_div);
+	_bind_fg_bom_selects(frm, fg_div);
+	_bind_fg_tool_selects(frm, fg_div);
+	_bind_fg_machine_selects(frm, fg_div);
+	_bind_fg_shift_selects(frm, fg_div);
+	_bind_fg_mfg_type_selects(frm, fg_div);
+	_bind_fg_supplier_inputs(frm, fg_div);
 }
 
 
@@ -1004,6 +1160,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	const total_batche = (par_data.fg || []).reduce((s, fg) => s + (fg.batches || []).length, 0);
 	const f_g_label = document.createElement('div');
 	const fg_label = document.createElement('div');
+	fg_label.setAttribute('data-bpp-section', 'fg');
 	fg_label.innerHTML = _section_header(
 		`FG Batch Schedule — Parallel Pipeline <span style="font-size:11px;font-weight:400;opacity:.7;"> (${total_batche} batches)</span>`,
 		'#6D28D9', '#F5F3FF', 'fa-sitemap');
@@ -4264,6 +4421,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	if (!mr_items || !mr_items.length) return;
 
 	const label = document.createElement('div');
+	label.setAttribute('data-bpp-section', 'mr');
 	label.innerHTML = _section_header(
 		`Raw Material Items <span style="font-size:11px;font-weight:400;opacity:.7;">(${mr_items.length})</span>`,
 		'#065F46', '#ECFDF5', 'fa-flask');
@@ -4348,5 +4506,75 @@ function _format_bpp_date(value, empty_value = '—', show_time = false) {
 	return date_str;
 }
 
+function add_sales_order_filters(frm) {
+	const grid = frm.fields_dict['sales_orders'].grid;
+	const $wrapper = grid.wrapper;
 
+	// Attach filter input handler once
+	$wrapper.off('input.sofilter').on('input.sofilter', '.so-filter', function () {
+		_apply_so_filters(frm);
+	});
 
+	// (Re-)render the filter row after grid header is in DOM
+	setTimeout(() => {
+		$wrapper.find('.so-filter-row').remove();
+
+		const $heading_row = $wrapper.find('.grid-heading-row .grid-row .data-row');
+		if (!$heading_row.length) return;
+
+		const $filter_row = $('<div class="so-filter-row" style="display:flex;background:#f5f7fa;border-bottom:1px solid #d1d8dd;"></div>');
+
+		const label_map = {
+			sales_order: 'Sales Order…',
+			customer: 'Customer…',
+			delivery_date: 'Date…',
+			grand_total: 'Amount…',
+		};
+
+		$heading_row.children().each(function () {
+			const $th = $(this);
+			const fieldname = $th.data('fieldname');
+			const w = $th.outerWidth(true);
+
+			const $td = $('<div></div>').css({
+				width: w, minWidth: w, maxWidth: w,
+				padding: '3px 4px', boxSizing: 'border-box',
+			});
+
+			if (label_map[fieldname]) {
+				$td.append(
+					`<input type="text" class="so-filter form-control form-control-sm"
+					 data-col="${fieldname}" placeholder="${label_map[fieldname]}"
+					 style="height:22px;font-size:11px;padding:1px 5px;width:100%;">`
+				);
+			}
+			$filter_row.append($td);
+		});
+
+		$heading_row.closest('.grid-heading-row').after($filter_row);
+	}, 150);
+}
+
+function _apply_so_filters(frm) {
+	const grid = frm.fields_dict['sales_orders'].grid;
+	const $wrapper = grid.wrapper;
+	const doctype = grid.doctype;
+
+	const filters = {};
+	$wrapper.find('.so-filter').each(function () {
+		const val = $(this).val().trim().toLowerCase();
+		if (val) filters[$(this).data('col')] = val;
+	});
+
+	$wrapper.find('.grid-body .rows .grid-row').each(function () {
+		const row = locals[doctype]?.[$(this).attr('data-name')];
+		if (!row) return;
+		let show = true;
+		for (const [col, val] of Object.entries(filters)) {
+			if (!String(row[col] || '').toLowerCase().includes(val)) {
+				show = false; break;
+			}
+		}
+		$(this).toggle(show);
+	});
+}
