@@ -7,7 +7,9 @@ app_license = "mit"
 
 
 # Import your override at bench startup
-from ujwal_industries.overrides import stock_entry_ovveride
+from ujwal_industries.overrides import stock_entry_override
+from ujwal_industries.overrides import job_card_override
+from ujwal_industries.overrides import work_order_override
 # Apps
 # ------------------
 
@@ -28,8 +30,13 @@ from ujwal_industries.overrides import stock_entry_ovveride
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
-# app_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
+app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
+app_include_js = [
+	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
+	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
+	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
+	# "/assets/ujwal_industries/js/grid_custom_icons.js",
+]
 # include js, css files in header of web template
 # web_include_css = "/assets/ujwal_industries/css/ujwal_industries.css"
 # web_include_js = "/assets/ujwal_industries/js/ujwal_industries.js"
@@ -52,9 +59,20 @@ doctype_js = {
 	"Material Request": "public/js/material_request.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
- 	"Work Order": "public/js/work_order_scrap.js"
+ 	"Work Order": "public/js/work_order_scrap.js",
+  	"Stock Entry": "public/js/stock_entry.js",
+	"Production Plan Importer": "public/js/production_plan_importer.js",
+	"BOM": "public/js/bom.js",
+	"Item": "public/js/item.js",
+	"Asset": "public/js/asset.js",
+	"Asset Category": "public/js/asset_category.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_tree_js = {
+	"Asset Category": "public/js/asset_category_tree.js",
+}
+doctype_list_js = {
+	"Production Plan": "public/js/production_plan_list.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -95,6 +113,10 @@ doctype_js = {
 # before_install = "ujwal_industries.install.before_install"
 # after_install = "ujwal_industries.install.after_install"
 
+after_install = "ujwal_industries.install.after_install"
+after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all",
+                 "ujwal_industries.install.after_install"]
+
 # Uninstallation
 # ------------
 
@@ -108,7 +130,6 @@ doctype_js = {
 
 # before_app_install = "ujwal_industries.utils.before_app_install"
 # after_app_install = "ujwal_industries.utils.after_app_install"
-after_migrate = "ujwal_industries.ujwal_industries.patches.migrate_custom_fields.run_all"
 
 # Integration Cleanup
 # -------------------
@@ -142,7 +163,8 @@ permission_query_conditions = {
 # Override standard doctype classes
 
 override_doctype_class = {
-	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan"
+	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
+	"Asset Category": "ujwal_industries.ujwal_industries.overrides.asset_category.CustomAssetCategory",
 }
 
 # Document Events
@@ -151,34 +173,84 @@ override_doctype_class = {
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
+		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
 	},
-	"Stock Entry": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+	"Asset": {
+		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
 	},
+
+	"Customer": {
+		"autoname": "ujwal_industries.ujwal_industries.overrides.customer.autoname"
+	},
+
+ 	"Stock Entry": {
+        "validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+        ]
+    },
 	"Production Plan": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.production_plan.onload_production_plan",
+		"validate": [
+			"ujwal_industries.ujwal_industries.overrides.production_plan.validate_planned_start_dates",
+			# "ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_conflict",
+			"ujwal_industries.ujwal_industries.overrides.tool_limit.fetched_default_bom",
+			# "ujwal_industries.ujwal_industries.overrides.tool_limit.validate_tool_maintenance",
+		],
 		"before_save": [
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate"
 		]
 	},
 	"Supplier": {
-		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin"
+		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",
+		"autoname"	 : "ujwal_industries.api.supplier_gstin_check.autoname"
 	},
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
-		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation"
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+        "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
+        "validate": [
+            "ujwal_industries.ujwal_industries.overrides.job_card.job_card_validate"
+        ],
 	},
 	"Downtime Entry": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
 		"on_update": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_save_downtime_entry",
-		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry"
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.downtime_entry.on_trash_downtime_entry",
+  		"validate": "ujwal_industries.ujwal_industries.overrides.downtime_entry.validate_downtime_entry",
 	},
+	"Purchase Receipt": {
+        "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit"
+    },
+	"Data Import": {
+		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
+	},
+	"Work Order":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert"
+	},
+ 	"Quality Inspection": {
+        "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
+    },
+	"BOM":{
+  		"on_update_after_submit": "ujwal_industries.overrides.bom.validate_default_tool",
+		"validate": "ujwal_industries.overrides.bom.validate_bom"
+	},
+ 	"Asset Maintenance": {
+        "before_save": "ujwal_industries.ujwal_industries.overrides.asset_maintenance.set_end_date_from_asset",
+    },
+	"*": {
+        "autoname": "ujwal_industries.api.naming_series.numeric_series"
+    },
+	# "Sales Invoice":{
+	# 	"validate": "ujwal_industries.ujwal_industries.overrides.sales_invoice.validate_sales_invoice_sequence"
+	# },
+ 
 }
 
 # Scheduled Tasks
@@ -190,6 +262,9 @@ scheduler_events = {
 			"ujwal_industries.ujwal_industries.overrides.downtime_entry.sync_workstation_statuses"
 		]
 	},
+	"hourly": [
+		"ujwal_industries.api.optimized_reorder.optimized_reorder_item"
+	],
 }
 
 # Testing
@@ -203,13 +278,20 @@ scheduler_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "ujwal_industries.event.get_events"
 # }
+override_whitelisted_methods = {
+    "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+}
+
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
-# override_doctype_dashboards = {
-# 	"Task": "ujwal_industries.task.get_dashboard_data"
-# }
+
+override_doctype_dashboards = {
+
+	"Purchase Order" : "ujwal_industries.ujwal_industries.custom_dashboard.update_po_dashboard",
+}
 
 # exempt linked doctypes from being automatically cancelled
 #
@@ -277,47 +359,49 @@ standard_queries = {
 # Fixtures
 # --------
 fixtures = [
-	{
-		"doctype": "Workflow",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Purchase Order Approval",
-					"Supplier Approval",
-					"Material Request Approval",
-				),
-			]
-		],
-	},
-	{
-		"doctype": "Workspace",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Purchase",
-					"Sales",
-					"Manufacturing"
-				),
-			]
-		]
-	},
-	{
-		"doctype": "Role",
-		"filters": [
-			[
-				"name",
-				"in",
-				(
-					"Store Manager",
-					"Sales Executive"
-				),
-			]
-		],
-	},
+	# {
+	# 	"doctype": "Workflow",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Purchase Order Approval",
+	# 				"Supplier Approval",
+	# 				"Material Request Approval",
+	# 			),
+	# 		]
+	# 	],
+	# },
+	# {
+	# 	"doctype": "Workspace",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Purchase",
+	# 				"Sales",
+	# 				"Manufacturing"
+	# 			),
+	# 		]
+	# 	]
+	# },
+	# {
+	# 	"doctype": "Role",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"Store Manager",
+	# 				"Sales Executive"
+	# 			),
+	# 		]
+	# 	],
+	# },
+
+ {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
 ]
 
 # Translation
@@ -325,3 +409,13 @@ fixtures = [
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+# =============================================================================
+# Apply Custom Batch Size Overrides
+# =============================================================================
+# Import and apply monkey patches for custom_batchsize field
+# These must be at the end to ensure all ERPNext modules are loaded first
+from ujwal_industries.overrides.work_order import apply_work_order_overrides
+from ujwal_industries.overrides.bom import apply_bom_overrides
+
+apply_work_order_overrides()
+apply_bom_overrides()

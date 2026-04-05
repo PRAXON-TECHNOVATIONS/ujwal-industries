@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2026-01-19 12:30:00.000000",
+ "creation": "2026-01-19 12:30:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -10,7 +10,9 @@
   "supplier",
   "column_break_3",
   "is_default",
-  "lead_time_days"
+  "is_per_day_qty_based",
+  "lead_time_days",
+  "per_day_qty"
  ],
  "fields": [
   {
@@ -47,17 +49,33 @@
    "in_list_view": 1,
    "label": "Lead Time (Days)",
    "non_negative": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "per_day_qty",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Per Day Qty",
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_per_day_qty_based",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Is Per Day Qty Based"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-01-19 12:30:00.000000",
+ "modified": "2026-03-16 13:42:31.849756",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Item Subcontracting Supplier",
  "owner": "Administrator",
  "permissions": [],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

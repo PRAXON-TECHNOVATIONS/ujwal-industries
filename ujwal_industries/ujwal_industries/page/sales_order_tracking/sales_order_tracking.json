@@ -1,0 +1,33 @@
+{
+ "content": null,
+ "creation": "2026-02-03 19:45:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-02-03 19:45:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "sales_order_tracking",
+ "owner": "Administrator",
+ "page_name": "Sales Order Tracking",
+ "roles": [
+  {
+   "role": "Manufacturing Manager"
+  },
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "No",
+ "system_page": 0,
+ "title": "Sales Order Tracking Dashboard"
+}

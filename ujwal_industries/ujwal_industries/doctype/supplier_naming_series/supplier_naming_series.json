@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-03-30 09:56:01.928168",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "supplier_group",
+  "column_break_iijd",
+  "from_start",
+  "to_end",
+  "current_no"
+ ],
+ "fields": [
+  {
+   "fieldname": "supplier_group",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Supplier Group",
+   "options": "Supplier Group"
+  },
+  {
+   "fieldname": "column_break_iijd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "from_start",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "From Start"
+  },
+  {
+   "fieldname": "to_end",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "To End"
+  },
+  {
+   "fieldname": "current_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Current No."
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-03-30 09:58:11.436920",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Supplier Naming Series",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -7,8 +7,374 @@ from typing import Any
 
 import frappe
 from frappe.model.document import Document  # type: ignore[import-untyped]
-from frappe.utils import flt
+from frappe.utils import flt , now_datetime, add_days
+from frappe.utils import getdate, nowdate,formatdate
 
+
+from erpnext.manufacturing.doctype.job_card.job_card import (
+    make_time_log as _original_make_time_log,
+)
+
+def _is_workstation_under_maintenance(workstation: str) -> str | None:
+    """
+    Check if workstation's linked Asset is under maintenance.
+    Returns message if under maintenance else None.
+    """
+
+    if not workstation:
+        return None
+
+    # 1️⃣ Get linked Asset from Workstation
+    asset = frappe.db.get_value(
+        "Workstation",
+        workstation,
+        "custom_asset_name"
+    )
+
+    if not asset:
+        return None
+
+    today = getdate(nowdate())
+
+    # 2️⃣ Check maintenance schedule
+    result = frappe.db.sql("""
+        SELECT mt.start_date, mt.end_date
+        FROM `tabAsset Maintenance` am
+        JOIN `tabAsset Maintenance Task` mt
+            ON mt.parent = am.name
+        WHERE am.asset_name = %s
+          AND mt.start_date <= %s
+          AND mt.end_date >= %s
+        LIMIT 1
+    """, (asset, today, today), as_dict=True)
+
+    if result:
+        start_date = formatdate(result[0].start_date, "dd-MM-yyyy")
+        end_date = formatdate(result[0].end_date, "dd-MM-yyyy")
+
+        return f"""
+        Workstation <b>{workstation}</b> is under Preventive Maintenance<br>
+        Linked Asset: <b>{asset}</b><br>
+        From <b>{start_date}</b> To <b>{end_date}</b>
+        """
+
+    return None
+
+def build_tool_summary_html(doc):
+    """
+    Build tool-wise produced quantity summary
+    from Job Card Time Logs and render HTML table.
+    """
+    tool_qty_map = {}
+
+    for tl in doc.time_logs or []:
+        if not tl.custom_tool:
+            continue
+
+        qty = flt(tl.completed_qty or 0)
+        tool_qty_map.setdefault(tl.custom_tool, 0)
+        tool_qty_map[tl.custom_tool] += qty
+
+    if not tool_qty_map:
+        doc.custom_tool_summary = ""
+        return
+
+    # Build HTML
+    html = """
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th style="width:70%">Tool</th>
+                <th style="width:30%; text-align:right">Produced Qty</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+
+    for tool, qty in tool_qty_map.items():
+        html += f"""
+            <tr>
+                <td>{tool}</td>
+                <td style="text-align:right">{qty}</td>
+            </tr>
+        """
+
+    html += """
+        </tbody>
+    </table>
+    """
+
+    doc.custom_tool_summary = html
+
+# HELPER – FG AVAILABILITY
+def get_fg_availability_internal(work_order: str, exclude_job_card: str | None = None):
+    if not work_order:
+        return 0, 0, 0
+
+    wo = frappe.get_doc("Work Order", work_order)
+
+    transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+
+    manufactured_fg = (
+        frappe.db.sql(
+            """
+            SELECT SUM(total_completed_qty)
+            FROM `tabJob Card`
+            WHERE work_order=%s
+              AND docstatus=1
+              {exclude}
+            """.format(
+                exclude="AND name != %s" if exclude_job_card else ""
+            ),
+            tuple(
+                [work_order, exclude_job_card]
+                if exclude_job_card
+                else [work_order]
+            ),
+        )[0][0]
+        or 0
+    )
+
+    available_fg = transferred_fg - flt(manufactured_fg)
+    if available_fg < 0:
+        available_fg = 0
+
+    return transferred_fg, manufactured_fg, available_fg
+
+# START / RESUME JOB -VALIDATION
+
+@frappe.whitelist()
+def make_time_log_with_material_check(args):
+    if isinstance(args, str):
+        import json
+        args = json.loads(args)
+
+    job_card_id = args.get("job_card_id")
+    status = args.get("status")
+    
+    if status == "Resume Job":
+        jc = frappe.get_doc("Job Card", job_card_id)
+        _close_job_card_downtime(jc)
+        
+    if status in ("Work In Progress", "Resume Job"):
+        jc = frappe.get_doc("Job Card", job_card_id)
+        
+        if jc.custom_tool_name:
+            args["custom_tool"] = jc.custom_tool_name
+            args["custom_tool_reason"] = jc.custom_reason_for_tool_change
+            
+        if jc.work_order:
+            # Transferred FG from Work Order
+            wo = frappe.get_doc("Work Order", jc.work_order)
+            transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+
+            # Produced qty from ALL Job Cards
+            produced_submitted = (
+                frappe.db.sql(
+                    """
+                    SELECT SUM(total_completed_qty)
+                    FROM `tabJob Card`
+                    WHERE work_order=%s
+                      AND docstatus=1
+                    """,
+                    jc.work_order,
+                )[0][0]
+                or 0
+            )
+
+            # Produced qty from CURRENT Job Card (DRAFT)
+            produced_current = flt(jc.total_completed_qty or 0)
+
+            total_produced = flt(produced_submitted) + flt(produced_current)
+
+            available_fg = transferred_fg - total_produced
+            if available_fg < 0:
+                available_fg = 0
+
+            if available_fg <= 0:
+                frappe.throw(
+                    title="No Quantity Available",
+                    msg=f"""
+                    <b>No production quantity available to continue this Job</b><br><br>
+
+                    <b>Work Order:</b> {jc.work_order}<br>
+                    <b>Material Transferred (FG):</b> {transferred_fg}<br>
+                    <b>Already Produced:</b> {total_produced}<br>
+                    <b>Available Qty:</b>
+                    <span style="color:red;"><b>0</b></span><br><br>
+
+                    Please transfer additional material against the Work Order
+                    to resume or start this Job Card.
+                    """
+                )
+    result = _original_make_time_log(args)
+    jc = frappe.get_doc("Job Card", job_card_id)
+
+    if jc.time_logs:
+        last_row = jc.time_logs[-1]
+
+        if jc.custom_tool_name and not last_row.custom_tool:
+            frappe.db.set_value("Job Card Time Log", last_row.name, "custom_tool", jc.custom_tool_name, update_modified=False)
+            frappe.db.set_value("Job Card Time Log", last_row.name, "custom_tool_reason", jc.custom_reason_for_tool_change, update_modified=False)
+
+    return result
+    
+# JOB CARD SAVE - VALIDATION
+
+def validate_job_card_qty_fg_based(doc: Document, method=None):
+    """
+    Final authority validation.
+    Runs on SAVE + SUBMIT.
+    """
+
+    if not doc.work_order:
+        return
+
+    transferred_fg, manufactured_fg, available_fg = get_fg_availability_internal(
+        doc.work_order, exclude_job_card=doc.name
+    )
+
+    entered_qty = flt(doc.total_completed_qty)
+
+    if entered_qty > available_fg:
+        frappe.throw(
+            title="Quantity Exceeds Material Transfer",
+            msg=f"""
+            <b>Production quantity exceeds transferred material</b><br><br>
+
+            <b>Work Order:</b> {doc.work_order}<br>
+            <b>Material Transferred for Manufacturing (FG):</b>
+            <b>{transferred_fg}</b><br>
+
+            <b>Already Manufactured:</b> {manufactured_fg}<br>
+            <b>Available for this Job Card:</b>
+            <span style="color:green;"><b>{available_fg}</b></span><br><br>
+
+            <b>Entered Completed Qty:</b>
+            <span style="color:red;"><b>{entered_qty}</b></span><br><br>
+
+            Please transfer additional material against the Work Order
+            to increase allowed production quantity.
+            """
+        )
+
+def job_card_validate(doc: Document, method=None):
+    message = _is_workstation_under_maintenance(doc.workstation)
+    if message:
+        frappe.throw(
+            title="Workstation Under Maintenance",
+            msg=message
+    )
+    validate_job_card_qty_fg_based(doc, method)
+    build_tool_summary_html(doc)
+    set_previous_tool(doc)
+        
+def _create_job_card_downtime(job_card, pause_reason):
+    if pause_reason != "Downtime":
+        return
+
+    # avoid duplicate open downtime
+    exists = frappe.db.exists(
+        "Downtime Entry",
+        {
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        }
+    )
+    if exists:
+        return
+
+    #  get operator from time log where pause_reason = Downtime
+    operator = None
+    for tl in reversed(job_card.time_logs or []):
+        if tl.custom_pause_reason == "Downtime":
+            operator = tl.employee
+            break
+
+    if not operator:
+        frappe.throw("Unable to determine operator for downtime entry")
+
+    d = frappe.new_doc("Downtime Entry")
+    d.workstation = job_card.workstation
+    d.from_time = now_datetime()
+    d.stop_reason = "Other"
+    d.remarks = f"Job Card Downtime: {job_card.name}"
+    d.custom_job_card = job_card.name
+    d.operator = operator
+
+    #  MOST IMPORTANT LINE
+    d.flags.ignore_mandatory = True
+
+    d.insert(ignore_permissions=True)
+
+
+def _close_job_card_downtime(job_card):
+    open_dt = frappe.get_all(
+        "Downtime Entry",
+        filters={
+            "custom_job_card": job_card.name,
+            "to_time": ["is", "not set"],
+        },
+        limit=1,
+    )
+
+    if not open_dt:
+        return
+
+    frappe.db.set_value(
+        "Downtime Entry",
+        open_dt[0].name,
+        "to_time",
+        now_datetime(),
+    )
+
+
+def _has_active_workstation_downtime(workstation: str) -> bool:
+    if not workstation:
+        return False
+    
+    from frappe.utils import now_datetime
+    
+    current_time = now_datetime()
+    # AVI
+    # return bool(
+    #     frappe.db.exists(
+    #         "Downtime Entry",
+    #         {
+    #             "workstation": workstation,
+    #             "from_time": ("<=", current_time),
+    #             "to_time": (">=", current_time),
+    #         },
+    #     )
+    # )
+    return bool(
+        frappe.db.exists(
+            "Downtime Entry",
+            {
+                "workstation": workstation,
+                "custom_job_card": ["is", "not set"],
+                "from_time": ("<=", current_time),
+                "to_time": (">=", current_time),
+            },
+        )
+    )
+    # AVI
+
+
+def restrict_job_card_edit_during_downtime(doc: Document, method=None):
+    if not doc.workstation:
+        return
+    if doc.docstatus != 0:
+        return  # Allow submitted docs to remain untouched
+
+    if _has_active_workstation_downtime(doc.workstation):
+        frappe.throw(
+            title="Workstation Under Downtime",
+            msg=f"""
+            Job Card cannot be modified while workstation <b>{doc.workstation}</b>
+            is under active downtime.
+            """
+        )
 
 def _get_item_tolerance(production_item: str) -> float:
     """Get tolerance percentage from Item master's custom_tolerance_ field."""
@@ -180,7 +546,9 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
 
     # Save the job card to persist the pause reason in time log
     job_card.save(ignore_permissions=True)
-
+    # AVI
+    _create_job_card_downtime(job_card, pause_reason)
+    # AVI
     frappe.db.commit()
 
 
@@ -223,6 +591,7 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
             downtime
         FROM `tabDowntime Entry`
         WHERE workstation = %(workstation)s
+        AND custom_job_card IS NULL
         AND from_time <= %(end_range)s
         AND to_time >= %(start_range)s
         ORDER BY from_time ASC
@@ -231,28 +600,45 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
         as_dict=True,
     )
 
+    # AVI 
+    
     if downtime_entries:
         # Check each entry and mark if it's currently active
+        # has_active_downtime = False
+        # for entry in downtime_entries:
+        #     from_time = get_datetime(entry.from_time)
+        #     to_time = get_datetime(entry.to_time)
+
+        #     # Check if current time is within the downtime period
+        #     if from_time <= current_time <= to_time:
+        #         entry["is_active"] = True
+        #         has_active_downtime = True
+        #     elif current_time < from_time:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = True
+        #     else:
+        #         entry["is_active"] = False
+        #         entry["is_upcoming"] = False
         has_active_downtime = False
         for entry in downtime_entries:
             from_time = get_datetime(entry.from_time)
             to_time = get_datetime(entry.to_time)
 
-            # Check if current time is within the downtime period
+            # ACTIVE workstation downtime
             if from_time <= current_time <= to_time:
                 entry["is_active"] = True
                 has_active_downtime = True
-            elif current_time < from_time:
-                entry["is_active"] = False
-                entry["is_upcoming"] = True
             else:
                 entry["is_active"] = False
-                entry["is_upcoming"] = False
+
 
         # Store downtime information in __onload for client-side access
         doc.set_onload("downtime_entries", downtime_entries)
         doc.set_onload("has_active_downtime", has_active_downtime)
         doc.set_onload("current_server_time", str(current_time))
+
+    # Check if operation requires tool
+    doc.set_onload("operation_requires_tool", operation_requires_tool(doc.bom_no, doc.operation))
 
 
 def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
@@ -322,3 +708,123 @@ def override_job_card_qty_validation(doc: Document, method: str | None = None) -
                 frappe.bold(max_acceptable)
             )
         )
+
+
+
+def set_previous_tool(doc):
+    if doc.custom_tool_name:
+        doc.custom_previous_tool = doc.custom_tool_name
+       
+        
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def get_filtered_tools(doctype, txt, searchfield, start, page_len, filters):
+
+    bom = filters.get("bom")
+    operation = filters.get("operation")
+    if not bom:
+        return []
+
+    conditions = " "
+    values = {
+        "bom": bom,
+        "txt": f"%{txt}%"
+    }
+
+    if operation:
+        conditions += " AND operation = %(operation)s"
+        values["operation"] = operation
+
+    return frappe.db.sql(f"""
+        SELECT DISTINCT tool
+        FROM `tabTool Child Table`
+        WHERE parent = %(bom)s
+        {conditions}
+        AND tool LIKE %(txt)s
+        LIMIT %(start)s, %(page_len)s
+    """, {
+        **values,
+        "start": start,
+        "page_len": page_len
+    })
+
+
+@frappe.whitelist()
+def operation_requires_tool(bom: str | None = None, operation: str | None = None) -> bool:
+    """Return whether the BOM operation has at least one tool configured."""
+    if not bom or not operation:
+        return False
+
+    return bool(
+        frappe.db.exists(
+            "Tool Child Table",
+            {
+                "parent": bom,
+                "operation": operation,
+                "tool": ["is", "set"],
+            },
+        )
+    )
+
+
+@frappe.whitelist()
+def check_tool_maintenance(tool):
+    today = getdate(nowdate())
+
+    result = frappe.db.sql("""
+        SELECT mt.start_date, mt.end_date
+        FROM `tabAsset Maintenance` am
+        JOIN `tabAsset Maintenance Task` mt
+            ON mt.parent = am.name
+        WHERE am.asset_name = %s
+          AND mt.start_date <= %s
+          AND mt.end_date >= %s
+        LIMIT 1
+    """, (tool, today, today), as_dict=True)
+
+    if result:
+        start_date = formatdate(result[0].start_date, "dd-MM-yyyy")
+        end_date = formatdate(result[0].end_date, "dd-MM-yyyy")
+        return """{0} is under maintenance <br>From {1} TO {2}""".format(
+                       frappe.bold(tool),
+                       frappe.bold(start_date),
+                       frappe.bold(end_date),)  
+        
+
+@frappe.whitelist()
+def create_tool_maintenance(tool, reason):
+    if not tool:
+        return
+    
+    else:
+        first_team = frappe.get_all("Asset Maintenance Team", fields=["name"], order_by="creation asc", limit=1)
+        first_team_name = ''
+        user = ''
+        
+        if first_team:
+            first_team_name = first_team[0].name
+            
+        first_member = frappe.get_all("Maintenance Team Member", filters={"parent": first_team_name}, fields=["team_member"],order_by="idx asc", limit=1)
+        if first_member:
+            user = first_member[0].team_member
+            
+        maintenance = frappe.new_doc("Asset Maintenance")
+        maintenance.asset_name = tool
+        maintenance.maintenance_team = first_team_name or " "
+        maintenance.company = frappe.defaults.get_user_default("Company")
+
+        maintenance.append("asset_maintenance_tasks", {
+            "description": f"Tool replaced. Reason: {reason}",
+            "start_date": nowdate(),
+            "end_date": add_days(nowdate(), 1),
+            "maintenance_task": 'General Mainteance',
+            "maintenance_type": 'Preventive Maintenance',
+            "maintenance_status": 'Planned',
+            "periodicity": 'Daily',
+            "assign_to": user,
+            
+        })
+
+        maintenance.insert(ignore_permissions=True)
+
+        return maintenance.name        

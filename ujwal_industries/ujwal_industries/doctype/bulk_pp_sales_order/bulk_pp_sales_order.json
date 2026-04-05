@@ -1,0 +1,148 @@
+{
+ "actions": [],
+ "creation": "2026-02-04 10:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sales_order",
+  "customer",
+  "delivery_date",
+  "grand_total",
+  "status",
+  "has_level_2_item",
+  "column_break_1",
+  "is_selected",
+  "for_warehouse",
+  "select_items_btn",
+  "selected_items",
+  "items_generated",
+  "merged",
+  "custom_pp_created"
+ ],
+ "fields": [
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "sales_order.customer",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "sales_order.delivery_date",
+   "fieldname": "delivery_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Delivery Date",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "sales_order.grand_total",
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Grand Total",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "sales_order.status",
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_level_2_item",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Has Level 2 Item",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "sales_order.order_type",
+   "fieldname": "order_type",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Order Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "is_selected",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Selected"
+  },
+  {
+   "default": "Stores - UI",
+   "fieldname": "for_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Raw Materials Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "select_items_btn",
+   "fieldtype": "Button",
+   "in_list_view": 1,
+   "label": "Select Items"
+  },
+  {
+   "fieldname": "selected_items",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Selected Items"
+  },
+  {
+   "default": "0",
+   "fieldname": "items_generated",
+   "fieldtype": "Check",
+   "label": "Items Generated",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "custom_pp_created",
+   "fieldtype": "Check",
+   "label": "Production Plan Created",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "merged",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Merged"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-03-25 01:10:09.323508",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Bulk PP Sales Order",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
