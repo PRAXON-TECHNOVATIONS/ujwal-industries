@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "autoname": "PP-IMP-LOG-.#####",
+ "creation": "2026-02-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "importer_doc",
+  "pp_name",
+  "col_break1",
+  "imported_at",
+  "status",
+  "col_break2",
+  "fg_count",
+  "sfg_count",
+  "mr_count",
+  "sec_error",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "importer_doc",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Importer Doc",
+   "options": "Production Plan Importer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pp_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Production Plan",
+   "reqd": 1
+  },
+  {
+   "fieldname": "col_break1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "imported_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Imported At"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Success\nError",
+   "reqd": 1
+  },
+  {
+   "fieldname": "col_break2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fg_count",
+   "fieldtype": "Int",
+   "label": "FG Rows"
+  },
+  {
+   "fieldname": "sfg_count",
+   "fieldtype": "Int",
+   "label": "SFG Rows"
+  },
+  {
+   "fieldname": "mr_count",
+   "fieldtype": "Int",
+   "label": "MR Rows"
+  },
+  {
+   "fieldname": "sec_error",
+   "fieldtype": "Section Break",
+   "label": "Error Details",
+   "depends_on": "eval:doc.status=='Error'"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message"
+  }
+ ],
+ "is_submittable": 0,
+ "links": [],
+ "modified": "2026-02-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "PP Import Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 0,
+   "role": "Manufacturing User",
+   "share": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "imported_at",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

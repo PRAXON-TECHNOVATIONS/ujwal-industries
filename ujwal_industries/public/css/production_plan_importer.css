@@ -1,0 +1,954 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Production Plan Importer — Premium UI
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+:root {
+	/* Section colours */
+	--ppi-fg:        #1D4ED8;
+	--ppi-fg-mid:    #2563EB;
+	--ppi-fg-light:  #EFF6FF;
+	--ppi-fg-border: #BFDBFE;
+
+	--ppi-sfg:        #B45309;
+	--ppi-sfg-mid:    #D97706;
+	--ppi-sfg-light:  #FFFBEB;
+	--ppi-sfg-border: #FDE68A;
+
+	--ppi-mr:        #047857;
+	--ppi-mr-mid:    #059669;
+	--ppi-mr-light:  #ECFDF5;
+	--ppi-mr-border: #A7F3D0;
+
+	/* Sidebar */
+	--ppi-side:         #1B2A4A;
+	--ppi-side-border:  #22304f;
+	--ppi-side-hover:   rgba(255,255,255,0.055);
+	--ppi-side-active:  rgba(255,255,255,0.09);
+	--ppi-side-accent:  #22C55E;
+
+	/* Neutral */
+	--ppi-line:       #E2E8F0;
+	--ppi-line-dark:  #CBD5E1;
+	--ppi-bg:         #F8FAFC;
+	--ppi-text:       #1E293B;
+	--ppi-muted:      #64748B;
+	--ppi-cell-alt:   #F8FAFB;
+}
+
+/* ── Outer shell ─────────────────────────────────────────────────────────── */
+.ppi-container {
+	display: flex;
+	height: auto;
+	min-height: 400px;
+	border-radius: 12px;
+	overflow: hidden;
+	margin-top: 14px;
+	border: 1.5px solid var(--ppi-line-dark);
+	box-shadow:
+		0 0 0 1px rgba(255,255,255,0.7) inset,
+		0 8px 32px rgba(15,23,42,0.10),
+		0 2px 6px  rgba(15,23,42,0.06);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LEFT SIDEBAR
+   ════════════════════════════════════════════════════════════════════════════ */
+.ppi-left {
+	width: 230px;
+	min-width: 230px;
+	background: var(--ppi-side);
+	display: flex;
+	flex-direction: column;
+	border-right: 1.5px solid var(--ppi-side-border);
+	overflow: hidden;
+}
+
+/* Header */
+.ppi-left-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 1.1px;
+	text-transform: uppercase;
+	color: rgba(255,255,255,0.38);
+	padding: 15px 16px 12px;
+	border-bottom: 1px solid var(--ppi-side-border);
+	flex-shrink: 0;
+}
+
+/* Scrollable area */
+.ppi-pp-tabs-wrap {
+	flex: 1;
+	overflow-y: auto;
+	padding: 6px 0 8px;
+}
+
+.ppi-pp-tabs-wrap::-webkit-scrollbar { width: 3px; }
+.ppi-pp-tabs-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+
+/* Empty hint */
+.ppi-empty-hint {
+	padding: 20px 16px;
+	font-size: 11.5px;
+	color: rgba(255,255,255,0.22);
+	line-height: 1.5;
+}
+
+/* PP tab row */
+.ppi-pp-tab {
+	padding: 10px 16px 9px;
+	cursor: pointer;
+	border-left: 3px solid transparent;
+	transition: background 0.12s;
+	position: relative;
+}
+
+.ppi-pp-tab + .ppi-pp-tab {
+	border-top: 1px solid rgba(255,255,255,0.04);
+}
+
+.ppi-pp-tab:hover {
+	background: var(--ppi-side-hover);
+}
+
+.ppi-pp-tab.active {
+	border-left-color: var(--ppi-side-accent);
+	background: var(--ppi-side-active);
+}
+
+/* PP name */
+.ppi-pp-tab-name {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: rgba(255,255,255,0.78);
+	margin-bottom: 6px;
+	letter-spacing: 0.15px;
+}
+
+.ppi-pp-tab.active .ppi-pp-tab-name {
+	color: #fff;
+	font-weight: 600;
+}
+
+/* Mini chips */
+/* ── PP status line (shown between name and chips) ── */
+.ppi-pp-tab-status {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	margin-bottom: 5px;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.3px;
+	min-height: 14px; /* reserves space even when empty */
+}
+
+/* Colored dot */
+.ppi-pp-status-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+/* Status variants */
+.ppi-pp-tab-status--clean       { display: none; }
+.ppi-pp-tab-status--imported    .ppi-pp-status-dot { background: #10B981; box-shadow: 0 0 4px #10B981; }
+.ppi-pp-tab-status--imported    .ppi-pp-status-text { color: #6EE7B7; }
+.ppi-pp-tab-status--partial     .ppi-pp-status-dot { background: #F59E0B; box-shadow: 0 0 4px #F59E0B; }
+.ppi-pp-tab-status--partial     .ppi-pp-status-text { color: #FCD34D; }
+.ppi-pp-tab-status--pending     .ppi-pp-status-dot { background: #F59E0B; animation: ppi-pulse 1.6s ease-in-out infinite; }
+.ppi-pp-tab-status--pending     .ppi-pp-status-text { color: #FCD34D; }
+.ppi-pp-tab-status--failed      .ppi-pp-status-dot { background: #EF4444; box-shadow: 0 0 4px #EF4444; }
+.ppi-pp-tab-status--failed      .ppi-pp-status-text { color: #FCA5A5; }
+
+@keyframes ppi-pulse {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.35; }
+}
+
+.ppi-pp-tab-meta { display: flex; gap: 5px; flex-wrap: wrap; }
+
+.ppi-pp-chip {
+	font-size: 9.5px;
+	font-weight: 700;
+	padding: 2px 7px;
+	border-radius: 20px;
+	letter-spacing: 0.3px;
+}
+
+.ppi-pp-chip--fg  { background: rgba(59,130,246,0.22); color: #93C5FD; border: 1px solid rgba(59,130,246,0.3); }
+.ppi-pp-chip--sfg { background: rgba(245,158,11,0.20); color: #FCD34D; border: 1px solid rgba(245,158,11,0.3); }
+.ppi-pp-chip--mr  { background: rgba(16,185,129,0.20); color: #6EE7B7; border: 1px solid rgba(16,185,129,0.3); }
+
+.ppi-loading { padding: 16px 16px; font-size: 12px; color: rgba(255,255,255,0.35); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   RIGHT PANEL
+   ════════════════════════════════════════════════════════════════════════════ */
+.ppi-right {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	overflow-y: auto;
+	background: #fff;
+	min-width: 0;
+}
+
+/* ── Infobar ─────────────────────────────────────────────────────────────── */
+.ppi-infobar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 16px;
+	background: var(--ppi-bg);
+	border-bottom: 1px solid var(--ppi-line);
+	flex-shrink: 0;
+	min-height: 38px;
+}
+
+.ppi-infobar-label {
+	font-size: 12px;
+	color: var(--ppi-muted);
+	font-style: italic;
+}
+
+.ppi-infobar-pp {
+	font-size: 12.5px;
+	font-weight: 700;
+	color: var(--ppi-text);
+	letter-spacing: 0.2px;
+}
+
+.ppi-infobar-sep {
+	color: var(--ppi-line-dark);
+	font-size: 14px;
+}
+
+.ppi-infobar-stat {
+	font-size: 11.5px;
+	font-weight: 600;
+	padding: 2px 9px;
+	border-radius: 20px;
+}
+
+.ppi-infobar-stat--fg  { background: var(--ppi-fg-light);  color: var(--ppi-fg);  border: 1px solid var(--ppi-fg-border); }
+.ppi-infobar-stat--sfg { background: var(--ppi-sfg-light); color: var(--ppi-sfg); border: 1px solid var(--ppi-sfg-border); }
+.ppi-infobar-stat--mr  { background: var(--ppi-mr-light);  color: var(--ppi-mr);  border: 1px solid var(--ppi-mr-border); }
+
+/* ── Section tabs ────────────────────────────────────────────────────────── */
+.ppi-stabs {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 10px 16px;
+	border-bottom: 1.5px solid var(--ppi-line);
+	background: #fff;
+	flex-shrink: 0;
+}
+
+.ppi-stabs-spacer { flex: 1; }
+
+.ppi-edit-hint {
+	font-size: 11px;
+	color: #94A3B8;
+	font-style: italic;
+	white-space: nowrap;
+}
+
+/* Single import status bar (shown once above all tables) */
+.ppi-import-status {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 16px;
+	border-top: 1px solid var(--ppi-line);
+	border-bottom: 1px solid var(--ppi-line);
+	background: #F8FAFC;
+}
+
+.ppi-import-status-badge {
+	display: inline-flex;
+	align-items: center;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.3px;
+	text-transform: uppercase;
+	padding: 3px 10px;
+	border-radius: 999px;
+}
+
+.ppi-import-status-msg {
+	font-size: 11px;
+	line-height: 1.35;
+}
+
+.ppi-import-status--ok {
+	background: #ECFDF5;
+	border-color: #A7F3D0;
+}
+
+.ppi-import-status--ok .ppi-import-status-badge {
+	background: #065F46;
+	color: #ECFDF5;
+	border: 1px solid #10B981;
+}
+
+.ppi-import-status--error {
+	background: #FEF2F2;
+	border-color: #FECACA;
+}
+
+.ppi-import-status--error .ppi-import-status-badge {
+	background: #991B1B;
+	color: #FEF2F2;
+	border: 1px solid #EF4444;
+}
+
+.ppi-import-status--error .ppi-import-status-msg {
+	color: #991B1B;
+}
+
+/* Tab button */
+.ppi-stab {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 6px 14px;
+	font-size: 12px;
+	font-weight: 500;
+	border-radius: 8px;
+	cursor: pointer;
+	border: 1.5px solid transparent;
+	outline: none;
+	transition: all 0.14s;
+	background: transparent;
+	line-height: 1;
+}
+
+/* Inactive */
+.ppi-stab--fg  { border-color: var(--ppi-fg-border);  color: var(--ppi-fg);  }
+.ppi-stab--sfg { border-color: var(--ppi-sfg-border); color: var(--ppi-sfg); }
+.ppi-stab--mr  { border-color: var(--ppi-mr-border);  color: var(--ppi-mr);  }
+
+.ppi-stab--fg:not(.active):hover  { background: var(--ppi-fg-light); }
+.ppi-stab--sfg:not(.active):hover { background: var(--ppi-sfg-light); }
+.ppi-stab--mr:not(.active):hover  { background: var(--ppi-mr-light); }
+
+/* Active */
+.ppi-stab--fg.active  { background: var(--ppi-fg);     border-color: var(--ppi-fg);     color: #fff; box-shadow: 0 2px 8px rgba(29,78,216,0.30); }
+.ppi-stab--sfg.active { background: var(--ppi-sfg);    border-color: var(--ppi-sfg);    color: #fff; box-shadow: 0 2px 8px rgba(180,83,9,0.28); }
+.ppi-stab--mr.active  { background: var(--ppi-mr);     border-color: var(--ppi-mr);     color: #fff; box-shadow: 0 2px 8px rgba(4,120,87,0.28); }
+
+.ppi-stab svg { flex-shrink: 0; }
+
+/* Badge */
+.ppi-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	height: 17px;
+	padding: 0 5px;
+	border-radius: 20px;
+	font-size: 10px;
+	font-weight: 700;
+	background: rgba(0,0,0,0.10);
+	letter-spacing: 0;
+}
+
+.ppi-stab.active .ppi-badge { background: rgba(255,255,255,0.22); color: #fff; }
+
+/* ── HOT wrappers ────────────────────────────────────────────────────────── */
+.ppi-hot-wrap {
+	overflow: auto;
+	flex: none;
+	background: var(--ppi-bg);
+	position: relative; /* needed for overlay */
+}
+
+/* Wrapper for all 3 grids; used to show one global import overlay */
+.ppi-grids {
+	position: relative;
+	overflow: visible;
+}
+
+/* Active JS host for one overlay over FG+SFG+MR block */
+.ppi-overlay-zone {
+	position: relative;
+}
+
+/* Global import overlay should sit above all grid internals */
+.ppi-global-import-overlay {
+	z-index: 260 !important;
+	inset: 0 !important;
+}
+
+/* No badge for global import overlay; show only watermark */
+.ppi-global-import-overlay .ppi-doc-overlay-badge {
+	display: none !important;
+}
+
+/* ── Section headers (vertical layout) ──────────────────────────────────── */
+.ppi-section-hdr {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 9px 16px;
+	font-size: 12px;
+	font-weight: 600;
+	border-top: 1.5px solid var(--ppi-line);
+	flex-shrink: 0;
+}
+
+.ppi-section-hdr--fg  { color: var(--ppi-fg);  background: var(--ppi-fg-light);  border-left: 3px solid var(--ppi-fg); }
+.ppi-section-hdr--sfg { color: var(--ppi-sfg); background: var(--ppi-sfg-light); border-left: 3px solid var(--ppi-sfg); }
+.ppi-section-hdr--mr  { color: var(--ppi-mr);  background: var(--ppi-mr-light);  border-left: 3px solid var(--ppi-mr); }
+
+.ppi-section-hdr--fg  .ppi-badge { background: var(--ppi-fg);  color: #fff; }
+.ppi-section-hdr--sfg .ppi-badge { background: var(--ppi-sfg); color: #fff; }
+.ppi-section-hdr--mr  .ppi-badge { background: var(--ppi-mr);  color: #fff; }
+
+.ppi-section-hdr svg { flex-shrink: 0; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   HANDSONTABLE — COMPREHENSIVE OVERRIDES
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Base font */
+.handsontable,
+.handsontable td,
+.handsontable th,
+.handsontable .colHeader,
+.handsontable .rowHeader {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+	font-size: 12px !important;
+	box-sizing: border-box;
+}
+
+/* ── Column header ───────────────────────────────────────────────────────── */
+.handsontable thead th,
+.handsontable .colHeader {
+	font-weight: 600 !important;
+	font-size: 11px !important;
+	letter-spacing: 0.3px !important;
+	text-transform: uppercase;
+	padding: 7px 6px !important;
+	border-bottom: 2px solid rgba(0,0,0,0.15) !important;
+	white-space: nowrap;
+}
+
+/* FG — blue */
+#ppi-hot-fg .handsontable thead th,
+#ppi-hot-fg .handsontable .colHeader {
+	background: var(--ppi-fg) !important;
+	color: #fff !important;
+	border-color: #1E40AF !important;
+	border-right: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+/* SFG — amber */
+#ppi-hot-sfg .handsontable thead th,
+#ppi-hot-sfg .handsontable .colHeader {
+	background: var(--ppi-sfg) !important;
+	color: #fff !important;
+	border-color: #92400E !important;
+	border-right: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+/* MR — green */
+#ppi-hot-mr .handsontable thead th,
+#ppi-hot-mr .handsontable .colHeader {
+	background: var(--ppi-mr) !important;
+	color: #fff !important;
+	border-color: #065F46 !important;
+	border-right: 1px solid rgba(255,255,255,0.15) !important;
+}
+
+/* ── Row header (numbers) ────────────────────────────────────────────────── */
+.handsontable .rowHeader,
+.handsontable thead th:first-child {
+	background: #F1F5F9 !important;
+	color: #94A3B8 !important;
+	font-size: 10.5px !important;
+	font-weight: 600 !important;
+	border-right: 1.5px solid var(--ppi-line-dark) !important;
+}
+
+/* Override color header on row header corner */
+#ppi-hot-fg  .handsontable thead th:first-child,
+#ppi-hot-sfg .handsontable thead th:first-child,
+#ppi-hot-mr  .handsontable thead th:first-child {
+	background: #E8EDF5 !important;
+	color: #94A3B8 !important;
+}
+
+/* ── Data cells ──────────────────────────────────────────────────────────── */
+.handsontable td {
+	border-right:  1px solid #E2E8F0 !important;
+	border-bottom: 1px solid #E2E8F0 !important;
+	padding: 5px 8px !important;
+	color: var(--ppi-text) !important;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+
+/* Alternating rows */
+.ppi-row-alt {
+	background-color: var(--ppi-cell-alt) !important;
+}
+
+/* Readonly cells */
+.ppi-readonly-cell {
+	background-color: #F1F5F9 !important;
+	color: #6B7A8D !important;
+}
+
+.ppi-row-alt.ppi-readonly-cell {
+	background-color: #EEF2F7 !important;
+}
+
+/* ── Selection / focus ───────────────────────────────────────────────────── */
+.handsontable td.current,
+.handsontable td.area {
+	background-color: #EFF6FF !important;
+}
+
+#ppi-hot-sfg .handsontable td.current,
+#ppi-hot-sfg .handsontable td.area {
+	background-color: #FFFBEB !important;
+}
+
+#ppi-hot-mr .handsontable td.current,
+#ppi-hot-mr .handsontable td.area {
+	background-color: #ECFDF5 !important;
+}
+
+/* Cell focus border */
+.handsontable .wtBorder.current { background: var(--ppi-fg) !important; }
+#ppi-hot-sfg .handsontable .wtBorder.current { background: var(--ppi-sfg) !important; }
+#ppi-hot-mr  .handsontable .wtBorder.current { background: var(--ppi-mr)  !important; }
+
+/* ── Corner cell (top-left) ──────────────────────────────────────────────── */
+.handsontable .ht_clone_top_left_corner thead th {
+	background: #E8EDF5 !important;
+	border-right: 1.5px solid var(--ppi-line-dark) !important;
+}
+
+/* ── Scrollbar inside HOT ────────────────────────────────────────────────── */
+.ppi-hot-wrap ::-webkit-scrollbar { width: 6px; height: 6px; }
+.ppi-hot-wrap ::-webkit-scrollbar-track { background: #F1F5F9; }
+.ppi-hot-wrap ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+.ppi-hot-wrap ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ── Dropdown arrow ──────────────────────────────────────────────────────── */
+.handsontable .htAutocompleteArrow { color: #94A3B8 !important; font-size: 10px !important; }
+
+/* ── Infobar spacer + Excel-dates checkbox ───────────────────────────────── */
+.ppi-infobar-spacer { flex: 1; }
+
+.ppi-excel-check-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	-webkit-user-select: none;
+	user-select: none;
+	padding: 4px 10px;
+	border-radius: 6px;
+	border: 1.5px solid #BFDBFE;
+	background: #EFF6FF;
+	transition: background 0.12s, border-color 0.12s;
+}
+
+.ppi-excel-check-wrap:hover {
+	background: #DBEAFE;
+	border-color: #93C5FD;
+}
+
+.ppi-excel-check-wrap input[type="checkbox"] {
+	width: 14px;
+	height: 14px;
+	accent-color: var(--ppi-fg);
+	cursor: pointer;
+	margin: 0;
+}
+
+.ppi-excel-check-label {
+	font-size: 11.5px;
+	font-weight: 600;
+	color: var(--ppi-fg);
+}
+
+/* When unchecked — amber "edit mode" style */
+.ppi-excel-check-wrap:has(input:not(:checked)) {
+	background: #FFFBEB !important;
+	border-color: #FCD34D !important;
+}
+
+.ppi-excel-check-wrap:has(input:not(:checked)) .ppi-excel-check-label {
+	color: #B45309 !important;
+}
+
+/* ── Changed cell (Excel value ≠ DB actual) ──────────────────────────────── */
+.ppi-changed-cell {
+	background-color: #FEF2F2 !important;
+	color: #DC2626 !important;
+	font-weight: 600 !important;
+}
+
+.ppi-row-alt.ppi-changed-cell {
+	background-color: #FEE2E2 !important;
+}
+
+/* ── Actual column (DB snapshot, read-only reference) ────────────────────── */
+.ppi-actual-col {
+	background-color: #F0FDF4 !important;
+	color: #15803D !important;
+	font-style: italic;
+}
+
+.ppi-row-alt.ppi-actual-col {
+	background-color: #DCFCE7 !important;
+}
+
+/* ── Legend dots in the tab bar ──────────────────────────────────────────── */
+.ppi-legend-dot {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	vertical-align: middle;
+	margin-right: 3px;
+}
+
+.ppi-legend-changed { background: #DC2626; }
+.ppi-legend-actual  { background: #15803D; }
+
+/* ── Docstatus chip in infobar ───────────────────────────────────────────── */
+.ppi-ds-chip {
+	font-size: 10px;
+	font-weight: 700;
+	padding: 2px 9px;
+	border-radius: 20px;
+	letter-spacing: 0.4px;
+	text-transform: uppercase;
+}
+
+.ppi-ds-chip--submitted {
+	background: #FEF3C7;
+	color: #92400E;
+	border: 1.5px solid #FCD34D;
+}
+
+.ppi-ds-chip--cancelled {
+	background: #FEE2E2;
+	color: #991B1B;
+	border: 1.5px solid #FCA5A5;
+}
+
+/* Disabled checkbox style */
+.ppi-excel-check-wrap--disabled {
+	background: #F1F5F9 !important;
+	border-color: var(--ppi-line-dark) !important;
+	cursor: not-allowed;
+	opacity: 0.6;
+}
+
+.ppi-excel-check-wrap--disabled .ppi-excel-check-label {
+	color: var(--ppi-muted) !important;
+}
+
+/* ── Submitted / Cancelled grid overlay ──────────────────────────────────── */
+.ppi-doc-overlay {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+}
+
+/* Diagonal watermark text */
+.ppi-doc-overlay::before {
+	content: attr(data-label);
+	position: absolute;
+	font-size: 90px;
+	font-weight: 900;
+	letter-spacing: 12px;
+	text-transform: uppercase;
+	transform: rotate(-30deg);
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.ppi-doc-overlay--submitted {
+	background: rgba(254, 243, 199, 0.65);
+}
+
+.ppi-doc-overlay--submitted::before {
+	content: "SUBMITTED";
+	color: rgba(180, 83, 9, 0.20);
+}
+
+.ppi-doc-overlay--cancelled {
+	background: rgba(254, 226, 226, 0.65);
+}
+
+.ppi-doc-overlay--cancelled::before {
+	content: "CANCELLED";
+	color: rgba(185, 28, 28, 0.20);
+}
+
+/* Small badge pinned to top-right */
+.ppi-doc-overlay-badge {
+	position: absolute;
+	top: 12px;
+	right: 16px;
+	font-size: 11px;
+	font-weight: 700;
+	padding: 4px 14px;
+	border-radius: 20px;
+	letter-spacing: 0.4px;
+	text-transform: uppercase;
+	pointer-events: none;
+	text-shadow: 0 1px 0 rgba(255,255,255,0.25);
+	box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+}
+
+.ppi-doc-overlay--submitted .ppi-doc-overlay-badge {
+	background: #FEF3C7;
+	color: #92400E;
+	border: 1.5px solid #F59E0B;
+}
+
+.ppi-doc-overlay--cancelled .ppi-doc-overlay-badge {
+	background: #FEE2E2;
+	color: #991B1B;
+	border: 1.5px solid #EF4444;
+}
+
+/* ── Import success overlay ──────────────────────────────────────────────── */
+.ppi-doc-overlay--imported {
+	background: rgba(209, 250, 229, 0.60);
+}
+
+.ppi-doc-overlay--imported::before {
+	content: "IMPORTED";
+	color: rgba(4, 120, 87, 0.15);
+}
+
+.ppi-doc-overlay--imported .ppi-doc-overlay-badge {
+	background: #D1FAE5;
+	color: #065F46;
+	border: 1.5px solid #10B981;
+}
+
+/* ── Import error overlay ────────────────────────────────────────────────── */
+.ppi-doc-overlay--import-error {
+	background: rgba(254, 226, 226, 0.60);
+}
+
+.ppi-doc-overlay--import-error::before {
+	content: "FAILED";
+	color: rgba(185, 28, 28, 0.15);
+}
+
+.ppi-doc-overlay--import-error .ppi-doc-overlay-badge {
+	background: #FEE2E2;
+	color: #991B1B;
+	border: 1.5px solid #EF4444;
+}
+
+.ppi-overlay-error-msg {
+	position: absolute;
+	top: 44px;
+	right: 16px;
+	max-width: 320px;
+	font-size: 11px;
+	color: #991B1B;
+	text-align: right;
+	line-height: 1.4;
+	pointer-events: none;
+	word-break: break-word;
+}
+
+/* ── Column header type indicators ──────────────────────────────────────── */
+/* Editable column — white bottom inset line (pencil-ready) */
+.ppi-th--editable {
+	box-shadow: inset 0 -3px 0 rgba(255,255,255,0.55) !important;
+}
+
+/* Saved/DB column — green bottom inset line + italic text, slightly muted */
+.ppi-th--saved {
+	box-shadow: inset 0 -3px 0 #22C55E !important;
+	opacity: 0.82;
+}
+
+.ppi-th--saved .colHeader {
+	font-style: italic !important;
+}
+
+/* ── Cross-table linkage highlight ───────────────────────────────────────── */
+/* Rows sharing the same FG → SFG → MR chain get a violet tint              */
+.ppi-linked-row {
+	background-color: #F5F3FF !important;
+	color: #5B21B6 !important;
+}
+
+.ppi-row-alt.ppi-linked-row {
+	background-color: #EDE9FE !important;
+}
+
+.ppi-linked-row.ppi-readonly-cell {
+	background-color: #EDE9FE !important;
+	color: #6D28D9 !important;
+}
+
+/* ── Edit-mode options bar ───────────────────────────────────────────────── */
+.ppi-editbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 14px;
+	background: #FFFBEB;
+	border-bottom: 1px solid #FDE68A;
+	flex-shrink: 0;
+	flex-wrap: wrap;
+}
+
+/* Checkbox pills */
+.ppi-opt-check-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	cursor: pointer;
+	-webkit-user-select: none;
+	user-select: none;
+	padding: 3px 10px;
+	border-radius: 6px;
+	border: 1.5px solid #FDE68A;
+	background: #FEF3C7;
+	white-space: nowrap;
+	transition: background 0.12s;
+}
+
+.ppi-opt-check-wrap:hover {
+	background: #FDE68A;
+}
+
+.ppi-opt-check-wrap input[type="checkbox"] {
+	width: 13px;
+	height: 13px;
+	accent-color: #B45309;
+	cursor: pointer;
+	margin: 0;
+}
+
+.ppi-opt-check-wrap:has(input:checked) {
+	background: #FEF3C7;
+	border-color: #F59E0B;
+}
+
+.ppi-opt-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: #92400E;
+}
+
+/* Shift type selector */
+.ppi-opt-shift-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.ppi-opt-shift-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: #B45309;
+	white-space: nowrap;
+}
+
+.ppi-shift-select {
+	font-size: 11.5px;
+	font-weight: 500;
+	padding: 2px 6px;
+	border-radius: 5px;
+	border: 1.5px solid #FCD34D;
+	background: #fff;
+	color: #1E293B;
+	outline: none;
+	height: 26px;
+	cursor: pointer;
+}
+
+.ppi-shift-select:focus {
+	border-color: #F59E0B;
+	box-shadow: 0 0 0 2px rgba(251,191,36,0.22);
+}
+/* ── Split button (Parallel Planning) ────────────────────────────────────── */
+.ppi-split-btn {
+	background: #DBEAFE;
+	border: 1px solid #3B82F6;
+	color: #1E40AF;
+	border-radius: 4px;
+	padding: 4px 8px;
+	height: 24px;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+	transition: all 0.2s ease;
+	outline: none;
+	pointer-events: auto !important;
+	z-index: 10;
+	position: relative;
+}
+
+.ppi-split-btn:hover {
+	background: #BFDBFE;
+	border-color: #2563EB;
+}
+
+.ppi-split-btn:active {
+	background: #93C5FD;
+	transform: scale(0.98);
+}
+
+.ppi-split-btn:focus {
+	outline: 2px solid #3B82F6;
+	outline-offset: 1px;
+}
+
+/* ── Control bar for parallel planning checkbox ──────────────────────────── */
+.ppi-control-bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid #e5e7eb;
+	background: #f9fafb;
+}
+
+.ppi-control-bar label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	cursor: pointer;
+	font-weight: 500;
+	color: #374151;
+	user-select: none;
+}
+
+.ppi-control-bar input[type="checkbox"] {
+	cursor: pointer;
+	width: 16px;
+	height: 16px;
+}
