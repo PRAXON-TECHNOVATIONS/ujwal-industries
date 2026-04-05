@@ -162,51 +162,56 @@ def make_time_log_with_material_check(args):
         if jc.custom_tool_name:
             args["custom_tool"] = jc.custom_tool_name
             args["custom_tool_reason"] = jc.custom_reason_for_tool_change
-            
-        if jc.work_order:
-            # Transferred FG from Work Order
-            wo = frappe.get_doc("Work Order", jc.work_order)
-            transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
 
-            # Produced qty from ALL Job Cards
-            produced_submitted = (
-                frappe.db.sql(
-                    """
-                    SELECT SUM(total_completed_qty)
-                    FROM `tabJob Card`
-                    WHERE work_order=%s
-                      AND docstatus=1
-                    """,
-                    jc.work_order,
-                )[0][0]
-                or 0
-            )
-
-            # Produced qty from CURRENT Job Card (DRAFT)
-            produced_current = flt(jc.total_completed_qty or 0)
-
-            total_produced = flt(produced_submitted) + flt(produced_current)
-
-            available_fg = transferred_fg - total_produced
-            if available_fg < 0:
-                available_fg = 0
-
-            if available_fg <= 0:
-                frappe.throw(
-                    title="No Quantity Available",
-                    msg=f"""
-                    <b>No production quantity available to continue this Job</b><br><br>
-
-                    <b>Work Order:</b> {jc.work_order}<br>
-                    <b>Material Transferred (FG):</b> {transferred_fg}<br>
-                    <b>Already Produced:</b> {total_produced}<br>
-                    <b>Available Qty:</b>
-                    <span style="color:red;"><b>0</b></span><br><br>
-
-                    Please transfer additional material against the Work Order
-                    to resume or start this Job Card.
-                    """
-                )
+        # NOTE:
+        # Intentionally commented out FG-vs-material-transfer validation for
+        # Work In Progress / Resume Job. In multi-operation work orders, one
+        # material transfer is shared across multiple job cards, so later
+        # operation job cards should not be blocked from starting/resuming.
+        # if jc.work_order:
+        #     # Transferred FG from Work Order
+        #     wo = frappe.get_doc("Work Order", jc.work_order)
+        #     transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+        #
+        #     # Produced qty from ALL Job Cards
+        #     produced_submitted = (
+        #         frappe.db.sql(
+        #             """
+        #             SELECT SUM(total_completed_qty)
+        #             FROM `tabJob Card`
+        #             WHERE work_order=%s
+        #               AND docstatus=1
+        #             """,
+        #             jc.work_order,
+        #         )[0][0]
+        #         or 0
+        #     )
+        #
+        #     # Produced qty from CURRENT Job Card (DRAFT)
+        #     produced_current = flt(jc.total_completed_qty or 0)
+        #
+        #     total_produced = flt(produced_submitted) + flt(produced_current)
+        #
+        #     available_fg = transferred_fg - total_produced
+        #     if available_fg < 0:
+        #         available_fg = 0
+        #
+        #     if available_fg <= 0:
+        #         frappe.throw(
+        #             title="No Quantity Available",
+        #             msg=f"""
+        #             <b>No production quantity available to continue this Job</b><br><br>
+        #
+        #             <b>Work Order:</b> {jc.work_order}<br>
+        #             <b>Material Transferred (FG):</b> {transferred_fg}<br>
+        #             <b>Already Produced:</b> {total_produced}<br>
+        #             <b>Available Qty:</b>
+        #             <span style="color:red;"><b>0</b></span><br><br>
+        #
+        #             Please transfer additional material against the Work Order
+        #             to resume or start this Job Card.
+        #             """
+        #         )
     result = _original_make_time_log(args)
     jc = frappe.get_doc("Job Card", job_card_id)
 
@@ -265,7 +270,11 @@ def job_card_validate(doc: Document, method=None):
             title="Workstation Under Maintenance",
             msg=message
     )
-    validate_job_card_qty_fg_based(doc, method)
+    # NOTE:
+    # Intentionally commented out FG-vs-material-transfer validation for job
+    # card save/submit. One material transfer can cover multiple operation-wise
+    # job cards under the same work order.
+    # validate_job_card_qty_fg_based(doc, method)
     build_tool_summary_html(doc)
     set_previous_tool(doc)
         
