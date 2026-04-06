@@ -43,10 +43,22 @@ frappe.query_reports["BOM Stock Tree Report"] = {
 			fieldtype: "MultiSelectList",
 			get_data: function (txt) {
 				const company = frappe.query_report.get_filter_value("company");
-				return frappe.db.get_link_options("Warehouse", txt, {
-					is_group: 0,
-					disabled: 0,
-					...(company ? { company } : {}),
+				return frappe.call({
+					method: "frappe.desk.search.search_link",
+					args: {
+						doctype: "Warehouse",
+						txt,
+						filters: {
+							disabled: 0,
+							...(company ? { company } : {}),
+						},
+						page_length: 1000,
+					},
+				}).then((r) => {
+					return (r.message || []).map((row) => {
+						if (typeof row === "string") return row;
+						return row.value || row.description || row.name;
+					});
 				});
 			},
 		},
@@ -80,6 +92,14 @@ frappe.query_reports["BOM Stock Tree Report"] = {
 
 		if (data.row_type === "Scrap" && (column.fieldname === "row_type" || column.fieldname === "item_code")) {
 			value = `<span style="color:#c0392b;font-weight:600;">${value}</span>`;
+		}
+
+		if (column.fieldname === "warehouse_breakup" && data.warehouse_breakup) {
+			value = `<div title="${frappe.utils.escape_html(
+				data.warehouse_breakup
+			)}" style="white-space:normal;line-height:1.4;font-size:12px;">${frappe.utils.escape_html(
+				data.warehouse_breakup
+			)}</div>`;
 		}
 
 		return value;

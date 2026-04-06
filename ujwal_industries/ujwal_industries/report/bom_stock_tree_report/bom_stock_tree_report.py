@@ -10,7 +10,8 @@ def execute(filters=None):
 	filters.warehouses = parse_multi_select(filters.get("warehouses"))
 	filters.max_depth = cint(filters.get("max_depth") or 10)
 
-	warehouses = get_warehouses(filters)
+	selected_warehouses = get_selected_warehouses(filters)
+	filters.resolved_warehouse_names = get_resolved_warehouse_names(selected_warehouses)
 	boms = get_boms(filters)
 
 	if not boms:
@@ -22,9 +23,21 @@ def execute(filters=None):
 		collect_item_codes(bom.name, item_codes, bom_cache, filters.max_depth)
 		item_codes.add(bom.item)
 
-	stock_map = get_stock_map(item_codes, warehouses)
-	columns = get_columns(warehouses)
-	data = build_tree_data(boms, stock_map, warehouses, bom_cache, filters.max_depth)
+	total_stock_map = get_total_stock_map(item_codes, filters)
+	breakup_stock_map = get_breakup_stock_map(item_codes, filters)
+	if not selected_warehouses:
+		selected_warehouses = get_breakup_based_warehouses(breakup_stock_map)
+	warehouse_stock_map = get_warehouse_stock_map(item_codes, selected_warehouses, breakup_stock_map)
+	columns = get_columns(selected_warehouses)
+	data = build_tree_data(
+		boms,
+		total_stock_map,
+		breakup_stock_map,
+		warehouse_stock_map,
+		selected_warehouses,
+		bom_cache,
+		filters.max_depth,
+	)
 
 	return columns, data
 
@@ -62,6 +75,12 @@ def get_columns(warehouses):
 			"label": _("Total Actual Stock"),
 			"fieldtype": "Float",
 			"width": 140,
+		},
+		{
+			"fieldname": "warehouse_breakup",
+			"label": _("Warehouse Qty Breakup"),
+			"fieldtype": "Data",
+			"width": 320,
 		},
 		{
 			"fieldname": "stock_uom",
@@ -105,32 +124,101 @@ def get_boms(filters):
 	)
 
 
-def get_warehouses(filters):
+def get_selected_warehouses(filters):
 	selected_warehouses = filters.get("warehouses") or []
-	warehouse_filters = {"is_group": 0, "disabled": 0}
+	if not selected_warehouses:
+		return []
+
+	warehouse_filters = {
+		"disabled": 0,
+		"name": ["in", selected_warehouses],
+	}
 
 	if filters.get("company"):
 		warehouse_filters["company"] = filters.company
 
-	if selected_warehouses:
-		warehouse_filters["name"] = ["in", selected_warehouses]
-
 	warehouses = frappe.get_all(
 		"Warehouse",
 		filters=warehouse_filters,
-		fields=["name"],
-		order_by="name asc",
+		fields=["name", "is_group", "lft", "rgt"],
 	)
+
+	warehouse_map = {warehouse.name: warehouse for warehouse in warehouses}
+	ordered_warehouses = []
+	seen_leaf_warehouses = set()
+
+	for warehouse_name in selected_warehouses:
+		warehouse = warehouse_map.get(warehouse_name)
+		if not warehouse:
+			continue
+
+		child_warehouses = get_child_warehouses(warehouse, filters.get("company"))
+		for child_warehouse in child_warehouses:
+			if child_warehouse in seen_leaf_warehouses:
+				continue
+
+			seen_leaf_warehouses.add(child_warehouse)
+			ordered_warehouses.append(
+				frappe._dict(
+					{
+						"name": child_warehouse,
+						"is_group": 0,
+						"fieldname": f"warehouse_{scrub(child_warehouse)}",
+						"label": child_warehouse,
+						"child_warehouses": [child_warehouse],
+					}
+				)
+			)
+
+	return ordered_warehouses
+
+
+def get_child_warehouses(warehouse, company=None):
+	if not cint(warehouse.is_group):
+		return [warehouse.name]
+
+	filters = {
+		"lft": [">", warehouse.lft],
+		"rgt": ["<", warehouse.rgt],
+		"is_group": 0,
+		"disabled": 0,
+	}
+	if company:
+		filters["company"] = company
+
+	return frappe.get_all("Warehouse", filters=filters, pluck="name", order_by="lft asc")
+
+
+def get_resolved_warehouse_names(selected_warehouses):
+	warehouse_names = []
+	for warehouse in selected_warehouses:
+		warehouse_names.extend(warehouse.child_warehouses or [])
+
+	return list(dict.fromkeys(warehouse_names))
+
+
+def get_breakup_based_warehouses(breakup_stock_map):
+	warehouse_names = []
+
+	for warehouse_rows in breakup_stock_map.values():
+		for warehouse_name, qty in warehouse_rows.items():
+			if not flt(qty):
+				continue
+			warehouse_names.append(warehouse_name)
+
+	ordered_names = list(dict.fromkeys(warehouse_names))
 
 	return [
 		frappe._dict(
 			{
-				"name": warehouse.name,
-				"fieldname": f"warehouse_{scrub(warehouse.name)}",
-				"label": warehouse.name,
+				"name": warehouse_name,
+				"is_group": 0,
+				"fieldname": f"warehouse_{scrub(warehouse_name)}",
+				"label": warehouse_name,
+				"child_warehouses": [warehouse_name],
 			}
 		)
-		for warehouse in warehouses
+		for warehouse_name in ordered_names
 	]
 
 
@@ -184,26 +272,66 @@ def get_bom_doc(bom_no, bom_cache):
 	return bom_cache[bom_no]
 
 
-def get_stock_map(item_codes, warehouses):
+def get_total_stock_map(item_codes, filters):
 	if not item_codes:
 		return {}
 
-	warehouse_names = [warehouse.name for warehouse in warehouses]
-	if not warehouse_names:
-		return {}
+	conditions = ["item_code IN %(item_codes)s"]
+	values = {"item_codes": tuple(item_codes)}
+
+	selected_warehouses = filters.get("resolved_warehouse_names") or []
+	if selected_warehouses:
+		conditions.append("warehouse IN %(warehouses)s")
+		values["warehouses"] = tuple(selected_warehouses)
+	elif filters.get("company"):
+		conditions.append(
+			"warehouse IN (SELECT name FROM `tabWarehouse` WHERE company = %(company)s AND is_group = 0 AND disabled = 0)"
+		)
+		values["company"] = filters.company
 
 	stock_rows = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			item_code,
-			warehouse,
 			SUM(actual_qty) AS actual_qty
 		FROM `tabBin`
-		WHERE item_code IN %(item_codes)s
-			AND warehouse IN %(warehouses)s
-		GROUP BY item_code, warehouse
+		WHERE {" AND ".join(conditions)}
+		GROUP BY item_code
 		""",
-		{"item_codes": tuple(item_codes), "warehouses": tuple(warehouse_names)},
+		values,
+		as_dict=True,
+	)
+
+	return {row.item_code: flt(row.actual_qty) for row in stock_rows}
+
+
+def get_breakup_stock_map(item_codes, filters):
+	if not item_codes:
+		return {}
+
+	conditions = ["bin.item_code IN %(item_codes)s"]
+	values = {"item_codes": tuple(item_codes)}
+
+	selected_warehouses = filters.get("resolved_warehouse_names") or []
+	if selected_warehouses:
+		conditions.append("bin.warehouse IN %(warehouses)s")
+		values["warehouses"] = tuple(selected_warehouses)
+	elif filters.get("company"):
+		conditions.append("warehouse.company = %(company)s")
+		values["company"] = filters.company
+
+	stock_rows = frappe.db.sql(
+		f"""
+		SELECT
+			bin.item_code,
+			bin.warehouse,
+			SUM(bin.actual_qty) AS actual_qty
+		FROM `tabBin` bin
+		INNER JOIN `tabWarehouse` warehouse ON warehouse.name = bin.warehouse
+		WHERE {" AND ".join(conditions)}
+		GROUP BY bin.item_code, bin.warehouse
+		""",
+		values,
 		as_dict=True,
 	)
 
@@ -214,10 +342,27 @@ def get_stock_map(item_codes, warehouses):
 	return stock_map
 
 
-def build_tree_data(boms, stock_map, warehouses, bom_cache, max_depth):
+def get_warehouse_stock_map(item_codes, warehouses, breakup_stock_map):
+	if not item_codes or not warehouses:
+		return {}
+
+	stock_map = {}
+
+	for item_code, warehouse_rows in breakup_stock_map.items():
+		for warehouse in warehouses:
+			total_qty = sum(flt(warehouse_rows.get(child_warehouse)) for child_warehouse in warehouse.child_warehouses)
+			if total_qty:
+				stock_map.setdefault(item_code, {})[warehouse.name] = flt(total_qty)
+
+	return stock_map
+
+
+def build_tree_data(boms, total_stock_map, breakup_stock_map, warehouse_stock_map, warehouses, bom_cache, max_depth):
 	data = []
 	for bom in boms:
-		total_stock, warehouse_stock = get_row_stock(bom.item, stock_map, warehouses)
+		total_stock, warehouse_stock, warehouse_breakup = get_row_stock(
+			bom.item, total_stock_map, breakup_stock_map, warehouse_stock_map, warehouses
+		)
 		data.append(
 			make_row(
 				indent=0,
@@ -229,6 +374,7 @@ def build_tree_data(boms, stock_map, warehouses, bom_cache, max_depth):
 				qty=bom.quantity,
 				stock_uom=bom.uom,
 				total_actual_stock=total_stock,
+				warehouse_breakup=warehouse_breakup,
 				warehouse_stock=warehouse_stock,
 			)
 		)
@@ -244,6 +390,7 @@ def build_tree_data(boms, stock_map, warehouses, bom_cache, max_depth):
 				qty=bom.quantity,
 				stock_uom=bom.uom,
 				total_actual_stock=total_stock,
+				warehouse_breakup=warehouse_breakup,
 				warehouse_stock=warehouse_stock,
 			)
 		)
@@ -252,7 +399,9 @@ def build_tree_data(boms, stock_map, warehouses, bom_cache, max_depth):
 			data=data,
 			bom_no=bom.name,
 			parent_indent=1,
-			stock_map=stock_map,
+			total_stock_map=total_stock_map,
+			breakup_stock_map=breakup_stock_map,
+			warehouse_stock_map=warehouse_stock_map,
 			warehouses=warehouses,
 			bom_cache=bom_cache,
 			max_depth=max_depth,
@@ -261,7 +410,19 @@ def build_tree_data(boms, stock_map, warehouses, bom_cache, max_depth):
 	return data
 
 
-def append_bom_items(data, bom_no, parent_indent, stock_map, warehouses, bom_cache, max_depth, level=1, visited=None):
+def append_bom_items(
+	data,
+	bom_no,
+	parent_indent,
+	total_stock_map,
+	breakup_stock_map,
+	warehouse_stock_map,
+	warehouses,
+	bom_cache,
+	max_depth,
+	level=1,
+	visited=None,
+):
 	if level > max_depth:
 		return
 
@@ -273,7 +434,9 @@ def append_bom_items(data, bom_no, parent_indent, stock_map, warehouses, bom_cac
 	bom_doc = get_bom_doc(bom_no, bom_cache)
 
 	for item in bom_doc.items:
-		total_stock, warehouse_stock = get_row_stock(item.item_code, stock_map, warehouses)
+		total_stock, warehouse_stock, warehouse_breakup = get_row_stock(
+			item.item_code, total_stock_map, breakup_stock_map, warehouse_stock_map, warehouses
+		)
 		row_type = "SFG" if item.bom_no else "RM"
 
 		data.append(
@@ -287,6 +450,7 @@ def append_bom_items(data, bom_no, parent_indent, stock_map, warehouses, bom_cac
 				qty=item.qty,
 				stock_uom=item.uom,
 				total_actual_stock=total_stock,
+				warehouse_breakup=warehouse_breakup,
 				warehouse_stock=warehouse_stock,
 			)
 		)
@@ -296,7 +460,9 @@ def append_bom_items(data, bom_no, parent_indent, stock_map, warehouses, bom_cac
 				data=data,
 				bom_no=item.bom_no,
 				parent_indent=parent_indent + 1,
-				stock_map=stock_map,
+				total_stock_map=total_stock_map,
+				breakup_stock_map=breakup_stock_map,
+				warehouse_stock_map=warehouse_stock_map,
 				warehouses=warehouses,
 				bom_cache=bom_cache,
 				max_depth=max_depth,
@@ -304,45 +470,46 @@ def append_bom_items(data, bom_no, parent_indent, stock_map, warehouses, bom_cac
 				visited=visited.copy(),
 			)
 
-	append_scrap_items(
-		data=data,
-		bom_doc=bom_doc,
-		indent=parent_indent + 1,
-		stock_map=stock_map,
-		warehouses=warehouses,
-	)
 
-
-def append_scrap_items(data, bom_doc, indent, stock_map, warehouses):
-	for scrap_item in bom_doc.scrap_items:
-		total_stock, warehouse_stock = get_row_stock(scrap_item.item_code, stock_map, warehouses)
-		data.append(
-			make_row(
-				indent=indent,
-				bom_no=bom_doc.name,
-				item_code=scrap_item.item_code,
-				item_name=scrap_item.item_name,
-				row_type="Scrap",
-				linked_bom="",
-				qty=scrap_item.stock_qty,
-				stock_uom=scrap_item.stock_uom,
-				total_actual_stock=total_stock,
-				warehouse_stock=warehouse_stock,
-			)
-		)
-
-
-def get_row_stock(item_code, stock_map, warehouses):
-	item_stock = stock_map.get(item_code, {})
+def get_row_stock(item_code, total_stock_map, breakup_stock_map, warehouse_stock_map, warehouses):
+	item_stock = warehouse_stock_map.get(item_code, {})
+	item_breakup = breakup_stock_map.get(item_code, {})
 	warehouse_stock = {}
-	total_stock = 0
+	total_stock = flt(total_stock_map.get(item_code))
 
 	for warehouse in warehouses:
 		qty = flt(item_stock.get(warehouse.name))
 		warehouse_stock[warehouse.fieldname] = qty
-		total_stock += qty
 
-	return total_stock, warehouse_stock
+	return total_stock, warehouse_stock, format_warehouse_breakup(item_breakup)
+
+
+def format_warehouse_breakup(item_breakup, limit=5):
+	if not item_breakup:
+		return ""
+
+	sorted_rows = sorted(
+		((warehouse, flt(qty)) for warehouse, qty in item_breakup.items() if flt(qty)),
+		key=lambda row: abs(row[1]),
+		reverse=True,
+	)
+
+	if not sorted_rows:
+		return ""
+
+	visible_rows = sorted_rows[:limit]
+	breakup = " | ".join(
+		f"{get_warehouse_short_name(warehouse)}: {qty:,.3f}" for warehouse, qty in visible_rows
+	)
+
+	if len(sorted_rows) > limit:
+		breakup += _(" | +{0} more").format(len(sorted_rows) - limit)
+
+	return breakup
+
+
+def get_warehouse_short_name(warehouse):
+	return warehouse.split(" - ")[0].strip() if " - " in warehouse else warehouse
 
 
 def make_row(
@@ -355,6 +522,7 @@ def make_row(
 	qty,
 	stock_uom,
 	total_actual_stock,
+	warehouse_breakup,
 	warehouse_stock,
 ):
 	row = {
@@ -367,6 +535,7 @@ def make_row(
 		"qty": flt(qty),
 		"stock_uom": stock_uom,
 		"total_actual_stock": flt(total_actual_stock),
+		"warehouse_breakup": warehouse_breakup,
 	}
 	row.update(warehouse_stock)
 	return row
