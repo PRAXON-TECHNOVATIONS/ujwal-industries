@@ -379,7 +379,10 @@ def _propagate_rm_delays_to_fg(doc: Document, adjusted_rm_schedules: dict[str, A
     fg_bom_nos = list(set(row.bom_no for row in doc.po_items if row.get("bom_no")))
     if not fg_bom_nos:
         return
-
+    
+    if not adjusted_rm_schedules: 
+        return
+    
     # Query: which FG BOMs contain the adjusted raw materials
     bom_item_links = frappe.db.sql(
         """
