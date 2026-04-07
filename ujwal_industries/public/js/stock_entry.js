@@ -59,5 +59,16 @@ frappe.ui.form.on("Stock Entry Detail", {
         if (frm.doc.custom_is_scrap_entry) {
             frappe.model.set_value(cdt, cdn, "is_scrap_item", 1);
         }
+    },
+
+    qty(frm, cdt, cdn) {
+        if (!frm.doc.set_basic_rate_manually) return;
+        let saved_rate = locals[cdt][cdn].basic_rate;
+        setTimeout(() => {
+            let current = locals[cdt] && locals[cdt][cdn];
+            if (current && current.basic_rate !== saved_rate) {
+                frappe.model.set_value(cdt, cdn, "basic_rate", saved_rate);
+            }
+        }, 800);
     }
 });

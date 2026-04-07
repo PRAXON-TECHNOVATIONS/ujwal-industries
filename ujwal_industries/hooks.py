@@ -185,8 +185,15 @@ doc_events = {
 	},
 
  	"Stock Entry": {
+        "before_validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.stash_manually_set_rates"
+        ],
         "validate": [
-            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance",
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.protect_manually_set_rates"
+        ],
+        "before_save": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.finalize_manual_rate_taxes"
         ]
     },
 	"Production Plan": {
@@ -247,9 +254,9 @@ doc_events = {
 	"*": {
         "autoname": "ujwal_industries.api.naming_series.numeric_series"
     },
-	"Sales Invoice":{
-		"validate": "ujwal_industries.ujwal_industries.overrides.sales_invoice.validate_sales_invoice_sequence"
-	},
+	# "Sales Invoice":{
+	# 	"validate": "ujwal_industries.ujwal_industries.overrides.sales_invoice.validate_sales_invoice_sequence"
+	# },
  
 }
 
@@ -402,9 +409,10 @@ fixtures = [
 	# },
 
  {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
+ {"dt": "Property Setter" , "filters":{"module": "Ujwal Industries"}}
 ]
 
-# Translation
+# Translations
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
