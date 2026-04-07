@@ -185,8 +185,15 @@ doc_events = {
 	},
 
  	"Stock Entry": {
+        "before_validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.stash_manually_set_rates"
+        ],
         "validate": [
-            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance",
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.protect_manually_set_rates"
+        ],
+        "before_save": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.finalize_manual_rate_taxes"
         ]
     },
 	"Production Plan": {
