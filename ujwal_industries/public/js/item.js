@@ -39,12 +39,18 @@ function toggle_all_subcontracting_supplier_rows(frm) {
  * a single lazy get_query that reads frm.doc.custom_material_type at open-time.
  * setTimeout(0) ensures we run after ERPNext's refresh set_query call.
  */
-function install_item_group_query(frm) {
+function install_field_queries(frm) {
 	setTimeout(() => {
-		const field = frm.fields_dict['item_group'];
-		// Clear the hardcoded link_filters so it doesn't stomp our get_query
-		field.df.link_filters = '';
-		field.get_query = () => {
+		// Material Type: only show is_group=1 (parent groups like ZCON, ZCPM…)
+		frm.fields_dict['custom_material_type'].get_query = () => ({
+			filters: { is_group: 1, parent_item_group: 'All Item Groups' }
+		});
+
+		// Item Group: clear ERPNext's hardcoded df.link_filters (is_group=0) that
+		// overwrites get_query on every dropdown open, then set our lazy filter.
+		const ig = frm.fields_dict['item_group'];
+		ig.df.link_filters = '';
+		ig.get_query = () => {
 			if (!frm.doc.custom_material_type) {
 				return { filters: { is_group: 0 } };
 			}
@@ -62,7 +68,7 @@ function install_item_group_query(frm) {
 
 frappe.ui.form.on('Item', {
 	refresh(frm) {
-		install_item_group_query(frm);
+		install_field_queries(frm);
 		toggle_all_subcontracting_supplier_rows(frm);
 	},
 
