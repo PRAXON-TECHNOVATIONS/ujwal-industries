@@ -301,7 +301,7 @@
    "name": "Item-custom_planning_type",
    "no_copy": 0,
    "non_negative": 0,
-   "options": "\n1\n2\n3",
+   "options": "\n10\n20\n40",
    "owner": "Administrator",
    "permlevel": 0,
    "placeholder": null,
