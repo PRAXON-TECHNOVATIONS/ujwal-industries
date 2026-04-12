@@ -173,8 +173,7 @@ override_doctype_class = {
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
-		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
