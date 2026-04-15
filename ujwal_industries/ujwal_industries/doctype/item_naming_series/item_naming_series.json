@@ -7,7 +7,6 @@
  "engine": "InnoDB",
  "field_order": [
   "item_group",
-  "material_type",
   "column_break_aydq",
   "from_start",
   "to_end",
@@ -43,13 +42,6 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Current No."
-  },
-  {
-   "fieldname": "material_type",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Material Type",
-   "options": "Material Type"
   }
  ],
  "grid_page_length": 50,
