@@ -11,9 +11,85 @@ from frappe.utils import flt , now_datetime, add_days
 from frappe.utils import getdate, nowdate,formatdate
 
 
+from frappe.utils import cint
+
 from erpnext.manufacturing.doctype.job_card.job_card import (
     make_time_log as _original_make_time_log,
 )
+
+
+# ─── Cascade Complete Previous ────────────────────────────────────────────────
+
+def _get_cascade_flag(bom_no: str, operation: str) -> bool:
+    """Return True if the BOM Operation has custom_cascade_complete_previous = 1."""
+    if not bom_no or not operation:
+        return False
+    return bool(
+        frappe.db.get_value(
+            "BOM Operation",
+            {"parent": bom_no, "operation": operation},
+            "custom_cascade_complete_previous",
+        )
+    )
+
+
+def cascade_complete_previous(doc: Document, method: str | None = None) -> None:
+    """
+    Hook: before_validate (fires before ERPNext's sequence check in validate()).
+
+    If the BOM Operation for this Job Card has `custom_cascade_complete_previous = 1`,
+    auto-submit all previous draft Job Cards (lower sequence_id, same Work Order)
+    with the same total_completed_qty.
+
+    Must run in before_validate so that Work Order Operation.completed_qty is
+    updated BEFORE validate_sequence_id runs its check.
+
+    Recursion guard: sets flags.skip_cascade on cascaded JCs.
+    """
+    if doc.flags.get("skip_cascade"):
+        return
+
+    if not (doc.work_order and doc.sequence_id and doc.bom_no):
+        return
+
+    if not _get_cascade_flag(doc.bom_no, doc.operation):
+        return
+
+    qty = flt(doc.total_completed_qty)
+    if not qty:
+        return
+
+    prev_ops = frappe.get_all(
+        "Work Order Operation",
+        filters={
+            "parent": doc.work_order,
+            "sequence_id": ("<", cint(doc.sequence_id)),
+        },
+        fields=["operation", "sequence_id"],
+        order_by="sequence_id asc",
+    )
+
+    for op in prev_ops:
+        jc_name = frappe.db.get_value(
+            "Job Card",
+            {"work_order": doc.work_order, "operation": op.operation, "docstatus": 0},
+            "name",
+        )
+        if not jc_name:
+            continue  # already submitted or missing — skip
+
+        jc = frappe.get_doc("Job Card", jc_name)
+        jc.total_completed_qty = qty
+        jc.flags.skip_cascade = True
+        jc.flags.ignore_permissions = True
+        jc.submit()
+
+        frappe.msgprint(
+            f"Auto-submitted Job Card <b>{jc_name}</b> "
+            f"(Operation: {op.operation}, Qty: {qty})",
+            alert=True,
+            indicator="green",
+        )
 
 def _is_workstation_under_maintenance(workstation: str) -> str | None:
     """
