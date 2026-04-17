@@ -225,7 +225,11 @@ doc_events = {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
 	},
 	"Sales Order": {
-		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_order_position_numbers"
+		"before_save": [
+			"ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_order_position_numbers",
+			"ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
+		],
+		"before_update_after_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
 	},
 	"Delivery Note": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers"
@@ -303,7 +307,9 @@ scheduler_events = {
 # }
 override_whitelisted_methods = {
     "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
-        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check",
+    "erpnext.controllers.accounts_controller.update_child_qty_rate":
+        "ujwal_industries.ujwal_industries.overrides.sales_order_update_items.update_child_qty_rate",
 }
 
 #
