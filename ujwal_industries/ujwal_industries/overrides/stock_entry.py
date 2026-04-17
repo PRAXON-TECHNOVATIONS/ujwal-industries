@@ -27,6 +27,69 @@ class BOMScrapRow(TypedDict):
     tolerance: float
 
 
+def stash_manually_set_rates(doc, method=None):
+    stash = {}
+    for item in doc.get("items"):
+        if item.s_warehouse and item.get("set_basic_rate_manually") and flt(item.basic_rate):
+            stash[item.idx] = flt(item.basic_rate)
+
+    doc._manual_rates_stash = stash
+
+
+def protect_manually_set_rates(doc, method=None):
+    """validate: restore stashed rates and recalculate item-level fields."""
+    stash = getattr(doc, "_manual_rates_stash", {})
+    if not stash:
+        return
+
+    for item in doc.get("items"):
+        if item.idx not in stash:
+            continue
+
+        rate = stash[item.idx]
+        qty = flt(item.transfer_qty)
+        add_cost = flt(item.additional_cost)
+
+        item.basic_rate     = rate
+        item.basic_amount   = flt(qty * rate, item.precision("basic_amount"))
+        item.valuation_rate = rate + (add_cost / qty if qty else 0)
+        item.amount         = item.basic_amount + add_cost
+        item.taxable_value  = item.amount
+
+        # item-level GST amounts
+        item.cgst_amount = flt(item.taxable_value * flt(item.get("cgst_rate") or 0) / 100, 2)
+        item.sgst_amount = flt(item.taxable_value * flt(item.get("sgst_rate") or 0) / 100, 2)
+        item.igst_amount = flt(item.taxable_value * flt(item.get("igst_rate") or 0) / 100, 2)
+        item.cess_amount = flt(item.taxable_value * flt(item.get("cess_rate") or 0) / 100, 2)
+
+    doc.set_total_incoming_outgoing_value()
+    doc.set_total_amount()
+
+
+def finalize_manual_rate_taxes(doc, method=None):
+    """
+    before_save: runs AFTER india_compliance validate hooks.
+    Recalculates taxes table + doc-level totals using corrected taxable_value.
+    Only fires when at least one item has set_basic_rate_manually.
+    """
+    if not any(item.get("set_basic_rate_manually") for item in doc.get("items")):
+        return
+
+    total_taxable = flt(sum(flt(i.taxable_value) for i in doc.get("items")))
+    running_total = total_taxable
+    total_tax = 0.0
+
+    for tax in doc.get("taxes"):
+        tax_amt = flt(total_taxable * flt(tax.rate) / 100, 2)
+        tax.tax_amount = tax_amt
+        running_total = flt(running_total + tax_amt, 2)
+        tax.base_total = running_total
+        total_tax += tax_amt
+
+    doc.total_taxes      = flt(total_tax, 2)
+    doc.base_grand_total = flt(total_taxable + total_tax, 2)
+
+
 @frappe.whitelist()
 def get_bom_scrap_items(bom_no):
     if not bom_no:

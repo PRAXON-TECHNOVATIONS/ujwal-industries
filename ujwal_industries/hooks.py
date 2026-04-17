@@ -30,7 +30,10 @@ from ujwal_industries.overrides import work_order_override
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
+app_include_css = [
+    "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29",
+    "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.0",
+]
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
@@ -121,7 +124,7 @@ after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_field
 # ------------
 
 # before_uninstall = "ujwal_industries.uninstall.before_uninstall"
-# after_uninstall = "ujwal_industries.uninstall.after_uninstall"
+after_uninstall = "ujwal_industries.ujwal_industries.uninstall.after_uninstall"
 
 # Integration Setup
 # ------------------
@@ -173,8 +176,7 @@ override_doctype_class = {
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
-		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
 	},
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
@@ -185,8 +187,15 @@ doc_events = {
 	},
 
  	"Stock Entry": {
+        "before_validate": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.stash_manually_set_rates"
+        ],
         "validate": [
-            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance"
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.validate_scrap_item_tolerance",
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.protect_manually_set_rates"
+        ],
+        "before_save": [
+            "ujwal_industries.ujwal_industries.overrides.stock_entry.finalize_manual_rate_taxes"
         ]
     },
 	"Production Plan": {
@@ -213,6 +222,7 @@ doc_events = {
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
+		"before_validate": "ujwal_industries.ujwal_industries.overrides.job_card.cascade_complete_previous",
 		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
         "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
         "validate": [
