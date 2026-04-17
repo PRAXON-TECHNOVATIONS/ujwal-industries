@@ -60,6 +60,9 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
+	"Delivery Note": "public/js/delivery_note.js",
+	"Sales Order": "public/js/sales_order.js",
+	"Sales Invoice": "public/js/sales_invoice.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
  	"Work Order": "public/js/work_order_scrap.js",
@@ -221,6 +224,19 @@ doc_events = {
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
 	},
+	"Sales Order": {
+		"before_save": [
+			"ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_order_position_numbers",
+			"ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
+		],
+		"before_update_after_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
+	},
+	"Delivery Note": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers"
+	},
+	"Sales Invoice": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers"
+	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
 		"before_validate": "ujwal_industries.ujwal_industries.overrides.job_card.cascade_complete_previous",
@@ -291,7 +307,9 @@ scheduler_events = {
 # }
 override_whitelisted_methods = {
     "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
-        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check",
+    "erpnext.controllers.accounts_controller.update_child_qty_rate":
+        "ujwal_industries.ujwal_industries.overrides.sales_order_update_items.update_child_qty_rate",
 }
 
 #
