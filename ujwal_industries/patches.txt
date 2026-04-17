@@ -10,3 +10,4 @@ ujwal_industries.ujwal_industries.patches.custom_fields.manufacturing_settings_s
 ujwal_industries.ujwal_industries.patches.custom_fields.production_plan_item
 ujwal_industries.ujwal_industries.patches.custom_fields.pp_item_shift_csv
 ujwal_industries.ujwal_industries.patches.custom_fields.bom_operation
+ujwal_industries.ujwal_industries.patches.custom_fields.customer
