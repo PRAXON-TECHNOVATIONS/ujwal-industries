@@ -1,0 +1,60 @@
+/* ── List View: Horizontal Scroll + Text Wrap ────────────────────────────────
+ *
+ * Problem: Frappe list view uses flex layout with .ellipsis on every column,
+ * causing content to be cut off when many columns are added.
+ *
+ * Fix:
+ *   1. Make .result scrollable horizontally.
+ *   2. Let rows expand to fit all columns (min-width: max-content).
+ *   3. Give each column a fixed min-width and allow text to wrap.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/* 1. Scroll container */
+.frappe-list .result {
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
+/* 2. Header + every row expands to content width — triggers scroll */
+.frappe-list .list-row-head,
+.frappe-list .list-row-container {
+    min-width: max-content;
+}
+
+/* 3. level-left must not clamp at 80% when row is wider than viewport */
+.frappe-list .list-row .level-left,
+.frappe-list .list-row-head .level-left {
+    min-width: max-content;
+    overflow: visible;
+}
+
+/* 4. level-right stays compact and never wraps (timestamps, comment counts) */
+.frappe-list .list-row .level-right,
+.frappe-list .list-row-head .level-right {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* 5. Each column: fixed min/max width + text wrap instead of ellipsis */
+.frappe-list .list-row-col {
+    min-width: 150px;
+    max-width: 280px;
+    white-space: normal !important;   /* override .ellipsis */
+    overflow: visible !important;     /* override .ellipsis */
+    text-overflow: unset !important;  /* override .ellipsis */
+    word-break: break-word;
+    align-self: flex-start;
+    padding-top: 2px;
+}
+
+/* 6. Subject/title column gets slightly more breathing room */
+.frappe-list .list-row-col.list-subject {
+    min-width: 200px;
+}
+
+/* 7. Prevent the outer level-left ellipsis from hiding overflow */
+.frappe-list .level-left.ellipsis {
+    overflow: visible !important;
+    white-space: normal !important;
+    text-overflow: unset !important;
+}
