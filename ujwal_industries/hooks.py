@@ -60,6 +60,9 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
+	"Delivery Note": "public/js/delivery_note.js",
+	"Sales Order": "public/js/sales_order.js",
+	"Sales Invoice": "public/js/sales_invoice.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
  	"Work Order": "public/js/work_order_scrap.js",
@@ -220,6 +223,15 @@ doc_events = {
 	},
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
+	},
+	"Sales Order": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_order_position_numbers"
+	},
+	"Delivery Note": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers"
+	},
+	"Sales Invoice": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers"
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
