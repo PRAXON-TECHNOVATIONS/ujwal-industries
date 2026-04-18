@@ -33,16 +33,66 @@ def _get_cascade_flag(bom_no: str, operation: str) -> bool:
     )
 
 
+def _get_effective_completed_qty(doc: Document) -> float:
+    """
+    Compute the completed qty from the in-memory document state.
+
+    `before_validate` runs before ERPNext recomputes `total_completed_qty` from time logs,
+    so direct access to `doc.total_completed_qty` is unreliable during cascade handling.
+    """
+    precision = doc.precision("total_completed_qty") if hasattr(doc, "precision") else None
+    qty = 0.0
+
+    for row in doc.get("time_logs") or []:
+        qty += flt(row.completed_qty)
+
+    for row in doc.get("sub_operations") or []:
+        qty += flt(row.completed_qty)
+
+    if not qty:
+        qty = flt(getattr(doc, "total_completed_qty", 0))
+
+    return flt(qty, precision) if precision is not None else flt(qty)
+
+
+def _append_system_time_log(job_card: Document, qty: float, source_doc: Document) -> None:
+    """
+    Add a minimal system-generated time log so cascaded Job Cards can be submitted.
+
+    This app enforces time logs on submit. When a later operation is allowed to cascade
+    completion to earlier operations, those earlier Job Cards often have no operator logs.
+    We create a zero-duration entry carrying the completed qty so ERPNext can compute
+    `total_completed_qty` during validation.
+    """
+    source_row = (source_doc.get("time_logs") or [])[-1] if source_doc.get("time_logs") else None
+    timestamp = (
+        source_row.to_time
+        or source_row.from_time
+        or getattr(source_doc, "actual_end_date", None)
+        or getattr(source_doc, "actual_start_date", None)
+        or now_datetime()
+    )
+    employee = source_row.employee if source_row and source_row.employee else None
+
+    job_card.append(
+        "time_logs",
+        {
+            "employee": employee,
+            "from_time": timestamp,
+            "to_time": timestamp,
+            "completed_qty": qty,
+            "operation": job_card.operation,
+        },
+    )
+
+
 def cascade_complete_previous(doc: Document, method: str | None = None) -> None:
     """
-    Hook: before_validate (fires before ERPNext's sequence check in validate()).
+    Hook: before_submit.
 
     If the BOM Operation for this Job Card has `custom_cascade_complete_previous = 1`,
     auto-submit all previous draft Job Cards (lower sequence_id, same Work Order)
     with the same total_completed_qty.
-
-    Must run in before_validate so that Work Order Operation.completed_qty is
-    updated BEFORE validate_sequence_id runs its check.
 
     Recursion guard: sets flags.skip_cascade on cascaded JCs.
     """
@@ -55,7 +105,7 @@ def cascade_complete_previous(doc: Document, method: str | None = None) -> None:
     if not _get_cascade_flag(doc.bom_no, doc.operation):
         return
 
-    qty = flt(doc.total_completed_qty)
+    qty = _get_effective_completed_qty(doc)
     if not qty:
         return
 
@@ -65,23 +115,26 @@ def cascade_complete_previous(doc: Document, method: str | None = None) -> None:
             "parent": doc.work_order,
             "sequence_id": ("<", cint(doc.sequence_id)),
         },
-        fields=["operation", "sequence_id"],
+        fields=["name", "operation", "sequence_id"],
         order_by="sequence_id asc",
     )
 
     for op in prev_ops:
         jc_name = frappe.db.get_value(
             "Job Card",
-            {"work_order": doc.work_order, "operation": op.operation, "docstatus": 0},
+            {"work_order": doc.work_order, "operation_id": op.name, "docstatus": 0},
             "name",
         )
         if not jc_name:
             continue  # already submitted or missing — skip
 
         jc = frappe.get_doc("Job Card", jc_name)
-        jc.total_completed_qty = qty
         jc.flags.skip_cascade = True
         jc.flags.ignore_permissions = True
+        existing_qty = _get_effective_completed_qty(jc)
+        delta_qty = flt(qty - existing_qty, jc.precision("total_completed_qty"))
+        if delta_qty > 0:
+            _append_system_time_log(jc, delta_qty, doc)
         jc.submit()
 
         frappe.msgprint(
@@ -239,55 +292,27 @@ def make_time_log_with_material_check(args):
             args["custom_tool"] = jc.custom_tool_name
             args["custom_tool_reason"] = jc.custom_reason_for_tool_change
 
-        # NOTE:
-        # Intentionally commented out FG-vs-material-transfer validation for
-        # Work In Progress / Resume Job. In multi-operation work orders, one
-        # material transfer is shared across multiple job cards, so later
-        # operation job cards should not be blocked from starting/resuming.
-        # if jc.work_order:
-        #     # Transferred FG from Work Order
-        #     wo = frappe.get_doc("Work Order", jc.work_order)
-        #     transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
-        #
-        #     # Produced qty from ALL Job Cards
-        #     produced_submitted = (
-        #         frappe.db.sql(
-        #             """
-        #             SELECT SUM(total_completed_qty)
-        #             FROM `tabJob Card`
-        #             WHERE work_order=%s
-        #               AND docstatus=1
-        #             """,
-        #             jc.work_order,
-        #         )[0][0]
-        #         or 0
-        #     )
-        #
-        #     # Produced qty from CURRENT Job Card (DRAFT)
-        #     produced_current = flt(jc.total_completed_qty or 0)
-        #
-        #     total_produced = flt(produced_submitted) + flt(produced_current)
-        #
-        #     available_fg = transferred_fg - total_produced
-        #     if available_fg < 0:
-        #         available_fg = 0
-        #
-        #     if available_fg <= 0:
-        #         frappe.throw(
-        #             title="No Quantity Available",
-        #             msg=f"""
-        #             <b>No production quantity available to continue this Job</b><br><br>
-        #
-        #             <b>Work Order:</b> {jc.work_order}<br>
-        #             <b>Material Transferred (FG):</b> {transferred_fg}<br>
-        #             <b>Already Produced:</b> {total_produced}<br>
-        #             <b>Available Qty:</b>
-        #             <span style="color:red;"><b>0</b></span><br><br>
-        #
-        #             Please transfer additional material against the Work Order
-        #             to resume or start this Job Card.
-        #             """
-        #         )
+        if jc.work_order:
+            transferred_fg, manufactured_fg, available_fg = get_fg_availability_internal(
+                jc.work_order, exclude_job_card=jc.name
+            )
+
+            if available_fg <= 0:
+                frappe.throw(
+                    title="No Quantity Available",
+                    msg=f"""
+                    <b>No production quantity available to continue this Job</b><br><br>
+
+                    <b>Work Order:</b> {jc.work_order}<br>
+                    <b>Material Transferred (FG):</b> {transferred_fg}<br>
+                    <b>Already Manufactured:</b> {manufactured_fg}<br>
+                    <b>Available Qty:</b>
+                    <span style="color:red;"><b>0</b></span><br><br>
+
+                    Please transfer additional material against the Work Order
+                    to resume or start this Job Card.
+                    """
+                )
     result = _original_make_time_log(args)
     jc = frappe.get_doc("Job Card", job_card_id)
 
@@ -507,6 +532,9 @@ def validate_sequence_id_with_tolerance(self) -> None:
         return
 
     if not (self.work_order and self.sequence_id):
+        return
+
+    if getattr(self, "_action", None) == "submit" and _get_cascade_flag(self.bom_no, self.operation):
         return
 
     precision = self.precision("total_completed_qty")
