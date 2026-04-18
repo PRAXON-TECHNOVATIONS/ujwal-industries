@@ -239,8 +239,10 @@ doc_events = {
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
-		"before_validate": "ujwal_industries.ujwal_industries.overrides.job_card.cascade_complete_previous",
-		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+		"before_submit": [
+			"ujwal_industries.ujwal_industries.overrides.job_card.cascade_complete_previous",
+			"ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+		],
         "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
         "validate": [
             "ujwal_industries.ujwal_industries.overrides.job_card.job_card_validate"
