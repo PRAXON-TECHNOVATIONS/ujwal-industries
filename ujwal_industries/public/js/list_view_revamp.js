@@ -1,0 +1,125 @@
+(function () {
+	const PAGE_CLASS = "ujwal-scrollable-list-view";
+	const COLUMN_MIN_WIDTH = 120;
+	const COLUMN_MAX_WIDTH = 320;
+	const META_MIN_WIDTH = 110;
+	const META_MAX_WIDTH = 220;
+	const SUBJECT_MIN_WIDTH = 160;
+
+	function clamp(value, min, max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	function get_measurement_width($el) {
+		if (!$el?.length) return 0;
+		const node = $el.get(0);
+		return Math.ceil(
+			Math.max(
+				node.scrollWidth || 0,
+				$el.outerWidth() || 0,
+				($el.text() || "").trim().length * 8
+			)
+		);
+	}
+
+	function apply_width($el, width) {
+		if (!$el?.length || !width) return;
+		$el.css({
+			width: `${width}px`,
+			minWidth: `${width}px`,
+			maxWidth: `${width}px`,
+			flex: `0 0 ${width}px`,
+		});
+	}
+
+	function reset_width($el) {
+		if (!$el?.length) return;
+		$el.css({
+			width: "",
+			minWidth: "",
+			maxWidth: "",
+			flex: "",
+		});
+	}
+
+	function align_list_view(listview) {
+		if (!listview?.$result?.length || listview.view_name !== "List") return;
+
+		const $pageMain = listview.page?.main;
+		if ($pageMain?.length) {
+			$pageMain.addClass(PAGE_CLASS);
+		}
+
+		const $headerCols = listview.$result.find(".list-row-head .list-header-subject > .list-row-col");
+		const $rows = listview.$result.find(".list-row-container .list-row");
+		if (!$headerCols.length || !$rows.length) return;
+
+		reset_width($headerCols);
+		reset_width(listview.$result.find(".list-row .level-left > .list-row-col"));
+		reset_width(listview.$result.find(".list-row-head .level-right, .list-row .level-right"));
+
+		$headerCols.each((index, headerCol) => {
+			const $headerCol = $(headerCol);
+			const isSubject = $headerCol.hasClass("list-subject");
+			let width = get_measurement_width($headerCol) + 24;
+
+			$rows.each((_, row) => {
+				const $col = $(row).find(".level-left > .list-row-col").eq(index);
+				width = Math.max(width, get_measurement_width($col) + 24);
+			});
+
+			width = clamp(width, isSubject ? SUBJECT_MIN_WIDTH : COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH);
+			apply_width($headerCol, width);
+
+			$rows.each((_, row) => {
+				apply_width($(row).find(".level-left > .list-row-col").eq(index), width);
+			});
+		});
+
+		let metaWidth = get_measurement_width(listview.$result.find(".list-row-head .level-right")) + 16;
+		$rows.each((_, row) => {
+			metaWidth = Math.max(metaWidth, get_measurement_width($(row).find(".level-right")) + 16);
+		});
+		metaWidth = clamp(metaWidth, META_MIN_WIDTH, META_MAX_WIDTH);
+
+		apply_width(listview.$result.find(".list-row-head .level-right"), metaWidth);
+		$rows.each((_, row) => {
+			const $right = $(row).find(".level-right");
+			apply_width($right, metaWidth);
+			$(row)
+				.find(".list-row-activity")
+				.css({
+					width: `${metaWidth}px`,
+					minWidth: `${metaWidth}px`,
+					justifyContent: "flex-start",
+				});
+		});
+	}
+
+	function patch_list_view() {
+		if (!frappe?.views?.ListView || frappe.views.ListView.__ujwal_revamp_patched) return;
+		frappe.views.ListView.__ujwal_revamp_patched = true;
+
+		const original_after_render = frappe.views.ListView.prototype.after_render;
+		frappe.views.ListView.prototype.after_render = function () {
+			original_after_render.call(this);
+			requestAnimationFrame(() => align_list_view(this));
+		};
+	}
+
+	if (frappe?.boot) {
+		patch_list_view();
+	} else {
+		$(document).ready(() => patch_list_view());
+	}
+
+	$(window).on(
+		"resize",
+		frappe.utils.debounce(() => {
+			const current_list = cur_list;
+			if (current_list?.view_name === "List") {
+				align_list_view(current_list);
+			}
+		}, 150)
+	);
+})();
