@@ -209,7 +209,7 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
+			# "ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
 		]
 	},
 	"Supplier": {
