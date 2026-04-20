@@ -131,8 +131,13 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
- "links": [],
- "modified": "2026-03-06 15:46:54.050635",
+ "links": [
+  {
+   "link_doctype": "Purchase Receipt",
+   "link_fieldname": "custom_gate_pass"
+  }
+ ],
+ "modified": "2026-04-16 16:35:56.724202",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Gate Pass",

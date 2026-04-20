@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-18 16:18:00.954427",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "filed_name",
+  "column_break_tjdq",
+  "reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "filed_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Filed Name"
+  },
+  {
+   "fieldname": "column_break_tjdq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Reason"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-18 16:18:47.031504",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "BOM Change Log",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

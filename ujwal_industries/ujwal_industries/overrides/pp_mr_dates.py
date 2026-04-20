@@ -2115,3 +2115,47 @@ def recalculate_parallel_cascade(
                 prev_e = e
 
     return updates
+
+
+def set_item_type_in_production_plan(doc, method):
+    for row in doc.po_items:
+        if not row.item_code:
+            continue
+
+        item_doc = frappe.get_cached_doc("Item", row.item_code)
+        no_supply_rm = not item_doc.is_sub_contracted_item
+        subcontract_list = item_doc.custom_subcontracting_suppliers or []
+
+        if no_supply_rm and len(subcontract_list) == 0:
+            row.custom_manufacturing_type = "In House"
+            row.custom_supplier = None
+        else:
+            row.custom_manufacturing_type = "Subcontract"
+            supplier = None
+            for d in subcontract_list:
+                if d.custom_type == "Subcontract" and d.supplier:
+                    supplier = d.supplier
+                    break
+
+            row.custom_supplier = supplier
+    
+    for row in doc.sub_assembly_items:
+        if not row.production_item:
+            continue
+
+        item_doc = frappe.get_cached_doc("Item", row.production_item)
+        no_supply_rm = not item_doc.is_sub_contracted_item
+        subcontract_list = item_doc.custom_subcontracting_suppliers or []
+
+        if no_supply_rm and len(subcontract_list) == 0:
+            row.type_of_manufacturing = "In House"
+            row.custom_supplier = None
+        else:
+            row.type_of_manufacturing = "Subcontract"
+            supplier = None
+            for d in subcontract_list:
+                if d.custom_type == "Subcontract" and d.supplier:
+                    supplier = d.supplier
+                    break
+
+            row.supplier = supplier        

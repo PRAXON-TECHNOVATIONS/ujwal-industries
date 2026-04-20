@@ -1,0 +1,43 @@
+[
+ {
+  "attach_print": 0,
+  "channel": "Email",
+  "condition": "doc.workflow_state == \"Pending\"",
+  "date_changed": null,
+  "days_in_advance": 0,
+  "docstatus": 0,
+  "doctype": "Notification",
+  "document_type": "BOM",
+  "enabled": 1,
+  "event": "Value Change",
+  "is_standard": 0,
+  "message": "<p>Dear Sir,</p>\n<p>Please Approval Bom - {{doc.name or \"\"}}</p>",
+  "message_type": "Markdown",
+  "method": null,
+  "modified": "2026-04-17 18:16:03.176008",
+  "module": null,
+  "name": "BOM Approval - {{doc.name}}",
+  "print_format": null,
+  "property_value": null,
+  "recipients": [
+   {
+    "bcc": null,
+    "cc": null,
+    "condition": null,
+    "parent": "BOM Approval - {{doc.name}}",
+    "parentfield": "recipients",
+    "parenttype": "Notification",
+    "receiver_by_document_field": null,
+    "receiver_by_role": "Super Approver"
+   }
+  ],
+  "send_system_notification": 1,
+  "send_to_all_assignees": 0,
+  "sender": null,
+  "sender_email": null,
+  "set_property_after_alert": null,
+  "slack_webhook_url": null,
+  "subject": "BOM Approval - {{doc.name}}",
+  "value_changed": "workflow_state"
+ }
+]

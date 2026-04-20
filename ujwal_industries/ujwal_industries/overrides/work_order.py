@@ -41,6 +41,14 @@ def set_wip_before_insert(doc, method):
             "custom_wip_warehouse"
         )
         doc.wip_warehouse = wip
+    
+    
+    if doc.amended_from:
+        if frappe.db.exists("Work Order", doc.amended_from):
+            frappe.delete_doc("Work Order", doc.amended_from, force=1)
+        
+        doc.name = doc.amended_from
+        doc.amended_from = None    
 
 
 @frappe.whitelist()

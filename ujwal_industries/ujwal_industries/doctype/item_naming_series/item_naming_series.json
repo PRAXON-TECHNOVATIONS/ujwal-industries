@@ -16,9 +16,8 @@
   {
    "fieldname": "item_group",
    "fieldtype": "Link",
-   "hidden": 1,
    "in_list_view": 1,
-   "label": "Item Group",
+   "label": "Material Type",
    "options": "Item Group"
   },
   {
@@ -48,7 +47,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-03-23 12:31:39.248034",
+ "modified": "2026-04-16 17:43:04.014790",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Item Naming Series",

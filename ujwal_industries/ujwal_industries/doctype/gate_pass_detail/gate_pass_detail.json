@@ -11,6 +11,8 @@
   "column_break_xeah",
   "qty",
   "uom",
+  "rate",
+  "amount",
   "section_break_asog",
   "description"
  ],
@@ -59,13 +61,25 @@
    "fieldtype": "Data",
    "hidden": 1,
    "label": "PO Item"
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "hidden": 1,
+   "label": "Rate"
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "hidden": 1,
+   "label": "Amount"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-03-05 15:14:44.147082",
+ "modified": "2026-04-16 16:34:11.784385",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Gate Pass Detail",

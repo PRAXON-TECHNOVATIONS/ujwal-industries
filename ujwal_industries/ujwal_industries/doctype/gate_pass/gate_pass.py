@@ -118,6 +118,8 @@ def get_po_items(po_number):
 			"qty": row.qty,
 			"uom": row.uom,
 			"description": row.description,
+			"rate": row.rate,
+			"amount": row.amount,
 			"po_item":row.name
 		})
 	return items
@@ -127,6 +129,7 @@ def get_po_items(po_number):
 
 @frappe.whitelist()
 def custom_make_purchase_receipt(source_name, gate_pass, target_doc=None, args=None):
+	print(".............",source_name)
 	if args is None:
 		args = {}
 	if isinstance(args, str):
@@ -173,12 +176,12 @@ def custom_make_purchase_receipt(source_name, gate_pass, target_doc=None, args=N
 					"sales_order_item": "sales_order_item",
 					"wip_composite_asset": "wip_composite_asset",
 				},
-				"postprocess": update_item,
-				"condition": lambda doc: (
-					True if is_unit_price_row(doc) else abs(doc.received_qty) < abs(doc.qty)
-				)
-				and doc.delivered_by_supplier != 1
-				and select_item(doc),
+				# "postprocess": update_item,
+				# "condition": lambda doc: (
+				# 	True if is_unit_price_row(doc) else abs(doc.received_qty) < abs(doc.qty)
+				# )
+				# and doc.delivered_by_supplier != 1
+				# and select_item(doc),
 			},
 			"Purchase Taxes and Charges": {"doctype": "Purchase Taxes and Charges", "reset_value": True},
 		},
@@ -193,5 +196,8 @@ def custom_make_purchase_receipt(source_name, gate_pass, target_doc=None, args=N
 			if pr_item.item_code == gp_item.item:
 				pr_item.received_qty = gp_item.qty
 				pr_item.qty = gp_item.qty
+				pr_item.rate = gp_item.rate
+				pr_item.amount = gp_item.amount
+	doc.rounded_total = round(doc.grand_total)
 	doc.save()
 	return doc.name

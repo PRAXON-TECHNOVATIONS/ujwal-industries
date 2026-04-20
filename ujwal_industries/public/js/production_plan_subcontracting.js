@@ -132,7 +132,7 @@ frappe.ui.form.on('Production Plan', {
 		setTimeout(() => {
 			calculate_mr_item_dates(frm);
 		}, 500);
-	}
+	},
 });
 
 frappe.ui.form.on('Production Plan Item', {

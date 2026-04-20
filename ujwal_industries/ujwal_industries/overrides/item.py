@@ -57,3 +57,57 @@ def validate_subcontracting_suppliers(doc: Document, method: str | None = None) 
             )
 
 
+
+
+def autoname(self, method):
+    if not self.custom_material_type:
+        return
+    
+    stock_setting = frappe.get_single("Stock Settings")
+    if stock_setting.applicable_naming_series == 1:
+        matched_row = None
+        if stock_setting.item_naming_series:
+            for row in stock_setting.item_naming_series:
+                if row.item_group == self.custom_material_type:
+                    matched_row = row
+                    break
+        
+        if not matched_row:
+            frappe.throw(f"No Naming Series Defined for Material Type in Stock Settings<br> <b>{self.custom_material_type}</b>")
+        
+        
+        from_start = int(matched_row.from_start)
+        to_end = int(matched_row.to_end) 
+        
+        frappe.db.sql(
+                """
+                SELECT current_no
+                FROM `tabItem Naming Series`
+                WHERE name = %s
+                FOR UPDATE
+                """,matched_row.name)
+
+        current_no = frappe.db.get_value("Item Naming Series", matched_row.name, "current_no")
+
+        if current_no:
+            try:
+                current_no_int = int(''.join(filter(str.isdigit, current_no)))
+            except:
+                current_no_int = 0
+        else:
+            current_no_int = from_start
+
+        next_no = current_no_int + 1
+
+        if next_no > to_end:
+            frappe.throw(
+                f"Naming series out of range for Material Type {self.custom_material_type}. "
+                f"Allowed Range: {from_start} to {to_end}"
+            )
+
+        self.name = str(next_no)
+
+        frappe.db.set_value("Item Naming Series", matched_row.name,"current_no",next_no)
+    
+    else:
+        frappe.msgprint("Dynamic Item Naming Series is Currently Disabled in Stock Settings. Please Enable it to Apply Automatic Numbering.")
