@@ -11,6 +11,7 @@ This ensures operation costing calculations use the custom batch size field.
 import frappe
 from frappe import _
 from frappe.utils import flt
+from frappe.model.naming import make_autoname
 
 
 def update_bom_update_cost(self, update_parent=True, from_child_bom=False, update_hour_rate=True, save=True):
@@ -144,3 +145,40 @@ def validate_bom(doc, method):
                 )
 
             op.custom_fixed_lot_capacity = 0
+            
+    if doc.amended_from:     
+        doc.route = None
+
+def autoname(doc, method):    
+    if not doc.item:
+        return
+
+    base = f"BOM-{doc.item}"
+    if not frappe.db.exists("BOM", base):
+        doc.name = base
+        return
+
+    if doc.items:
+        for d in doc.items:
+            name = f"{base}-{d.item_code}"
+
+            if not frappe.db.exists("BOM", name):
+                doc.name = name
+                return
+
+    count = frappe.db.count("BOM", {"name": ["like", f"{base}%"]})
+    doc.name = f"{base}-{count+1}"
+    
+def before_save(doc, method):
+    if doc.amended_from:
+        if frappe.db.exists("BOM", doc.amended_from):
+            frappe.delete_doc("BOM", doc.amended_from, force=1)
+            doc.amended_from = None
+            
+        doc.name = None
+
+def after_insert(doc, method):
+    if not doc.route:
+        doc.db_set("route", doc.name)
+
+

@@ -1364,11 +1364,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="background:${cl}22;color:${cl};border:1px solid ${cl}55;border-radius:12px;padding:1px 8px;font-size:11px;font-weight:700;">${p.value}</span>`;
 			}
 		},
-		// {
-		// 	headerName: 'Qty', width: 95, type: 'numericColumn',
-		// 	valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
-		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
-		// },
 
 		{
 			headerName: 'Qty',
@@ -1558,7 +1553,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		onCellValueChanged: p => _on_par_bom_changed(frm, p, par_data),
 	});
 	_grids['par_' + so_data.so_name] = par_grids;
-
 
 
 
@@ -2068,6 +2062,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					start_date: b.start_date,
 					mfg_end_date: b.mfg_end_date,
 					end_date: b.end_date,
+					actual_qty: fg.actual_qty,
+                    total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				}));
 			}
 		});
@@ -2201,71 +2197,245 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Qty',
-			width: 95,
-			type: 'numericColumn',
+            headerName: 'Qty As Per BOM',
+            width: 95,
+            type: 'numericColumn',
 
-			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+            valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 
-			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+            valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
 
-			cellStyle: p => {
-				if (p.data?._is_group && p.data?.actual_qty > 0) {
-					return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
-				}
-				return {};
+            cellStyle: p => {
+                if (p.data?._is_group && p.data?.actual_qty > 0) {
+                    return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+                }
+                return {};
+            },
+
+            cellRenderer: p => {
+                
+                if (!p.data?._is_group) return '';
+                const qty =
+                    p.value !== null && p.value !== undefined
+                        ? Number(p.value).toLocaleString('en-IN')
+                        : '';
+
+                const actual = p.data?.actual_qty || 0;
+
+                if (actual > 0) {
+                    return `<span class="qty-click">${qty}</span>`;
+                }
+
+                return qty;
+            },
+
+            
+        },
+        {
+            headerName: 'Planned Qty',
+            width: 95,
+            type: 'numericColumn',
+
+            valueGetter: p => {
+				const qty = p.data?.actual_qty ?? 0;
+				return qty < 0 ? 0 : qty;
 			},
 
-			cellRenderer: p => {
-				if (!p.data?._is_group) {
-					return p.value ? Number(p.value).toLocaleString('en-IN') : '';
-				}
+            valueFormatter: p =>
+                p.value !== null && p.value !== undefined
+                    ? Number(p.value).toLocaleString('en-IN')
+                    : '',
 
-				const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
-				const actual = p.data?.actual_qty || 0;
+            cellStyle: p => {
+                if (p.data?._is_group && p.data?.actual_qty > 0) {
+                    return {
+                        color: '#2563eb',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                    };
+                }
+                return {};
+            },
 
-				if (actual > 0) {
-					return `<span class="qty-click">${qty}</span>`;
-				}
+            cellRenderer: p => {
+                
+                if (!p.data?._is_group) return '';
+                const qty =
+                    p.value !== null && p.value !== undefined
+                        ? Number(p.value).toLocaleString('en-IN')
+                        : '';
 
-				return qty;
-			},
+                const actual = p.data?.actual_qty || 0;
 
-			onCellClicked: p => {
-				if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
+                if (actual > 0) {
+                    return `<span class="qty-click">${qty}</span>`;
+                }
 
-				const actual = p.data?.actual_qty || 0;
-				const total = p.data?.planned_qty_as_show || 0;
+                return qty;
+            },
+        },
 
-				if (!actual && !total) return;
+		// {
+		// 	headerName: 'Qty',
+		// 	width: 95,
+		// 	type: 'numericColumn',
 
-				frappe.msgprint({
-					title: 'Stock Details',
-					message: `
-						Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-						Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
-					`,
-					indicator: 'blue'
-				});
-			}
-		},
+		// 	valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 
+		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+
+		// 	cellStyle: p => {
+		// 		if (p.data?._is_group && p.data?.actual_qty > 0) {
+		// 			return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+		// 		}
+		// 		return {};
+		// 	},
+
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) {
+		// 			return p.value ? Number(p.value).toLocaleString('en-IN') : '';
+		// 		}
+
+		// 		const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
+		// 		const actual = p.data?.actual_qty || 0;
+
+		// 		if (actual > 0) {
+		// 			return `<span class="qty-click">${qty}</span>`;
+		// 		}
+
+		// 		return qty;
+		// 	},
+
+		// 	onCellClicked: p => {
+		// 		if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
+
+		// 		const actual = p.data?.actual_qty || 0;
+		// 		const total = p.data?.planned_qty_as_show || 0;
+
+		// 		if (!actual && !total) return;
+
+		// 		frappe.msgprint({
+		// 			title: 'Stock Details',
+		// 			message: `
+		// 				Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
+		// 				Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+		// 			`,
+		// 			indicator: 'blue'
+		// 		});
+		// 	}
+		// },
+
+		{
+            headerName: 'Qty',width: 95, type: 'numericColumn',
+            
+			valueGetter: p => {
+                if (p.data?._is_group) {
+                    const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+                    const total = Number(p.data?.total_qty) || 0;
+                    return Math.max(0, total - actual);
+                }
+                const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+                const total = Number(p.data?.total_qty) || 0;
+                const max_qty = Math.max(0, total - actual);
+                
+                if (max_qty == 0){
+                    return 0;
+                }else{
+                    return Number(p.data?.qty) || 0;
+                }
+            },
+
+            valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+
+            cellStyle: p => {
+                if (p.data?._is_group && (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) > 0) {
+                    // return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+                }
+                return {};
+            },
+
+            cellRenderer: p => {
+                if (!p.data?._is_group) {
+                    return p.value ? Number(p.value).toLocaleString('en-IN') : '';
+                }
+
+                const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
+                const actual = (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) || 0;
+
+                if (actual > 0) {
+                    return `<span class="qty-click">${qty}</span>`;
+                }
+
+                return qty;
+            },
+
+            onCellClicked: p => {
+                if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
+
+                const actual = p.data?.actual_qty || 0;
+                const total = p.data?.planned_qty_as_show || 0;
+
+                if (!actual && !total) return;
+
+                frappe.msgprint({
+                    title: 'Stock Details',
+                    message: `
+                        Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
+                        Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+                    `,
+                    indicator: 'blue'
+                });
+            }
+        },
 
 
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			// valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
+
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
+			},
+			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
+
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			// valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
+
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.grn_days) || 0);
+			},
+			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
+
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			// valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
+
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.pm_days) || 0);
+			},
+			
+			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
 
 		{
@@ -2465,6 +2635,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					start_date: b.start_date,
 					mfg_end_date: b.mfg_end_date,
 					end_date: b.end_date,
+					actual_qty: sfg.actual_qty,
+                    total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
 				}));
 			}
 		});
@@ -2598,32 +2770,175 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="background:${cl}22;color:${cl};border:1px solid ${cl}55;border-radius:12px;padding:1px 8px;font-size:11px;font-weight:700;">${p.value}</span>`;
 			}
 		},
+		
+		{
+            headerName: 'Qty As Per BOM',
+            width: 95,
+            type: 'numericColumn',
+
+            valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+
+            valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+
+            cellStyle: p => {
+                if (p.data?._is_group && p.data?.actual_qty > 0) {
+                    // return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+                }
+                return {};
+            },
+
+            cellRenderer: p => {
+                
+                if (!p.data?._is_group) return '';
+                const qty =
+                    p.value !== null && p.value !== undefined
+                        ? Number(p.value).toLocaleString('en-IN')
+                        : '';
+
+                const actual = p.data?.actual_qty || 0;
+
+                if (actual > 0) {
+                    return `<span class="qty-click">${qty}</span>`;
+                }
+
+                return qty;
+            },
+
+            
+        },
+        {
+            headerName: 'Planned Qty',width: 95,type: 'numericColumn',
+
+            valueGetter: p => {
+				const qty = p.data?.actual_qty ?? 0; return qty < 0 ? 0 : qty;},
+
+            valueFormatter: p =>
+                p.value !== null && p.value !== undefined
+                    ? Number(p.value).toLocaleString('en-IN')
+                    : '',
+
+            cellStyle: p => {
+                if (p.data?._is_group && p.data?.actual_qty > 0) {
+                    // return {
+                    //     color: '#2563eb',
+                    //     fontWeight: 'bold',
+                    //     cursor: 'pointer'
+                    // };
+                }
+                return {};
+            },
+
+            cellRenderer: p => {
+                
+                if (!p.data?._is_group) return '';
+                const qty =
+                    p.value !== null && p.value !== undefined
+                        ? Number(p.value).toLocaleString('en-IN')
+                        : '';
+
+                const actual = p.data?.actual_qty || 0;
+
+                if (actual > 0) {
+                    return `<span class="qty-click">${qty}</span>`;
+                }
+
+                return qty;
+            },
+        },
+
 		// {
-		// 	headerName: 'Qty', width: 95, type: 'numericColumn',
-		// 	valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
-		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		// 	headerName: 'Qty',width: 95,type: 'numericColumn',
+		// 	valueGetter: p => p.data?._is_group ? (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) : p.data?.qty,
+		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+		// 	cellStyle: p => {
+		// 		if (p.data?._is_group && (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) > 0) {
+		// 			return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+		// 		}
+		// 		return {};
+		// 	},
+
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) {
+		// 			return p.value ? Number(p.value).toLocaleString('en-IN') : '';
+		// 		}
+
+		// 		const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
+		// 		const actual = (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) || 0;
+
+		// 		if (actual > 0) {
+		// 			return `<span class="qty-click">${qty}</span>`;
+		// 		}
+
+		// 		return qty;
+		// 	},
+
+		// 	onCellClicked: p => {
+		// 		if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
+
+		// 		const actual = p.data?.actual_qty || 0;
+		// 		const total = p.data?.qty_as_show || 0;
+
+		// 		if (!actual && !total) return;
+
+		// 		frappe.msgprint({
+		// 			title: 'Stock Details',
+		// 			message: `
+		// 				Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
+		// 				Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+		// 			`,
+		// 			indicator: 'blue'
+		// 		});
+		// 	}
 		// },
 
 		{
-			headerName: 'Qty',width: 95,type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
-			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+			headerName: 'Qty',
+			width: 95,
+			type: 'numericColumn',
+
+			valueGetter: p => {
+                if (p.data?._is_group) {
+                    const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+                    const total = Number(p.data?.total_qty) || 0;
+                    return Math.max(0, total - actual); 
+                }
+                const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+                const total = Number(p.data?.total_qty) || 0;
+                const max_qty = Math.max(0, total - actual); 
+                if (max_qty == 0){
+                    return 0;
+                }else{
+                    return Number(p.data?.qty) || 0;
+                }
+            },
+
+			valueFormatter: p =>
+				p.value !== null && p.value !== undefined
+					? Number(p.value).toLocaleString('en-IN')
+					: '',
+
 			cellStyle: p => {
-				if (p.data?._is_group && p.data?.actual_qty > 0) {
-					return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+				if (p.data?._is_group && p.value > 0) {
+					// return {
+					// 	color: '#2563eb',
+					// 	fontWeight: 'bold',
+					// 	cursor: 'pointer'
+					// };
 				}
 				return {};
 			},
 
 			cellRenderer: p => {
+				const qty =
+					p.value !== null && p.value !== undefined
+						? Number(p.value).toLocaleString('en-IN')
+						: '';
+
 				if (!p.data?._is_group) {
-					return p.value ? Number(p.value).toLocaleString('en-IN') : '';
+					return qty;
 				}
 
-				const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
-				const actual = p.data?.actual_qty || 0;
-
-				if (actual > 0) {
+				if (p.value > 0) {
 					return `<span class="qty-click">${qty}</span>`;
 				}
 
@@ -2633,38 +2948,69 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			onCellClicked: p => {
 				if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
 
-				const actual = p.data?.actual_qty || 0;
-				const total = p.data?.qty_as_show || 0;
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Number(p.data?.qty_as_show) || 0;
 
 				if (!actual && !total) return;
 
 				frappe.msgprint({
 					title: 'Stock Details',
 					message: `
-						Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-						Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+						Total Planned Qty: <b>${total.toLocaleString('en-IN')}</b><br>
+						Available Qty in Default Warehouse: <b>${actual.toLocaleString('en-IN')}</b>
 					`,
 					indicator: 'blue'
 				});
 			}
 		},
 
-
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
+			// valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
+			},
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
+
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			// valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
+
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.grn_days) || 0);
+			},
+
+			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
+
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			// valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
+			valueGetter: p => {
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				const total = Math.max(0, Number(p.data?.total_qty) || 0);
+				const remaining = Math.max(0, total - actual);
+
+				if (p.data?._is_group) {return null;}
+
+				return remaining === 0 ? 0 : (Number(p.data?.pm_days) || 0);
+			},
+			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
+
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
 			valueGetter: p => {

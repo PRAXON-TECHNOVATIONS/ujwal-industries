@@ -181,7 +181,8 @@ override_doctype_class = {
 
 doc_events = {
 	"Item": {
-		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers"
+		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
+		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname",
 	},
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
@@ -215,7 +216,8 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_planned_start_dates",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.set_subcontracting_suppliers",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
-			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate"
+			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate",
+			"ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
 		]
 	},
 	"Supplier": {
@@ -223,7 +225,7 @@ doc_events = {
 		"autoname"	 : "ujwal_industries.api.supplier_gstin_check.autoname"
 	},
 	"Material Request": {
-		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field"
+		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field",
 	},
 	"Sales Order": {
 		"before_save": [
@@ -256,7 +258,9 @@ doc_events = {
   		"validate": "ujwal_industries.ujwal_industries.overrides.downtime_entry.validate_downtime_entry",
 	},
 	"Purchase Receipt": {
-        "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit"
+        # "before_submit": "ujwal_industries.ujwal_industries.overrides.purchase_receipt.validate_processing_time_before_submit",
+        "on_submit" : "ujwal_industries.ujwal_industries.overrides.purchase_receipt.set_actual_processing_time",
+        "before_insert" : "ujwal_industries.ujwal_industries.overrides.purchase_receipt.before_insert",
     },
 	"Data Import": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
@@ -269,7 +273,13 @@ doc_events = {
     },
 	"BOM":{
   		"on_update_after_submit": "ujwal_industries.overrides.bom.validate_default_tool",
-		"validate": "ujwal_industries.overrides.bom.validate_bom"
+		"validate": [
+      					"ujwal_industries.overrides.bom.validate_bom",
+      					# "ujwal_industries.overrides.bom.validate_change_bom_value",
+					],			
+		"autoname": "ujwal_industries.overrides.bom.autoname",
+		"before_save": "ujwal_industries.overrides.bom.before_save",
+		"after_insert": "ujwal_industries.overrides.bom.after_insert",
 	},
  	"Asset Maintenance": {
         "before_save": "ujwal_industries.ujwal_industries.overrides.asset_maintenance.set_end_date_from_asset",
@@ -277,10 +287,19 @@ doc_events = {
 	"*": {
         "autoname": "ujwal_industries.api.naming_series.numeric_series"
     },
-	# "Sales Invoice":{
-	# 	"validate": "ujwal_industries.ujwal_industries.overrides.sales_invoice.validate_sales_invoice_sequence"
-	# },
- 
+	
+	"Sales Order":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_order.before_insert",
+	},
+	"Sales Invoice":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_invoice.before_insert",
+	},
+	"Purchase Order":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
+	},
+	"Quotation":{
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",
+	},
 }
 
 # Scheduled Tasks
@@ -401,6 +420,7 @@ fixtures = [
 	# 				"Purchase Order Approval",
 	# 				"Supplier Approval",
 	# 				"Material Request Approval",
+	# 				"BOM Approval",
 	# 			),
 	# 		]
 	# 	],
@@ -428,13 +448,27 @@ fixtures = [
 	# 			(
 	# 				"Store Manager",
 	# 				"Sales Executive"
+	# 				"Super Approver",
 	# 			),
 	# 		]
 	# 	],
 	# },
+	# {
+	# 	"doctype": "Notification",
+	# 	"filters": [
+	# 		[
+	# 			"name",
+	# 			"in",
+	# 			(
+	# 				"BOM Approval - {{doc.name}}",
+	# 			),
+	# 		]
+	# 	],
+	# },
+	
 
- {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
- {"dt": "Property Setter" , "filters":{"module": "Ujwal Industries"}}
+#  {"dt": "Print Format", "filters": {"module": "Ujwal Industries"}},
+#  {"dt": "Property Setter" , "filters":{"module": "Ujwal Industries"}}
 ]
 
 # Translations

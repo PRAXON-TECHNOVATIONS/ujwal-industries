@@ -46,3 +46,4 @@ from .pp_cascade import cascade_sfg_date_change as cascade_sfg_date_change
 from .pp_cascade import calculate_sfg_fg_dates_from_mr_items as calculate_sfg_fg_dates_from_mr_items
 
 from .tool_limit import validate_tool_limit as validate_tool_limit
+from .pp_mr_dates import set_item_type_in_production_plan as set_item_type_in_production_plan

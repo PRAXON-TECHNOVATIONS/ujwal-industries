@@ -1,6 +1,41 @@
 frappe.ui.form.on('BOM', {
     refresh: function (frm) {
+        let grid = frm.get_field("change_log").grid;
+        grid.wrapper.find('.grid-add-row').hide();
+        grid.wrapper.find('.grid-add-multiple-rows').hide();
+        grid.cannot_add_rows = true;
+
+        frm.meta.fields.forEach(df => {
+            if (!df.fieldname) return;
+            if (!df._custom_bound) {
+                df._custom_bound = true;
+                frappe.ui.form.on('BOM', df.fieldname, function(frm) {
+                    add_change_log(frm, df.fieldname);
+                });
+            }
+        });
+
         set_operation_filter(frm);
+    },
+    
+    setup: function(frm) {
+        frm.fields_dict.custom_tool_details.grid.get_field('tool').get_query = function(doc, cdt, cdn) {
+            return {
+                filters: {
+                    asset_category: "Tool"
+                }
+            };
+        };
+
+        frappe.meta.get_docfields("BOM Item").forEach(df => {
+            if (!df.fieldname) return;
+            if (!df._custom_bound) {
+                df._custom_bound = true;
+                frappe.ui.form.on('BOM Item', df.fieldname, function(frm, cdt, cdn) {
+                    add_child_change_log(frm, cdt, cdn, df.fieldname);
+                });
+            }
+        });
     }
 });
 
@@ -105,3 +140,42 @@ frappe.ui.form.on("BOM Operation", {
         frappe.throw(`Lot Capacity cannot be defined for Operation <b>${row.operation}</b> because a Tool is linked to it.`);
     }
 });
+
+function add_change_log(frm, fieldname) {
+
+    const IGNORE_FIELDS = [
+            "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "raw_material_cost", "base_raw_material_cost", "total_cost", "base_total_cost"];
+
+    if (IGNORE_FIELDS.includes(fieldname)) return;
+
+    let df = frappe.meta.get_docfield(frm.doctype, fieldname);
+    if (!df) return;
+
+    let label = df.label || fieldname;
+
+    let exists = (frm.doc.change_log || [])
+        .some(row => row.filed_name === label);
+
+
+    let row = frm.add_child("change_log");
+    row.filed_name = label;  
+    frm.refresh_field("change_log");
+}
+
+
+function add_child_change_log(frm, cdt, cdn, fieldname) {
+
+    const IGNORE_FIELDS = ["name", "owner", "creation", "modified",  "modified_by", "idx", "docstatus", "amount","base_amount" ,"qty_consumed_per_unit" ,"rate"];
+    if (IGNORE_FIELDS.includes(fieldname)) return;
+    let df = frappe.meta.get_docfield(cdt, fieldname);
+    if (!df) return;
+    let label = df.label || fieldname;
+    let row = locals[cdt][cdn];
+    let full_label = `Items → Row ${row.idx} → ${label}`;
+    let exists = (frm.doc.change_log || [])
+        .some(r => r.filed_name === full_label);
+
+    let log = frm.add_child("change_log");
+    log.filed_name = full_label;
+    frm.refresh_field("change_log");
+}

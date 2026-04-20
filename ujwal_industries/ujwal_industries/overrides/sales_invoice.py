@@ -1,6 +1,15 @@
 import frappe
 from frappe import _
 
+
+def before_insert(doc, method):
+    if doc.amended_from:
+        if frappe.db.exists("Sales Invoice", doc.amended_from):
+            frappe.delete_doc("Sales Invoice", doc.amended_from, force=1)
+        
+        doc.name = doc.amended_from
+        doc.amended_from = None
+
 # def validate_sales_invoice_sequence(doc, method):
 #     for item in doc.items:
 #         if not item.sales_order:

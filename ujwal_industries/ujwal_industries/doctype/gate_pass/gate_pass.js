@@ -83,6 +83,8 @@ frappe.ui.form.on('Gate Pass', {
                             row.uom = d.uom;
                             row.description = d.description;
                             row.po_item = d.po_item;
+                            row.rate = d.rate;
+                            row.amount = d.amount;
 
                         });
 
