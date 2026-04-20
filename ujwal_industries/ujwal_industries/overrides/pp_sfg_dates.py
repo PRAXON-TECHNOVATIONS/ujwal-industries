@@ -241,23 +241,66 @@ def calculate_inhouse_schedule_dates(
     for fg_item, fg_date in fg_dates.items():
         schedule_date_map[fg_item] = get_datetime(fg_date)
 
+    row_defaults_by_name: dict[str, dict[str, Any]] = {}
+    row_defaults_by_production_item: dict[str, dict[str, Any]] = {}
+
+    # Some client flows send partial row payloads and omit fields like parent_item_code.
+    # Hydrate those values from the current Production Plan rows so scheduling can proceed.
+    if any(not item.get("parent_item_code") for item in inhouse_items):
+        doc = frappe.get_doc("Production Plan", production_plan_name)
+        for row in doc.get("sub_assembly_items") or []:
+            row_info = {
+                "name": row.name,
+                "production_item": row.production_item,
+                "parent_item_code": row.parent_item_code,
+                "type_of_manufacturing": row.type_of_manufacturing,
+                "bom_no": row.bom_no,
+                "qty": row.qty,
+                "schedule_date": row.schedule_date,
+            }
+            if row.name:
+                row_defaults_by_name[row.name] = row_info
+            if row.production_item and row.production_item not in row_defaults_by_production_item:
+                row_defaults_by_production_item[row.production_item] = row_info
+
     # Process all items IN ORDER
     # For Subcontract items: just track their schedule_date for children to use
     # For In House items: calculate schedule_date and return it
     results: dict[str, Any] = {}
 
-    for item_info in inhouse_items:
-        parent_item = item_info["parent_item_code"]
+    for raw_item_info in inhouse_items:
+        item_info = dict(raw_item_info)
+        row_name = item_info.get("name")
+        fallback_row = None
+        if row_name and row_name in row_defaults_by_name:
+            fallback_row = row_defaults_by_name[row_name]
+        elif item_info.get("production_item") and item_info["production_item"] in row_defaults_by_production_item:
+            fallback_row = row_defaults_by_production_item[item_info["production_item"]]
+
+        if fallback_row:
+            for fieldname in (
+                "production_item",
+                "parent_item_code",
+                "type_of_manufacturing",
+                "bom_no",
+                "qty",
+                "schedule_date",
+            ):
+                if not item_info.get(fieldname) and fallback_row.get(fieldname):
+                    item_info[fieldname] = fallback_row[fieldname]
+
+        production_item = item_info.get("production_item") or row_name or "Unknown Item"
+        parent_item = item_info.get("parent_item_code")
         item_type = item_info.get("type_of_manufacturing", "In House")
 
         # Get base date: from schedule_date_map (which includes FG dates and Subcontract items)
-        if parent_item in schedule_date_map:
+        if parent_item and parent_item in schedule_date_map:
             base_date = schedule_date_map[parent_item]
         else:
             # Parent not found - this shouldn't happen if items are in correct order
             # Log a warning and use the FG date or now as fallback
             frappe.log_error(
-                message=f"Parent item {parent_item} not found in schedule_date_map for {item_info['production_item']}. Items may not be in correct order.",
+                message=f"Parent item {parent_item or 'missing'} not found in schedule_date_map for {production_item}. Items may not be in correct order.",
                 title="In House Schedule Date Calculation Warning"
             )
             # Try to find any FG date as fallback
@@ -272,7 +315,7 @@ def calculate_inhouse_schedule_dates(
             if item_info.get("schedule_date"):
                 schedule_date = get_datetime(item_info["schedule_date"])
                 # Track for children to use
-                schedule_date_map[item_info["production_item"]] = schedule_date
+                schedule_date_map[production_item] = schedule_date
             # Don't add to results - we don't need to update Subcontract items
         else:
             # In House item - calculate based on BOM operations
@@ -313,14 +356,15 @@ def calculate_inhouse_schedule_dates(
                 custom_schedule_end_date = base_date
 
             # Store result (only for In House items)
-            results[item_info["name"]] = {
+            result_key = row_name or production_item
+            results[result_key] = {
                 "schedule_date": str(schedule_date),
                 "custom_schedule_end_date": str(custom_schedule_end_date)
             }
 
             # Track for children - store the SCHEDULE_DATE (when production starts)
             # so children can use it as their end date
-            schedule_date_map[item_info["production_item"]] = schedule_date
+            schedule_date_map[production_item] = schedule_date
 
     return results
 
