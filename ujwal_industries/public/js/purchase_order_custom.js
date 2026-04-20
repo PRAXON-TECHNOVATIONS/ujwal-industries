@@ -4,7 +4,8 @@ frappe.ui.form.on('Purchase Order', {
 	},
 	refresh: function (frm) {
 		ujwal_patch_po_timeline_reasons(frm);
-		ujwal_add_po_approval_button(frm);
+		ujwal_add_po_approval_buttons(frm);
+		ujwal_show_po_pending_approval_note(frm);
 		ujwal_style_po_pending_rows(frm);
 	},
 });
@@ -307,12 +308,12 @@ function ujwal_patch_po_timeline_reasons(frm) {
 	};
 }
 
-function ujwal_add_po_approval_button(frm) {
+function ujwal_add_po_approval_buttons(frm) {
 	if (frm.doc.docstatus !== 1 || !ujwal_po_has_pending_rows(frm) || !ujwal_can_approve_po_updates()) {
 		return;
 	}
 
-	frm.add_custom_button(__('Approve Pending Item Updates'), function () {
+	frm.add_custom_button(__('Approve'), function () {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.overrides.sales_order_update_items.approve_pending_item_updates',
 			freeze: true,
@@ -324,7 +325,95 @@ function ujwal_add_po_approval_button(frm) {
 				frm.reload_doc();
 			},
 		});
-	}, __('Actions'));
+	});
+
+	frm.add_custom_button(__('Reject'), function () {
+		frappe.prompt(
+			[
+				{
+					fieldname: 'reason',
+					fieldtype: 'Small Text',
+					label: __('Rejection Reason'),
+					reqd: 0,
+				},
+			],
+			(values) => {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.overrides.sales_order_update_items.reject_pending_item_updates',
+					freeze: true,
+					args: {
+						doctype: frm.doc.doctype,
+						docname: frm.doc.name,
+						reason: values.reason,
+					},
+					callback: function () {
+						frm.reload_doc();
+					},
+				});
+			},
+			__('Reject Pending Item Updates'),
+			__('Reject')
+		);
+	});
+
+	frm.change_custom_button_type(__('Approve'), null, 'primary');
+	frm.change_custom_button_type(__('Reject'), null, 'danger');
+}
+
+function ujwal_show_po_pending_approval_note(frm) {
+	const wrapper = frm.dashboard && frm.dashboard.wrapper ? $(frm.dashboard.wrapper) : null;
+	if (!wrapper || !wrapper.length) {
+		return;
+	}
+
+	wrapper.find('.ujwal-po-pending-approval-note').remove();
+
+	const pendingRows = (frm.doc.items || []).filter(
+		(row) => row.custom_update_approval_status === 'Pending Approval'
+	);
+
+	if (!pendingRows.length) {
+		return;
+	}
+
+	const rowHtml = pendingRows
+		.map((row) => {
+			const requestData = ujwal_parse_po_request_data(row.custom_update_request_data);
+			const requester = requestData.requested_by || __('Unknown User');
+			const reason = requestData.reason || row.custom_update_request_reason || __('No reason provided');
+			const changedFields = (requestData.changed_fields || []).join(', ') || __('details updated');
+			return `
+				<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(107, 114, 128, 0.18);">
+					<div><strong>Row ${frappe.utils.escape_html(String(row.idx || ''))}</strong> - ${frappe.utils.escape_html(row.item_code || '')}</div>
+					<div style="margin-top:4px;color:#374151;">Requested by: ${frappe.utils.escape_html(requester)}</div>
+					<div style="margin-top:2px;color:#4b5563;">Changed: ${frappe.utils.escape_html(changedFields)}</div>
+					<div style="margin-top:2px;color:#111827;"><strong>Reason:</strong> ${frappe.utils.escape_html(reason)}</div>
+				</div>
+			`;
+		})
+		.join('');
+
+	const noteHtml = `
+		<div class="ujwal-po-pending-approval-note" style="margin:12px 0 8px;padding:14px 16px;border-radius:12px;border:1px solid #d1d5db;background:linear-gradient(180deg,#f9fafb 0%,#f3f4f6 100%);box-shadow:0 8px 24px rgba(17,24,39,0.05);">
+			<div style="font-size:13px;font-weight:700;letter-spacing:0.02em;color:#374151;">Pending Item Update Approval</div>
+			<div style="margin-top:4px;color:#4b5563;">Review the requester reason below before approving or rejecting these changes.</div>
+			${rowHtml}
+		</div>
+	`;
+
+	wrapper.prepend(noteHtml);
+}
+
+function ujwal_parse_po_request_data(requestData) {
+	if (!requestData) {
+		return {};
+	}
+
+	try {
+		return typeof requestData === 'string' ? JSON.parse(requestData) : requestData;
+	} catch (error) {
+		return {};
+	}
 }
 
 function ujwal_po_has_pending_rows(frm) {
@@ -332,7 +421,9 @@ function ujwal_po_has_pending_rows(frm) {
 }
 
 function ujwal_can_approve_po_updates() {
-	return frappe.user.has_role('Purchase Manager') || frappe.user.has_role('System Manager');
+	return frappe.session.user === 'Administrator'
+		|| frappe.user.has_role('Purchase Manager')
+		|| frappe.user.has_role('System Manager');
 }
 
 function ujwal_style_po_pending_rows(frm) {

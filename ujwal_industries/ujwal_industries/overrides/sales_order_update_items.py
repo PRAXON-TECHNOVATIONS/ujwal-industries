@@ -23,6 +23,8 @@ ORDER_CONFIG = {
 APPROVAL_STATUS_FIELD = "custom_update_approval_status"
 APPROVAL_REASON_FIELD = "custom_update_request_reason"
 APPROVAL_DATA_FIELD = "custom_update_request_data"
+PENDING_APPROVAL_STATUS = "Pending Approval"
+APPROVED_STATUS = "Approved"
 
 
 @frappe.whitelist()
@@ -59,6 +61,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 	if changed_rows:
 		_mark_rows_pending_approval(updated_doc, changed_rows, parent_doctype, reason)
 		_log_reason(parent_doctype, parent_doctype_name, reason)
+		_log_item_update_request(parent_doctype, parent_doctype_name, updated_doc, changed_rows, reason)
 		_notify_approvers(parent_doctype, parent_doctype_name, changed_rows, reason)
 
 	return result
@@ -72,39 +75,73 @@ def approve_pending_item_updates(doctype, docname):
 	_ensure_approval_permission(doctype)
 
 	doc = frappe.get_doc(doctype, docname)
-	pending_rows = [row for row in doc.get("items", []) if row.get(APPROVAL_STATUS_FIELD) == "Pending Approval"]
+	pending_rows = _get_pending_rows(doc)
 
 	if not pending_rows:
 		frappe.msgprint(_("There are no pending item updates to approve."))
 		return
 
-	child_doctype = ORDER_CONFIG[doctype]["child_doctype"]
-	for row in pending_rows:
-		frappe.db.set_value(
-			child_doctype,
-			row.name,
-			{
-				APPROVAL_STATUS_FIELD: "Approved",
-			},
-			update_modified=False,
-		)
+	_set_row_approval_status(doctype, pending_rows, APPROVED_STATUS)
 
 	frappe.msgprint(_("Pending item updates approved successfully."))
 
 
+@frappe.whitelist()
+def reject_pending_item_updates(doctype, docname, reason=None):
+	if doctype not in ORDER_CONFIG:
+		frappe.throw(_("Approval is only supported for Sales Order and Purchase Order item updates."))
+
+	_ensure_approval_permission(doctype)
+
+	doc = frappe.get_doc(doctype, docname)
+	pending_rows = _get_pending_rows(doc)
+
+	if not pending_rows:
+		frappe.msgprint(_("There are no pending item updates to reject."))
+		return
+
+	reverted_items = _build_reverted_items_payload(doc, doctype, pending_rows)
+
+	frappe.flags.ujwal_skip_item_update_approval = True
+	try:
+		erpnext_update_child_qty_rate(
+			parent_doctype=doctype,
+			trans_items=frappe.as_json(reverted_items),
+			parent_doctype_name=docname,
+			child_docname="items",
+		)
+	finally:
+		frappe.flags.ujwal_skip_item_update_approval = False
+
+	reverted_doc = frappe.get_doc(doctype, docname)
+	reverted_names = {row.name for row in reverted_doc.get("items", [])}
+	remaining_pending_rows = [row for row in pending_rows if row.name in reverted_names]
+	_clear_row_approval_state(doctype, remaining_pending_rows)
+	_log_item_update_rejection(doctype, docname, pending_rows, reason)
+
+	frappe.msgprint(_("Pending item updates rejected and reverted successfully."))
+
+
 def _ensure_approval_permission(doctype):
+	if frappe.session.user == "Administrator":
+		return
+
 	allowed_roles = ORDER_CONFIG[doctype]["approval_roles"]
 	if not allowed_roles.intersection(set(frappe.get_roles())):
 		frappe.throw(_("You are not allowed to approve pending item updates for {0}.").format(doctype))
 
 
 def _ensure_no_pending_item_approvals(doc, child_docname):
-	pending_rows = [row.idx for row in doc.get(child_docname, []) if row.get(APPROVAL_STATUS_FIELD) == "Pending Approval"]
+	pending_rows = [row.idx for row in doc.get(child_docname, []) if row.get(APPROVAL_STATUS_FIELD) == PENDING_APPROVAL_STATUS]
 	if pending_rows:
 		row_list = ", ".join(str(idx) for idx in pending_rows)
 		frappe.throw(
 			_("Row(s) {0} are already pending approval. Approve them before making another item update.").format(row_list)
 		)
+
+
+def _get_pending_rows(doc, child_docname="items"):
+	return [row for row in doc.get(child_docname, []) if row.get(APPROVAL_STATUS_FIELD) == PENDING_APPROVAL_STATUS]
 
 
 def _ensure_no_item_deletions(doc, child_docname, incoming_items):
@@ -200,7 +237,7 @@ def _mark_rows_pending_approval(doc, changed_rows, parent_doctype, reason):
 			child_doctype,
 			change["row_name"],
 			{
-				APPROVAL_STATUS_FIELD: "Pending Approval",
+				APPROVAL_STATUS_FIELD: PENDING_APPROVAL_STATUS,
 				APPROVAL_REASON_FIELD: reason,
 				APPROVAL_DATA_FIELD: frappe.as_json(
 					{
@@ -215,6 +252,195 @@ def _mark_rows_pending_approval(doc, changed_rows, parent_doctype, reason):
 			},
 			update_modified=False,
 		)
+
+
+def _set_row_approval_status(doctype, rows, status):
+	child_doctype = ORDER_CONFIG[doctype]["child_doctype"]
+	for row in rows:
+		frappe.db.set_value(
+			child_doctype,
+			row.name,
+			{APPROVAL_STATUS_FIELD: status},
+			update_modified=False,
+		)
+
+
+def _clear_row_approval_state(doctype, rows):
+	child_doctype = ORDER_CONFIG[doctype]["child_doctype"]
+	for row in rows:
+		frappe.db.set_value(
+			child_doctype,
+			row.name,
+			{
+				APPROVAL_STATUS_FIELD: "",
+				APPROVAL_REASON_FIELD: "",
+				APPROVAL_DATA_FIELD: "",
+			},
+			update_modified=False,
+		)
+
+
+def _build_reverted_items_payload(doc, doctype, pending_rows):
+	pending_by_name = {row.name: row for row in pending_rows}
+	reverted_items = []
+
+	for row in doc.get("items", []):
+		pending_row = pending_by_name.get(row.name)
+		if pending_row:
+			request_data = _get_row_request_data(pending_row)
+			old_values = request_data.get("old_values") or {}
+			if not old_values:
+				continue
+
+			reverted_row = _build_row_snapshot(row, doctype)
+			reverted_row["docname"] = row.name
+			for fieldname, value in old_values.items():
+				reverted_row[fieldname] = value
+			reverted_items.append(reverted_row)
+			continue
+
+		current_row = _build_row_snapshot(row, doctype)
+		current_row["docname"] = row.name
+		reverted_items.append(current_row)
+
+	return reverted_items
+
+
+def _get_row_request_data(row):
+	request_data = row.get(APPROVAL_DATA_FIELD)
+	if not request_data:
+		return {}
+
+	try:
+		return frappe.parse_json(request_data) or {}
+	except Exception:
+		return {}
+
+
+def _log_item_update_rejection(doctype, docname, pending_rows, reason):
+	request_reasons = []
+	reverted_row_details = []
+	for row in pending_rows:
+		request_data = _get_row_request_data(row)
+		request_reason = request_data.get("reason") or row.get(APPROVAL_REASON_FIELD)
+		if request_reason:
+			request_reasons.append(_("Row {0}: {1}").format(row.idx, request_reason))
+
+		row_detail = _format_change_details(
+			doctype,
+			row.idx,
+			row.item_code,
+			request_data.get("new_values") or {},
+			request_data.get("old_values") or {},
+		)
+		if row_detail:
+			reverted_row_details.append(row_detail)
+
+	comment_lines = [_("Pending item updates were rejected and reverted.")]
+	if reason:
+		comment_lines.append(_("Rejection reason: {0}").format(reason))
+	if request_reasons:
+		comment_lines.append(_("Original request reason(s): {0}").format(" | ".join(request_reasons)))
+	if reverted_row_details:
+		comment_lines.append(_("Reverted change(s): {0}").format(" | ".join(reverted_row_details)))
+
+	frappe.get_doc({
+		"doctype": "Comment",
+		"comment_type": "Comment",
+		"reference_doctype": doctype,
+		"reference_name": docname,
+		"content": "<br>".join(comment_lines),
+	}).insert(ignore_permissions=True)
+
+
+def _log_item_update_request(doctype, docname, doc, changed_rows, reason):
+	requester = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
+	row_descriptions = []
+	items_by_name = {row.name: row for row in doc.get("items", [])}
+
+	for change in changed_rows:
+		row = items_by_name.get(change.get("row_name"))
+		if not row:
+			continue
+		row_detail = _format_change_details(
+			doctype,
+			row.idx,
+			row.item_code,
+			change.get("old_values") or {},
+			change.get("new_values") or {},
+		)
+		if row_detail:
+			row_descriptions.append(row_detail)
+
+	comment_lines = [
+		_("Item update approval requested by {0}.").format(requester),
+	]
+	if reason:
+		comment_lines.append(_("Reason: {0}").format(reason))
+	if row_descriptions:
+		comment_lines.append(_("Pending change(s): {0}").format(" | ".join(row_descriptions)))
+
+	frappe.get_doc({
+		"doctype": "Comment",
+		"comment_type": "Comment",
+		"reference_doctype": doctype,
+		"reference_name": docname,
+		"content": "<br>".join(comment_lines),
+	}).insert(ignore_permissions=True)
+
+
+def _format_change_details(doctype, row_idx, item_code, old_values, new_values):
+	field_labels = _get_snapshot_field_labels(doctype)
+	details = []
+
+	for fieldname, label in field_labels.items():
+		old_value = old_values.get(fieldname)
+		new_value = new_values.get(fieldname)
+		if _normalize_value(old_value) == _normalize_value(new_value):
+			continue
+		details.append(
+			_("{0}: {1} -> {2}").format(
+				label,
+				_format_snapshot_value(old_value),
+				_format_snapshot_value(new_value),
+			)
+		)
+
+	if not details:
+		return ""
+
+	return _("Row {0} ({1}) - {2}").format(
+		row_idx,
+		item_code or _("Unknown Item"),
+		"; ".join(details),
+	)
+
+
+def _get_snapshot_field_labels(doctype):
+	field_labels = {
+		"item_code": _("Item Code"),
+		"qty": _("Qty"),
+		"rate": _("Rate"),
+		"uom": _("UOM"),
+		"conversion_factor": _("Conversion Factor"),
+	}
+
+	date_field = ORDER_CONFIG[doctype]["date_field"]
+	field_labels[date_field] = _("Delivery Date") if doctype == "Sales Order" else _("Schedule Date")
+
+	if doctype == "Purchase Order":
+		field_labels["fg_item"] = _("Finished Good Item")
+		field_labels["fg_item_qty"] = _("Finished Good Item Qty")
+
+	return field_labels
+
+
+def _format_snapshot_value(value):
+	if value in (None, ""):
+		return _("blank")
+	if isinstance(value, float):
+		return frappe.format_value(value, {"fieldtype": "Float"})
+	return str(value)
 
 
 def _log_reason(doctype, docname, reason):
