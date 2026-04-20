@@ -12,7 +12,7 @@ function set_position_numbers(frm) {
 
 	items.forEach((row, index) => {
 		const position_number = String((index + 1) * 10);
-		if (row[POSITION_FIELDNAME] !== position_number) {
+		if (!row[POSITION_FIELDNAME]) {
 			row[POSITION_FIELDNAME] = position_number;
 			has_changes = true;
 		}
