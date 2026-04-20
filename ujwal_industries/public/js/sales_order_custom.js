@@ -4,6 +4,8 @@ frappe.ui.form.on('Sales Order', {
 	},
 	refresh: function (frm) {
 		ujwal_patch_timeline_reasons(frm);
+		ujwal_add_so_approval_button(frm);
+		ujwal_style_so_pending_rows(frm);
 	},
 });
 
@@ -118,18 +120,10 @@ function ujwal_so_update_items_dialog(opts) {
 					trans_items: trans_items,
 					parent_doctype_name: frm.doc.name,
 					child_docname: child_docname,
+					reason: values.reason,
 				},
 				callback: function () {
-					frappe.call({
-						method: 'ujwal_industries.api.so_revision_log.log_revision',
-						args: {
-							sales_order: frm.doc.name,
-							reason: values.reason,
-						},
-						callback: function () {
-							frm.reload_doc();
-						},
-					});
+					frm.reload_doc();
 				},
 			});
 
@@ -170,4 +164,51 @@ function ujwal_patch_timeline_reasons(frm) {
 			return item;
 		});
 	};
+}
+
+function ujwal_add_so_approval_button(frm) {
+	if (frm.doc.docstatus !== 1 || !ujwal_so_has_pending_rows(frm) || !ujwal_can_approve_so_updates()) {
+		return;
+	}
+
+	frm.add_custom_button(__('Approve Pending Item Updates'), function () {
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.overrides.sales_order_update_items.approve_pending_item_updates',
+			freeze: true,
+			args: {
+				doctype: frm.doc.doctype,
+				docname: frm.doc.name,
+			},
+			callback: function () {
+				frm.reload_doc();
+			},
+		});
+	}, __('Actions'));
+}
+
+function ujwal_so_has_pending_rows(frm) {
+	return (frm.doc.items || []).some((row) => row.custom_update_approval_status === 'Pending Approval');
+}
+
+function ujwal_can_approve_so_updates() {
+	return frappe.user.has_role('Sales Manager') || frappe.user.has_role('System Manager');
+}
+
+function ujwal_style_so_pending_rows(frm) {
+	const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+	if (!grid) return;
+
+	setTimeout(() => {
+		(grid.grid_rows || []).forEach((grid_row) => {
+			const is_pending = grid_row.doc && grid_row.doc.custom_update_approval_status === 'Pending Approval';
+			const background = is_pending ? '#e0e0e0' : '';
+
+			$(grid_row.row).css('background-color', background);
+			$(grid_row.row).find('.data-row, .grid-static-col').css('background-color', background);
+
+			if (grid_row.grid_form) {
+				$(grid_row.grid_form.wrapper).css('background-color', background);
+			}
+		});
+	}, 0);
 }
