@@ -182,3 +182,14 @@ def after_insert(doc, method):
         doc.db_set("route", doc.name)
 
 
+
+
+@frappe.whitelist()
+def get_tools_under_category():
+    data = ["Tool"]
+    Asset_catagory = frappe.get_all("Asset Category", filters={'parent_asset_category': "Tool"})
+    for i in Asset_catagory:
+        data.append(i.name)
+    
+    return data    
+    

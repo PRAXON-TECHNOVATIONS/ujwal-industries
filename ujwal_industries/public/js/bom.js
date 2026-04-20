@@ -20,13 +20,19 @@ frappe.ui.form.on('BOM', {
     },
     
     setup: function(frm) {
-        frm.fields_dict.custom_tool_details.grid.get_field('tool').get_query = function(doc, cdt, cdn) {
-            return {
-                filters: {
-                    asset_category: "Tool"
-                }
+        frappe.call({
+            method: "ujwal_industries.overrides.bom.get_tools_under_category",
+            callback: function (r) {
+                frm.fields_dict.custom_tool_details.grid.get_field('tool').get_query = function(doc, cdt, cdn) {
+                return {
+                    filters: {
+                        asset_category: ["in", r.message]
+                    }
+                };
             };
-        };
+            }
+                
+        })
 
         frappe.meta.get_docfields("BOM Item").forEach(df => {
             if (!df.fieldname) return;
