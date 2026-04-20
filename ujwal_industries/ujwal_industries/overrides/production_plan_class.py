@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, nowdate
+from frappe.utils import add_days, cint, flt, getdate, nowdate
 
 from erpnext.manufacturing.doctype.production_plan.production_plan import (
     ProductionPlan,
@@ -44,6 +44,83 @@ class CustomProductionPlan(ProductionPlan):
         
         self.show_list_created_message("Work Order", wo_list)
         self.show_list_created_message("Purchase Order", po_list)
+
+    @frappe.whitelist()
+    def make_material_request(self):
+        """Create Material Requests grouped by Sales Order, request type, customer and target warehouse."""
+        material_request_list = []
+        material_request_map = {}
+
+        for item in self.mr_items:
+            item_doc = frappe.get_cached_doc("Item", item.item_code)
+            material_request_type = item.material_request_type or item_doc.default_material_request_type
+            target_warehouse = item.warehouse
+
+            if not target_warehouse:
+                frappe.throw(
+                    _("Row #{0}: Target Warehouse is required before creating Material Request for item {1}.").format(
+                        item.idx,
+                        item.item_code,
+                    )
+                )
+
+            key = "{}:{}:{}:{}".format(
+                item.sales_order,
+                material_request_type,
+                item_doc.customer or "",
+                target_warehouse,
+            )
+            schedule_date = item.schedule_date or add_days(nowdate(), cint(item_doc.lead_time_days))
+
+            if key not in material_request_map:
+                material_request_map[key] = frappe.new_doc("Material Request")
+                material_request = material_request_map[key]
+                material_request.update(
+                    {
+                        "transaction_date": nowdate(),
+                        "status": "Draft",
+                        "company": self.company,
+                        "material_request_type": material_request_type,
+                        "customer": item_doc.customer or "",
+                        "set_warehouse": target_warehouse,
+                    }
+                )
+                material_request_list.append(material_request)
+            else:
+                material_request = material_request_map[key]
+
+            material_request.append(
+                "items",
+                {
+                    "item_code": item.item_code,
+                    "from_warehouse": item.from_warehouse if material_request_type == "Material Transfer" else None,
+                    "qty": item.quantity,
+                    "schedule_date": schedule_date,
+                    "warehouse": target_warehouse,
+                    "sales_order": item.sales_order,
+                    "production_plan": self.name,
+                    "material_request_plan_item": item.name,
+                    "project": frappe.db.get_value("Sales Order", item.sales_order, "project") if item.sales_order else None,
+                },
+            )
+
+        for material_request in material_request_list:
+            material_request.flags.ignore_permissions = 1
+            material_request.run_method("set_missing_values")
+            material_request.save()
+            if self.get("submit_material_request"):
+                material_request.submit()
+
+        frappe.flags.mute_messages = False
+
+        if material_request_list:
+            material_request_list = [
+                frappe.utils.get_link_to_form("Material Request", material_request.name)
+                for material_request in material_request_list
+            ]
+            frappe.msgprint(_("{0} created").format(frappe.utils.comma_and(material_request_list)))
+        else:
+            frappe.msgprint(_("No material request created"))
 
     def make_work_order_for_finished_goods(self, wo_list, subcontracted_po, vendor_po_dict, default_warehouses):
         """
