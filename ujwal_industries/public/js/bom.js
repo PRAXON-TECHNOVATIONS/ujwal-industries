@@ -10,6 +10,7 @@ frappe.ui.form.on('BOM', {
             if (!df._custom_bound) {
                 df._custom_bound = true;
                 frappe.ui.form.on('BOM', df.fieldname, function(frm) {
+                    if (frm.is_new()) return;
                     add_change_log(frm, df.fieldname);
                 });
             }
@@ -32,6 +33,7 @@ frappe.ui.form.on('BOM', {
             if (!df._custom_bound) {
                 df._custom_bound = true;
                 frappe.ui.form.on('BOM Item', df.fieldname, function(frm, cdt, cdn) {
+                    if (frm.is_new()) return;
                     add_child_change_log(frm, cdt, cdn, df.fieldname);
                 });
             }
