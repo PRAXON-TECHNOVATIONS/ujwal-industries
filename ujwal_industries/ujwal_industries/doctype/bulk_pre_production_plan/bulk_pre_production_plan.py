@@ -578,6 +578,274 @@ def _get_item_default_warehouse_map(item_codes: list[str], company: str) -> dict
 	return {row.item_code: row.default_warehouse for row in rows}
 
 
+def _get_stock_warehouse_for_requirement_row(row: Any, item_code: str, target_warehouse_map: dict[str, str]) -> str:
+	"""Resolve the warehouse whose stock should reduce a requirement row."""
+	return (
+		getattr(row, "fg_warehouse", None)
+		or getattr(row, "target_warehouse", None)
+		or getattr(row, "warehouse", None)
+		or target_warehouse_map.get(item_code, "")
+		or ""
+	)
+
+
+def _get_projected_qty_for_requirement(item_code: str | None, warehouse: str | None) -> float:
+	"""Return non-negative projected quantity for an item in a warehouse."""
+	if not item_code or not warehouse:
+		return 0.0
+
+	bin_data = get_bin_data(item_code, warehouse)
+	if not bin_data:
+		return 0.0
+
+	return max(flt(bin_data[0].get("projected_qty") or 0), 0.0)
+
+
+def _allocate_group_net_qty(group_rows: list[dict[str, Any]], stock_qty: float) -> dict[str, float]:
+	"""Allocate stock-adjusted group quantity back to rows proportionally."""
+	total_gross = sum(max(flt(row.get("gross_qty") or 0), 0.0) for row in group_rows)
+	if total_gross <= 0:
+		return {row["row_key"]: 0.0 for row in group_rows}
+
+	net_total = max(total_gross - max(flt(stock_qty), 0.0), 0.0)
+	remaining = net_total
+	allocations: dict[str, float] = {}
+
+	for index, row in enumerate(group_rows):
+		gross_qty = max(flt(row.get("gross_qty") or 0), 0.0)
+		if index == len(group_rows) - 1:
+			row_net_qty = max(remaining, 0.0)
+		else:
+			row_net_qty = net_total * (gross_qty / total_gross)
+			remaining -= row_net_qty
+		allocations[row["row_key"]] = row_net_qty
+
+	return allocations
+
+
+def _fetch_bom_component_map(bom_nos: list[str]) -> dict[str, list[dict[str, Any]]]:
+	"""Return BOM components keyed by BOM number with per-unit quantities."""
+	bom_nos = [bom_no for bom_no in dict.fromkeys(bom_nos or []) if bom_no]
+	if not bom_nos:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			bi.parent AS bom_no,
+			bi.item_code,
+			bi.stock_uom,
+			bi.stock_qty / NULLIF(b.quantity, 0) AS qty_per_unit,
+			COALESCE(bi.bom_no, '') AS child_bom_no
+		FROM `tabBOM Item` bi
+		INNER JOIN `tabBOM` b ON b.name = bi.parent
+		WHERE bi.parent IN %(bom_nos)s
+		ORDER BY bi.parent, bi.idx
+		""",
+		{"bom_nos": bom_nos},
+		as_dict=True,
+	)
+
+	component_map: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		component_map.setdefault(row.bom_no, []).append(row)
+	return component_map
+
+
+def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], target_warehouse_map: dict[str, str]) -> dict[str, Any]:
+	"""Compute gross/net FG, SFG and MR requirements using row warehouses and BOM ratios."""
+	fg_rows = list(items.get("fg") or [])
+	sfg_rows = sorted(items.get("sfg") or [], key=lambda row: cint(getattr(row, "bom_level", 0) or 0))
+	mr_rows = list(items.get("mr") or [])
+
+	fg_row_states: dict[str, dict[str, Any]] = {}
+	fg_item_states: dict[str, dict[str, Any]] = {}
+	fg_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+	for fg in fg_rows:
+		item_code = getattr(fg, "item_code", "") or ""
+		row_key = getattr(fg, "name", None) or f"fg::{item_code}"
+		warehouse = _get_stock_warehouse_for_requirement_row(fg, item_code, target_warehouse_map)
+		gross_qty = max(flt(getattr(fg, "planned_qty", 0) or 0), 0.0)
+		fg_groups.setdefault((item_code, warehouse), []).append({
+			"row_key": row_key,
+			"gross_qty": gross_qty,
+			"warehouse": warehouse,
+		})
+
+	for (item_code, warehouse), group_rows in fg_groups.items():
+		stock_qty = _get_projected_qty_for_requirement(item_code, warehouse)
+		allocations = _allocate_group_net_qty(group_rows, stock_qty)
+		item_state = fg_item_states.setdefault(item_code, {
+			"gross_qty": 0.0,
+			"net_qty": 0.0,
+			"stock_qty": 0.0,
+			"warehouse": warehouse,
+		})
+
+		for row in group_rows:
+			row_net_qty = allocations.get(row["row_key"], 0.0)
+			fg_row_states[row["row_key"]] = {
+				"gross_qty": row["gross_qty"],
+				"net_qty": row_net_qty,
+				"stock_qty": stock_qty,
+				"warehouse": warehouse,
+			}
+			item_state["gross_qty"] += row["gross_qty"]
+			item_state["net_qty"] += row_net_qty
+		item_state["stock_qty"] = max(flt(item_state.get("stock_qty") or 0), stock_qty)
+
+	sfg_row_states: dict[str, dict[str, Any]] = {}
+	sfg_parent_states: dict[tuple[str, str, int], dict[str, Any]] = {}
+	sfg_rows_by_level: dict[int, list[Any]] = {}
+
+	for sfg in sfg_rows:
+		level = cint(getattr(sfg, "bom_level", 0) or 0)
+		sfg_rows_by_level.setdefault(level, []).append(sfg)
+
+	for level in sorted(sfg_rows_by_level):
+		sfg_groups_by_level: dict[tuple[str, str, int, str], list[dict[str, Any]]] = {}
+
+		for sfg in sfg_rows_by_level[level]:
+			item_code = getattr(sfg, "production_item", "") or ""
+			fg_item_code = getattr(sfg, "fg_item_code", "") or ""
+			parent_item_code = getattr(sfg, "parent_item_code", "") or fg_item_code
+			row_key = getattr(sfg, "name", None) or f"sfg::{fg_item_code}::{item_code}::{level}"
+			warehouse = _get_stock_warehouse_for_requirement_row(sfg, item_code, target_warehouse_map)
+			base_gross_qty = max(flt(getattr(sfg, "qty", 0) or 0), 0.0)
+
+			if level <= 0:
+				parent_state = fg_item_states.get(fg_item_code) or {"gross_qty": base_gross_qty, "net_qty": base_gross_qty}
+			else:
+				parent_state = sfg_parent_states.get((fg_item_code, parent_item_code, level - 1)) or {
+					"gross_qty": base_gross_qty,
+					"net_qty": base_gross_qty,
+				}
+
+			parent_gross_qty = max(flt(parent_state.get("gross_qty") or 0), 0.0)
+			parent_net_qty = max(flt(parent_state.get("net_qty") or 0), 0.0)
+			planned_basis_qty = base_gross_qty
+			if parent_gross_qty > 0:
+				planned_basis_qty = parent_net_qty * (base_gross_qty / parent_gross_qty)
+
+			sfg_groups_by_level.setdefault((fg_item_code, parent_item_code, item_code, level, warehouse), []).append({
+				"row_key": row_key,
+				"gross_qty": planned_basis_qty,
+				"bom_qty": base_gross_qty,
+				"warehouse": warehouse,
+			})
+
+		for (fg_item_code, parent_item_code, item_code, current_level, warehouse), group_rows in sfg_groups_by_level.items():
+			stock_qty = _get_projected_qty_for_requirement(item_code, warehouse)
+			allocations = _allocate_group_net_qty(group_rows, stock_qty)
+			parent_state = sfg_parent_states.setdefault((fg_item_code, item_code, current_level), {
+				"gross_qty": 0.0,
+				"net_qty": 0.0,
+				"stock_qty": 0.0,
+				"warehouse": warehouse,
+			})
+
+			for row in group_rows:
+				row_net_qty = allocations.get(row["row_key"], 0.0)
+				sfg_row_states[row["row_key"]] = {
+					"gross_qty": row.get("bom_qty", row["gross_qty"]),
+					"net_qty": row_net_qty,
+					"stock_qty": stock_qty,
+					"warehouse": warehouse,
+				}
+				parent_state["gross_qty"] += row.get("bom_qty", row["gross_qty"])
+				parent_state["net_qty"] += row_net_qty
+			parent_state["stock_qty"] = max(flt(parent_state.get("stock_qty") or 0), stock_qty)
+
+	bom_component_map = _fetch_bom_component_map([
+		bom_no
+		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
+		if bom_no
+	])
+
+	mr_meta_by_item: dict[str, dict[str, Any]] = {}
+	for mr in mr_rows:
+		item_code = getattr(mr, "item_code", "") or ""
+		if not item_code:
+			continue
+		mr_meta_by_item.setdefault(item_code, {
+			"warehouse": getattr(mr, "warehouse", "") or "",
+			"uom": getattr(mr, "uom", "") or "",
+			"item_name": getattr(mr, "item_name", "") or item_code,
+			"row_name": getattr(mr, "name", "") or "",
+		})
+
+	mr_totals: dict[tuple[str, str], dict[str, Any]] = {}
+
+	def _accumulate_mr_from_bom(bom_no: str | None, net_parent_qty: float) -> None:
+		if not bom_no or net_parent_qty <= 0:
+			return
+
+		for component in bom_component_map.get(bom_no, []):
+			if component.get("child_bom_no"):
+				continue
+
+			item_code = component.get("item_code") or ""
+			meta = mr_meta_by_item.get(item_code, {})
+			warehouse = meta.get("warehouse") or ""
+			key = (item_code, warehouse)
+			entry = mr_totals.setdefault(key, {
+				"item_code": item_code,
+				"warehouse": warehouse,
+				"uom": meta.get("uom") or component.get("stock_uom") or "",
+				"item_name": meta.get("item_name") or item_code,
+				"row_name": meta.get("row_name") or "",
+				"required_bom_qty": 0.0,
+			})
+			entry["required_bom_qty"] += max(flt(component.get("qty_per_unit") or 0), 0.0) * net_parent_qty
+
+	for fg in fg_rows:
+		row_key = getattr(fg, "name", None) or f"fg::{getattr(fg, 'item_code', '') or ''}"
+		net_parent_qty = max(flt((fg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty)
+
+	for sfg in sfg_rows:
+		row_key = getattr(sfg, "name", None) or f"sfg::{getattr(sfg, 'fg_item_code', '') or ''}::{getattr(sfg, 'production_item', '') or ''}::{cint(getattr(sfg, 'bom_level', 0) or 0)}"
+		net_parent_qty = max(flt((sfg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(sfg, "bom_no", None), net_parent_qty)
+
+	mr_items_out: list[Any] = []
+	for (_, warehouse), data in sorted(mr_totals.items(), key=lambda item: (item[0][0], item[0][1])):
+		stock_qty = _get_projected_qty_for_requirement(data.get("item_code"), warehouse)
+		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)
+		mr_items_out.append(frappe._dict({
+			"item_code": data.get("item_code") or "",
+			"warehouse": warehouse,
+			"uom": data.get("uom") or "",
+			"item_name": data.get("item_name") or data.get("item_code") or "",
+			"name": data.get("row_name") or "",
+			"required_bom_qty": required_bom_qty,
+			"quantity": max(required_bom_qty - stock_qty, 0.0),
+			"actual_qty": stock_qty,
+		}))
+
+	if not mr_items_out:
+		for mr in mr_rows:
+			mr_items_out.append(frappe._dict({
+				"item_code": getattr(mr, "item_code", "") or "",
+				"warehouse": getattr(mr, "warehouse", "") or "",
+				"uom": getattr(mr, "uom", "") or "",
+				"item_name": getattr(mr, "item_name", "") or getattr(mr, "item_code", "") or "",
+				"name": getattr(mr, "name", "") or "",
+				"required_bom_qty": max(flt(getattr(mr, "required_bom_qty", 0) or getattr(mr, "quantity", 0) or 0), 0.0),
+				"quantity": max(flt(getattr(mr, "quantity", 0) or 0), 0.0),
+				"actual_qty": max(flt(getattr(mr, "actual_qty", 0) or 0), 0.0),
+			}))
+
+	return {
+		"fg_by_row": fg_row_states,
+		"fg_by_item": fg_item_states,
+		"sfg_by_row": sfg_row_states,
+		"sfg_by_parent": sfg_parent_states,
+		"mr_items": mr_items_out,
+	}
+
+
 class BulkPreProductionPlan(Document):
 	def validate(self):
 		"""Validate the document before save"""
@@ -1613,6 +1881,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
 			for link in linked_rm_rows:
 				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
+		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+		fg_requirement_map = requirement_ctx["fg_by_row"]
+		sfg_requirement_map = requirement_ctx["sfg_by_row"]
+		effective_mr_items = requirement_ctx["mr_items"]
 
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
@@ -1688,7 +1960,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			fg0 = items["fg"][0]
 			fg0_cfg = _get_row_shift_config(fg0)
 			_fg0_cache = _fetch_bom_operations_cache([fg0.bom_no]) if getattr(fg0, "bom_no", None) else {}
-			fg0_prod_mins = _calculate_row_production_minutes(fg0, flt(getattr(fg0, "planned_qty", 0) or 0), _fg0_cache)
+			fg0_net_qty = flt((fg_requirement_map.get(getattr(fg0, "name", "") or "") or {}).get("net_qty") or getattr(fg0, "planned_qty", 0) or 0)
+			fg0_prod_mins = _calculate_row_production_minutes(fg0, fg0_net_qty, _fg0_cache)
 			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
 			if fg0_prod_mins and fg0_prod_mins > 0:
 				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
@@ -1712,25 +1985,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no    = sfg.bom_no or ""
 			item_code = sfg.production_item
-   
-			default_warehouse = frappe.db.sql("""
-				SELECT id.default_warehouse
-				FROM `tabItem Default` id
-				WHERE id.parent = %s
-				LIMIT 1
-			""", (item_code,), as_dict=1)
-			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
-   
-			sales_qty = 0
-			bin_data = get_bin_data(item_code,default_warehouse)
-			actual_qty = 0
-			if bin_data:
-				actual_qty = bin_data[0].get("projected_qty", 0)
-    
-			if actual_qty > 0:
-				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
-			else:
-				sales_qty = flt(sfg.qty)
+			requirement_state = sfg_requirement_map.get(getattr(sfg, "name", "") or "") or {}
+			sales_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
+			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
+			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(sfg, "qty", 0) or 0), 0.0)
     
 			grn_days  = int(grn_map.get(item_code, 0))
 
@@ -1857,7 +2115,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"tool": selected_tool, "tools": tool_info.get("tools") or [],
 				"bom_level": sfg.bom_level or 0, 
     			"qty": sales_qty,
-    			"qty_as_show": flt(sfg.qty),
+	    		"qty_as_show": gross_qty,
     			"actual_qty": actual_qty,
 				"batchsize": base_batchsize, 
     			"spm": display_spm,
@@ -1937,7 +2195,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 		max_mr_end_dt: "datetime | None" = None
 		mr_rows_out: list[dict] = []
-		for mr in items["mr"]:
+		for mr in effective_mr_items:
 			item_code  = mr.item_code
 			grn_days   = int(grn_map.get(item_code, 0))
 			lead_days  = int(lead_map.get(item_code, 0))
@@ -1968,6 +2226,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"item_code":  item_code,
 				"item_name":  mr.item_name or item_code,
 				"qty":        flt(mr.quantity),
+				"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or mr.quantity or 0),
+				"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
 				"uom":        mr.uom or "",
 				"grn_days":   grn_days,
 				"lead_days":  lead_days,
@@ -2031,25 +2291,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no     = fg.bom_no or ""
 			item_code  = fg.item_code
-
-			default_warehouse = frappe.db.sql("""
-				SELECT id.default_warehouse
-				FROM `tabItem Default` id
-				WHERE id.parent = %s
-				LIMIT 1
-			""", (item_code,), as_dict=1)
-			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
-   
-			planned_qty = 0
-			bin_data = get_bin_data(item_code,default_warehouse)
-			actual_qty = 0
-			if bin_data:
-				actual_qty = bin_data[0].get("projected_qty", 0)
-		
-			if actual_qty > 0:
-				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
-			else:
-				planned_qty = flt(fg.planned_qty)
+			requirement_state = fg_requirement_map.get(getattr(fg, "name", "") or "") or {}
+			planned_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
+			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
+			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(fg, "planned_qty", 0) or 0), 0.0)
 
 			sales_qty  = planned_qty
 			tool_info = _resolve_bom_tool_info(
@@ -2174,7 +2419,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
 				"planned_qty":             planned_qty,
-				"planned_qty_as_show":     flt(fg.planned_qty),
+				"planned_qty_as_show":     gross_qty,
 				"actual_qty":              actual_qty,
 				"batchsize":               base_batchsize,
 				"spm":                     display_spm,
@@ -2188,8 +2433,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"target_warehouse": (
 					getattr(fg, "target_warehouse", "") or target_warehouse_map.get(fg.item_code, "")
 				),
-				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(fg_start),
-				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(fg_end),
+				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(top_sfg_batch0_end or today_dt),
+				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(top_sfg_batch0_end or fg_deadline_dt),
 				"row_name":                fg.name,
 				"batches":                batch_rows,
 			})
@@ -2420,6 +2665,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
 			for link in linked_rm_rows:
 				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
+		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+		fg_requirement_map = requirement_ctx["fg_by_row"]
+		sfg_requirement_map = requirement_ctx["sfg_by_row"]
+		effective_mr_items = requirement_ctx["mr_items"]
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
@@ -2481,7 +2730,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			fg0 = items["fg"][0]
 			fg0_cfg = _get_row_shift_config(fg0)
 			_fg0_cache = _fetch_bom_operations_cache([fg0.bom_no]) if getattr(fg0, "bom_no", None) else {}
-			fg0_prod_mins = _calculate_row_production_minutes(fg0, flt(getattr(fg0, "planned_qty", 0) or 0), _fg0_cache)
+			fg0_net_qty = flt((fg_requirement_map.get(getattr(fg0, "name", "") or "") or {}).get("net_qty") or getattr(fg0, "planned_qty", 0) or 0)
+			fg0_prod_mins = _calculate_row_production_minutes(fg0, fg0_net_qty, _fg0_cache)
 			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
 			if fg0_prod_mins and fg0_prod_mins > 0:
 				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
@@ -2505,25 +2755,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 			bom_no    = sfg.bom_no or ""
 			item_code = sfg.production_item
-   
-			default_warehouse = frappe.db.sql("""
-				SELECT id.default_warehouse
-				FROM `tabItem Default` id
-				WHERE id.parent = %s
-				LIMIT 1
-			""", (item_code,), as_dict=1)
-			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
-   
-			sales_qty = 0
-			bin_data = get_bin_data(item_code,default_warehouse)
-			actual_qty = 0
-			if bin_data:
-				actual_qty = bin_data[0].get("projected_qty", 0)
-    
-			if actual_qty > 0:
-				sales_qty = max(flt(sfg.qty) - actual_qty, 0)
-			else:
-				sales_qty = flt(sfg.qty)
+			requirement_state = sfg_requirement_map.get(getattr(sfg, "name", "") or "") or {}
+			sales_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
+			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
+			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(sfg, "qty", 0) or 0), 0.0)
     
 			grn_days  = int(grn_map.get(item_code, 0))
 
@@ -2631,7 +2866,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"tool": selected_tool, "tools": tool_info.get("tools") or [],
 				"bom_level": sfg.bom_level or 0, 
     			"qty": sales_qty,
-    			"qty_as_show": flt(sfg.qty),
+	    		"qty_as_show": gross_qty,
     			"actual_qty": actual_qty,
 				"batchsize": base_batchsize, 
     			"spm": display_spm,
@@ -2706,7 +2941,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 		max_mr_end_dt: "datetime | None" = None
 		mr_rows_out: list[dict] = []
-		for mr in items["mr"]:
+		for mr in effective_mr_items:
 			item_code  = mr.item_code
 			grn_days   = int(grn_map.get(item_code, 0))
 			lead_days  = int(lead_map.get(item_code, 0))
@@ -2737,6 +2972,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"item_code":  item_code,
 				"item_name":  mr.item_name or item_code,
 				"qty":        flt(mr.quantity),
+				"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or mr.quantity or 0),
+				"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
 				"uom":        mr.uom or "",
 				"grn_days":   grn_days,
 				"lead_days":  lead_days,
@@ -2796,25 +3033,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 			bom_no     = fg.bom_no or ""
 			item_code  = fg.item_code
-
-			default_warehouse = frappe.db.sql("""
-				SELECT id.default_warehouse
-				FROM `tabItem Default` id
-				WHERE id.parent = %s
-				LIMIT 1
-			""", (item_code,), as_dict=1)
-			default_warehouse = default_warehouse[0].default_warehouse if default_warehouse else None
-   
-			planned_qty = 0
-			bin_data = get_bin_data(item_code,default_warehouse)
-			actual_qty = 0
-			if bin_data:
-				actual_qty = bin_data[0].get("projected_qty", 0)
-		
-			if actual_qty > 0:
-				planned_qty = max(flt(fg.planned_qty) - actual_qty, 0)
-			else:
-				planned_qty = flt(fg.planned_qty)
+			requirement_state = fg_requirement_map.get(getattr(fg, "name", "") or "") or {}
+			planned_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
+			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
+			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(fg, "planned_qty", 0) or 0), 0.0)
 
 			sales_qty  = planned_qty
 			tool_info = _resolve_bom_tool_info(
@@ -2934,7 +3156,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
 				"planned_qty":             planned_qty,
-				"planned_qty_as_show":     flt(fg.planned_qty),
+				"planned_qty_as_show":     gross_qty,
 				"actual_qty":              actual_qty,
 				"batchsize":               base_batchsize,
 				"spm":                     display_spm,
@@ -2948,8 +3170,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"target_warehouse": (
 					getattr(fg, "target_warehouse", "") or target_warehouse_map.get(fg.item_code, "")
 				),
-				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(fg_start),
-				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(fg_end),
+				"planned_start_date":      batch_rows[0]["start_date"] if batch_rows else str(top_sfg_batch0_end or today_dt),
+				"custom_planned_end_date": batch_rows[-1]["end_date"] if batch_rows else str(top_sfg_batch0_end or fg_deadline_dt),
 				"row_name":                fg.name,
 				"batches":                batch_rows,
 			})
@@ -3481,7 +3703,7 @@ def get_sub_assembly_items_from_bom(
 				'sales_order': so_name,
 				'fg_item_code': fg_item,
 				'production_item': bom_item.item_code,
-				'parent_item_code': parent_item,
+				'parent_item_code': parent_item or fg_item,
 				'bom_no': bom_item.item_bom_no,
 				'tool': tool_details.get('tool') or '',
 				'tool_load_qty': cint(tool_details.get('tool_load_qty') or 0),
@@ -4414,6 +4636,99 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 	Returns:
 		Production Plan name
 	"""
+	if getattr(bulk_pp, "custom_batch_schedule", None):
+		try:
+			schedule = json.loads(bulk_pp.custom_batch_schedule)
+			so_details = schedule.get(sales_order)
+			if so_details:
+				pp_doc = frappe.new_doc("Production Plan")
+				pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
+				pp_doc.get_items_from = "Sales Order"
+				pp_doc.custom_parallel_planning = 1
+				pp_doc.append("sales_orders", {"sales_order": sales_order})
+
+				for fg_data in so_details.get("fg") or []:
+					item_doc = frappe.get_doc("Item", fg_data.get("item_code"))
+					warehouse = ""
+					if item_doc.item_defaults:
+						warehouse = item_doc.item_defaults[0].get("default_warehouse")
+
+					manufacturing_type = (
+						fg_data.get("manufacturing_type")
+						or fg_data.get("custom_manufacturing_type")
+						or "In House"
+					)
+
+					for batch in fg_data.get("batches") or []:
+						pp_doc.append("po_items", {
+							"include_exploded_items": 1,
+							"item_code": fg_data.get("item_code"),
+							"bom_no": fg_data.get("bom_no"),
+							"planned_qty": batch.get("qty"),
+							"stock_uom": item_doc.stock_uom,
+							"custom_manufacturing_type": manufacturing_type,
+							"planned_start_date": batch.get("start_date"),
+							"custom_planned_end_date": batch.get("end_date"),
+							"sales_order": fg_data.get("sales_order"),
+							"warehouse": warehouse,
+							"custom_workstation": fg_data.get("custom_workstations_csv"),
+							"custom_mfg_days": batch.get("mfg_days"),
+							"custom_grn_days": batch.get("grn_days"),
+							"custom_pm_days": batch.get("pm_days"),
+							"custom_shift_types_csv": fg_data.get("custom_shift_types_csv") or "",
+						})
+
+				for sfg_data in (so_details.get("sfg_chain") or [])[::-1]:
+					item_doc = frappe.get_doc("Item", sfg_data.get("item_code"))
+					warehouse = ""
+					if item_doc.item_defaults:
+						warehouse = item_doc.item_defaults[0].get("default_warehouse")
+
+					for batch in sfg_data.get("batches") or []:
+						pp_doc.append("sub_assembly_items", {
+							"production_item": sfg_data.get("item_code"),
+							"bom_no": sfg_data.get("bom_no"),
+							"qty": batch.get("qty"),
+							"stock_uom": item_doc.stock_uom,
+							"type_of_manufacturing": sfg_data.get("type_of_manufacturing"),
+							"schedule_date": batch.get("start_date"),
+							"custom_schedule_end_date": batch.get("end_date"),
+							"supplier": sfg_data.get("supplier"),
+							"fg_warehouse": warehouse,
+							"custom_workstation": sfg_data.get("custom_workstations_csv"),
+							"custom_mfg_days": batch.get("mfg_days"),
+							"custom_grn_days": batch.get("grn_days"),
+							"custom_pm_days": batch.get("pm_days"),
+							"custom_shift_types_csv": sfg_data.get("custom_shift_types_csv") or "",
+						})
+
+				for mr_data in so_details.get("mr") or []:
+					warehouse = mr_data.get("warehouse") or ""
+					if not warehouse and mr_data.get("item_code"):
+						item_doc = frappe.get_doc("Item", mr_data.get("item_code"))
+						if item_doc.item_defaults:
+							warehouse = item_doc.item_defaults[0].get("default_warehouse")
+					pp_doc.append("mr_items", {
+						"item_code": mr_data.get("item_code"),
+						"item_name": mr_data.get("item_name"),
+						"warehouse": warehouse,
+						"custom_start_date": mr_data.get("start_date"),
+						"schedule_date": mr_data.get("end_date"),
+						"quantity": mr_data.get("qty"),
+						"required_bom_qty": mr_data.get("required_bom_qty") or mr_data.get("qty"),
+						"custom_supplier": mr_data.get("supplier"),
+					})
+
+				_run_machine_availability_check_for_production_plan(pp_doc)
+				pp_doc.save()
+				frappe.db.commit()
+				return frappe._dict({"name": pp_doc.name})
+		except Exception:
+			frappe.log_error(
+				title=f"Falling back to direct PP creation for {sales_order}",
+				message=frappe.get_traceback(),
+			)
+
 	# Get items for this sales order
 	fg_items = [item for item in bulk_pp.po_items if item.sales_order == sales_order]
 	sfg_items = [item for item in bulk_pp.sub_assembly_items if item.sales_order == sales_order]
@@ -4617,4 +4932,4 @@ def get_bin_data(item_code=None, warehouse=None):
 		query = query.where(bin.warehouse == warehouse)
 
 	p_qty = query.run(as_dict=True)
-	return p_qty
+	return p_qty	
