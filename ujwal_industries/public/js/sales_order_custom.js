@@ -1,13 +1,75 @@
+const POSITION_FIELDNAME = 'custom_po_no';
+const ITEMS_FIELDNAME = 'items';
+const SALES_ORDER_ITEM_DOCTYPE = 'Sales Order Item';
+
 frappe.ui.form.on('Sales Order', {
-	setup: function () {
+	setup: function (frm) {
 		ujwal_patch_so_update_child_items();
+		ujwal_configure_so_position_number_field(frm);
+		ujwal_set_so_position_numbers(frm);
 	},
 	refresh: function (frm) {
+		ujwal_configure_so_position_number_field(frm);
 		ujwal_patch_timeline_reasons(frm);
 		ujwal_add_so_approval_button(frm);
 		ujwal_style_so_pending_rows(frm);
 	},
+	validate: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
+	items_add: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
+	items_remove: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
 });
+
+frappe.ui.form.on(SALES_ORDER_ITEM_DOCTYPE, {
+	items_add: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
+	items_move: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
+	items_remove: function (frm) {
+		ujwal_set_so_position_numbers(frm);
+	},
+});
+
+function ujwal_configure_so_position_number_field(frm) {
+	const items_grid = frm.fields_dict[ITEMS_FIELDNAME] && frm.fields_dict[ITEMS_FIELDNAME].grid;
+	if (!items_grid) {
+		return;
+	}
+
+	items_grid.update_docfield_property(POSITION_FIELDNAME, 'hidden', 0);
+	items_grid.update_docfield_property(POSITION_FIELDNAME, 'in_list_view', 1);
+	items_grid.update_docfield_property(POSITION_FIELDNAME, 'read_only', 1);
+	frm.refresh_field(ITEMS_FIELDNAME);
+}
+
+function ujwal_set_so_position_numbers(frm) {
+	if (frm.doc.docstatus !== 0) {
+		return;
+	}
+
+	const items = frm.doc[ITEMS_FIELDNAME] || [];
+	let has_changes = false;
+
+	items.forEach((row, index) => {
+		const position_number = String((index + 1) * 10);
+		if (row[POSITION_FIELDNAME] !== position_number) {
+			row[POSITION_FIELDNAME] = position_number;
+			has_changes = true;
+		}
+	});
+
+	if (has_changes) {
+		frm.refresh_field(ITEMS_FIELDNAME);
+		frm.dirty();
+	}
+}
 
 // ── Patch "Update Items" dialog to require a Reason ──────────────────────────
 

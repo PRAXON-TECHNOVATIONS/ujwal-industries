@@ -4,8 +4,10 @@ import frappe
 POSITION_FIELDNAME = "custom_po_no"
 
 
-def _set_position_numbers(doc):
+def _set_position_numbers(doc, *, overwrite: bool = True):
 	for index, item in enumerate(doc.get("items", []), start=1):
+		if not overwrite and item.get(POSITION_FIELDNAME):
+			continue
 		item.set(POSITION_FIELDNAME, str(index * 10))
 
 
@@ -43,7 +45,7 @@ def sync_sales_order_position_numbers(doc, method=None):
 
 
 def sync_delivery_note_position_numbers(doc, method=None):
-	_set_position_numbers(doc)
+	_set_position_numbers(doc, overwrite=False)
 
 	for item in doc.get("items", []):
 		_sync_sales_order_row(item)
@@ -51,7 +53,7 @@ def sync_delivery_note_position_numbers(doc, method=None):
 
 
 def sync_sales_invoice_position_numbers(doc, method=None):
-	_set_position_numbers(doc)
+	_set_position_numbers(doc, overwrite=False)
 
 	for item in doc.get("items", []):
 		_sync_sales_order_row(item)
