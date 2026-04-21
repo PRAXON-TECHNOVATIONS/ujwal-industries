@@ -1405,8 +1405,25 @@ def get_sales_orders(
 	""" if item_code else ""
 
 	customer_condition = "AND so.customer = %(customer)s" if customer else ""
+	production_plan_condition = """
+		AND NOT EXISTS(
+			SELECT 1
+			FROM `tabProduction Plan` pp
+			LEFT JOIN `tabProduction Plan Sales Order` ppso
+				ON ppso.parent = pp.name
+				AND ppso.parenttype = 'Production Plan'
+			LEFT JOIN `tabProduction Plan Item` ppi
+				ON ppi.parent = pp.name
+				AND ppi.parenttype = 'Production Plan'
+			WHERE pp.docstatus < 2
+				AND (
+					ppso.sales_order = so.name
+					OR ppi.sales_order = so.name
+				)
+		)
+	"""
 
-	# Fetch Sales Orders with delivery_date <= to_delivery_date and optional item/customer filters
+	# Fetch only Sales Orders that do not already have a non-cancelled Production Plan
 	sales_orders = frappe.db.sql(f"""
 		SELECT
 			so.name as sales_order,
@@ -1433,6 +1450,7 @@ def get_sales_orders(
 			AND so.company = %(company)s
 			{customer_condition}
 			{item_condition}
+			{production_plan_condition}
 		ORDER BY
 			so.delivery_date ASC
 	""", filters, as_dict=True)
@@ -1445,6 +1463,7 @@ def get_sales_orders(
 		filter_bits.append(_('customer {0}').format(frappe.bold(customer)))
 	if item_code:
 		filter_bits.append(_('item {0}').format(frappe.bold(item_code)))
+	filter_bits.append(_('without an existing Production Plan'))
 
 	frappe.msgprint(
 		_('Found {0} Sales Orders for {1}').format(len(sales_orders), ', '.join(filter_bits))
