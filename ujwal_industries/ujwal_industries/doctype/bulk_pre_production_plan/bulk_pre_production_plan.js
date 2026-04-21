@@ -162,7 +162,9 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
 				to_delivery_date: frm.doc.to_delivery_date,
-				company: frm.doc.company
+				company: frm.doc.company,
+				item_code: frm.doc.item_code,
+				customer: frm.doc.customer
 			},
 			callback: function (r) {
 				if (r.message && r.message.sales_orders) {

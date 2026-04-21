@@ -1363,13 +1363,20 @@ class BulkPreProductionPlan(Document):
 # ============================================================================
 
 @frappe.whitelist()
-def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
+def get_sales_orders(
+	to_delivery_date: str,
+	company: str,
+	item_code: str | None = None,
+	customer: str | None = None,
+) -> dict[str, Any]:
 	"""
 	Fetch Sales Orders with delivery_date up to to_delivery_date (Bulk PP workflow)
 
 	Args:
 		to_delivery_date: Show all SOs up to this delivery date
 		company: Company name
+		item_code: Optional item filter
+		customer: Optional customer filter
 
 	Returns:
 		Dict with sales_orders list
@@ -1380,8 +1387,27 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 	if not company:
 		frappe.throw(_("Please set Company"))
 
-	# Fetch Sales Orders with delivery_date <= to_delivery_date
-	sales_orders = frappe.db.sql("""
+	filters = {
+		'to_date': to_delivery_date,
+		'company': company,
+		'item_code': item_code,
+		'customer': customer,
+	}
+
+	item_condition = """
+		AND EXISTS(
+			SELECT 1
+			FROM `tabSales Order Item` soi_filter
+			WHERE soi_filter.parent = so.name
+				AND soi_filter.docstatus = 1
+				AND soi_filter.item_code = %(item_code)s
+		)
+	""" if item_code else ""
+
+	customer_condition = "AND so.customer = %(customer)s" if customer else ""
+
+	# Fetch Sales Orders with delivery_date <= to_delivery_date and optional item/customer filters
+	sales_orders = frappe.db.sql(f"""
 		SELECT
 			so.name as sales_order,
 			so.customer,
@@ -1405,17 +1431,24 @@ def get_sales_orders(to_delivery_date: str, company: str) -> dict[str, Any]:
 			AND so.status NOT IN ('Closed', 'Cancelled', 'Completed')
 			AND so.delivery_date <= %(to_date)s
 			AND so.company = %(company)s
+			{customer_condition}
+			{item_condition}
 		ORDER BY
 			so.delivery_date ASC
-	""", {
-		'to_date': to_delivery_date,
-		'company': company
-	}, as_dict=True)
+	""", filters, as_dict=True)
 
 	# Just return the sales_orders data - don't save to avoid naming series issues
 	# The frontend will populate the child table
 
-	frappe.msgprint(_("Found {0} Sales Orders till delivery date").format(len(sales_orders)))
+	filter_bits = [_('till delivery date')]
+	if customer:
+		filter_bits.append(_('customer {0}').format(frappe.bold(customer)))
+	if item_code:
+		filter_bits.append(_('item {0}').format(frappe.bold(item_code)))
+
+	frappe.msgprint(
+		_('Found {0} Sales Orders for {1}').format(len(sales_orders), ', '.join(filter_bits))
+	)
 
 	# Return formatted data for frontend to populate
 	return {
