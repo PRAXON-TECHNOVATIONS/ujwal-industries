@@ -244,6 +244,12 @@ def _get_row_spm_details(
 	bom_ops_map: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
 	"""Return effective workstation CSV and SPM for a Bulk Pre FG/SFG row."""
+	if bom_no not in bom_ops_map:
+		bom_ops_map[bom_no] = [{
+			"operation": '',
+			"custom_batchsize": 0,
+			"custom_workstations_csv": "",}]
+  
 	ops = (bom_ops_map or {}).get(bom_no or "", [])
 	if ops:
 		first_op = ops[0]
@@ -279,7 +285,6 @@ def _get_row_spm_details(
 			if i.get('is_per_day_qty_based') == 1:
 				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
 				per_shift_qty = i.get('per_day_qty') if i.get('per_day_qty') != 0 else 0
-				# print(".....per_shift_qty.......",per_shift_qty)
 
 	if row.doctype == 'Bulk PP Item' and row.manufacturing_type == 'Subcontract':
 		spm = 0
@@ -297,7 +302,6 @@ def _get_row_spm_details(
 			if i.get('is_per_day_qty_based') == 1:
 				spm = i.get('per_day_qty')/600 if i.get('per_day_qty') != 0 else 0
 				per_shift_qty = i.get('per_day_qty') if i.get('	') != 0 else 0
-				# print(".....per_shift_qty 11111.......",per_shift_qty)
 	
 	return {
 		"bom_no": bom_no or "",
@@ -1749,9 +1753,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			pm_days = 0
 			if sfg.type_of_manufacturing in ("In House", "In House - Vendor"):
 				pm_days       = int(tool_info.get("pm_days", 0))
-
+			
 			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
-    
+
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			machine_count  = cint(spm_details.get("machine_count") or 0)
 			row_spm        = cint(getattr(sfg, "spm", 0) or 0)
@@ -1760,7 +1764,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm    = flt(spm_details.get("spm") or 0)
+				display_spm    = round(flt(spm_details.get("spm") or 0, 2))
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
@@ -2078,7 +2082,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
    
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm = flt(spm_details.get("spm") or 0)
+				display_spm = round(flt(spm_details.get("spm") or 0) ,2)
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty = per_shift_qty * shift_count
 			else:
@@ -2553,7 +2557,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm    = flt(spm_details.get("spm") or 0)
+				display_spm    = round(flt(spm_details.get("spm") or 0),2)
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 			else:
@@ -2843,7 +2847,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
 
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm = flt(spm_details.get("spm") or 0)
+				display_spm = round(flt(spm_details.get("spm") or 0),2)
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 
 				per_day_qty = per_shift_qty * shift_count
@@ -2959,7 +2963,6 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			"sfg_chain": sfg_chain_out,
 			"mr":        mr_rows_out,
 		}
-	# print("...................",result)
 	return result
 
 # ---------------------------------------------------------------------------
