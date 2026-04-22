@@ -1,0 +1,46 @@
+/* Generic list view horizontal scroll with header/data alignment */
+.ujwal-scrollable-list-view .frappe-list .result {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-row-container,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-head {
+    min-width: 100%;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-row,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-head {
+    width: max-content;
+    min-width: 100%;
+    padding-right: 18px;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-row .level-left,
+.ujwal-scrollable-list-view .frappe-list .result .list-row .level-right,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-head .level-left,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-head .level-right {
+    flex: 0 0 auto;
+    min-width: fit-content;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-row-col,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-col.ellipsis {
+    flex: 0 0 auto;
+    margin-right: 18px;
+    white-space: nowrap;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-row-col span,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-col a,
+.ujwal-scrollable-list-view .frappe-list .result .list-row-col .ellipsis,
+.ujwal-scrollable-list-view .frappe-list .result .level-right .ellipsis {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+.ujwal-scrollable-list-view .frappe-list .result .list-subject {
+    min-width: 160px;
+}

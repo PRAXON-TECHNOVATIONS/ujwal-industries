@@ -30,11 +30,15 @@ from ujwal_industries.overrides import work_order_override
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_css = "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29"
+app_include_css = [
+    "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29",
+    "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.2",
+]
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
+	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.0",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -57,6 +61,9 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
+	"Delivery Note": "public/js/delivery_note.js",
+	"Sales Order": "public/js/sales_order.js",
+	"Sales Invoice": "public/js/sales_invoice.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
  	"Work Order": "public/js/work_order_scrap.js",
@@ -66,6 +73,8 @@ doctype_js = {
 	"Item": "public/js/item.js",
 	"Asset": "public/js/asset.js",
 	"Asset Category": "public/js/asset_category.js",
+	"Sales Order": "public/js/sales_order_custom.js",
+	"Purchase Order": "public/js/purchase_order_custom.js",
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
@@ -121,7 +130,7 @@ after_migrate = ["ujwal_industries.ujwal_industries.patches.migrate_custom_field
 # ------------
 
 # before_uninstall = "ujwal_industries.uninstall.before_uninstall"
-# after_uninstall = "ujwal_industries.uninstall.after_uninstall"
+after_uninstall = "ujwal_industries.ujwal_industries.uninstall.after_uninstall"
 
 # Integration Setup
 # ------------------
@@ -219,9 +228,25 @@ doc_events = {
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field",
 	},
+	"Sales Order": {
+		"before_save": [
+			"ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_order_position_numbers",
+			"ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
+		],
+		"before_update_after_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
+	},
+	"Delivery Note": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers"
+	},
+	"Sales Invoice": {
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers"
+	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
-		"before_submit": "ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+		"before_submit": [
+			"ujwal_industries.ujwal_industries.overrides.job_card.cascade_complete_previous",
+			"ujwal_industries.ujwal_industries.overrides.job_card.override_job_card_qty_validation",
+		],
         "before_save": "ujwal_industries.ujwal_industries.overrides.job_card.restrict_job_card_edit_during_downtime",
         "validate": [
             "ujwal_industries.ujwal_industries.overrides.job_card.job_card_validate"
@@ -305,7 +330,9 @@ scheduler_events = {
 # }
 override_whitelisted_methods = {
     "erpnext.manufacturing.doctype.job_card.job_card.make_time_log":
-        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check"
+        "ujwal_industries.ujwal_industries.overrides.job_card.make_time_log_with_material_check",
+    "erpnext.controllers.accounts_controller.update_child_qty_rate":
+        "ujwal_industries.ujwal_industries.overrides.sales_order_update_items.update_child_qty_rate",
 }
 
 #

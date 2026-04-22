@@ -162,7 +162,9 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
 				to_delivery_date: frm.doc.to_delivery_date,
-				company: frm.doc.company
+				company: frm.doc.company,
+				item_code: frm.doc.item_code,
+				customer: frm.doc.customer
 			},
 			callback: function (r) {
 				if (r.message && r.message.sales_orders) {
@@ -1408,7 +1410,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					title: 'Stock Details',
 					message: `
 						Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-						Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+						Available Qty in Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
 					`,
 					indicator: 'blue'
 				});
@@ -1806,7 +1808,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					title: 'Stock Details',
 					message: `
 						Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-						Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+						Available Qty in Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
 					`,
 					indicator: 'blue'
 				});
@@ -2211,7 +2213,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
             width: 95,
             type: 'numericColumn',
 
-            valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+			valueGetter: p => p.data?._is_group ? p.data.planned_qty_as_show : null,
 
             valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
 
@@ -2222,22 +2224,21 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
                 return {};
             },
 
-            cellRenderer: p => {
-                
-                if (!p.data?._is_group) return '';
-                const qty =
-                    p.value !== null && p.value !== undefined
-                        ? Number(p.value).toLocaleString('en-IN')
-                        : '';
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				const qty =
+					p.value !== null && p.value !== undefined
+						? Number(p.value).toLocaleString('en-IN')
+						: '';
 
-                const actual = p.data?.actual_qty || 0;
+				const actual = p.data?.actual_qty || 0;
 
-                if (actual > 0) {
-                    return `<span class="qty-click">${qty}</span>`;
-                }
+				if (actual > 0) {
+					return `<span class="qty-click">${qty}</span>`;
+				}
 
-                return qty;
-            },
+				return qty;
+			},
 
             
         },
@@ -2246,10 +2247,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
             width: 95,
             type: 'numericColumn',
 
-            valueGetter: p => {
-				const qty = p.data?.actual_qty ?? 0;
-				return qty < 0 ? 0 : qty;
-			},
+			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 
             valueFormatter: p =>
                 p.value !== null && p.value !== undefined
@@ -2267,182 +2265,72 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
                 return {};
             },
 
-            cellRenderer: p => {
-                
-                if (!p.data?._is_group) return '';
-                const qty =
-                    p.value !== null && p.value !== undefined
-                        ? Number(p.value).toLocaleString('en-IN')
-                        : '';
+			cellRenderer: p => {
+				const qty =
+					p.value !== null && p.value !== undefined
+						? Number(p.value).toLocaleString('en-IN')
+						: '';
 
-                const actual = p.data?.actual_qty || 0;
+				if (!p.data?._is_group) return qty;
 
-                if (actual > 0) {
-                    return `<span class="qty-click">${qty}</span>`;
-                }
+				const actual = p.data?.actual_qty || 0;
 
-                return qty;
-            },
-        },
+				if (actual > 0) {
+					return `<span class="qty-click">${qty}</span>`;
+				}
 
-		// {
-		// 	headerName: 'Qty',
-		// 	width: 95,
-		// 	type: 'numericColumn',
+				return qty;
+			},
 
-		// 	valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Planned Qty' || !p.data?._is_group) return;
 
-		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+				const actual = p.data?.actual_qty || 0;
+				const total = p.data?.planned_qty_as_show || 0;
 
-		// 	cellStyle: p => {
-		// 		if (p.data?._is_group && p.data?.actual_qty > 0) {
-		// 			return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
-		// 		}
-		// 		return {};
-		// 	},
+				if (!actual && !total) return;
 
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) {
-		// 			return p.value ? Number(p.value).toLocaleString('en-IN') : '';
-		// 		}
-
-		// 		const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
-		// 		const actual = p.data?.actual_qty || 0;
-
-		// 		if (actual > 0) {
-		// 			return `<span class="qty-click">${qty}</span>`;
-		// 		}
-
-		// 		return qty;
-		// 	},
-
-		// 	onCellClicked: p => {
-		// 		if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
-
-		// 		const actual = p.data?.actual_qty || 0;
-		// 		const total = p.data?.planned_qty_as_show || 0;
-
-		// 		if (!actual && !total) return;
-
-		// 		frappe.msgprint({
-		// 			title: 'Stock Details',
-		// 			message: `
-		// 				Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-		// 				Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
-		// 			`,
-		// 			indicator: 'blue'
-		// 		});
-		// 	}
-		// },
-
-		{
-            headerName: 'Qty',width: 95, type: 'numericColumn',
-            
-			valueGetter: p => {
-                if (p.data?._is_group) {
-                    const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
-                    const total = Number(p.data?.total_qty) || 0;
-                    return Math.max(0, total - actual);
-                }
-                const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
-                const total = Number(p.data?.total_qty) || 0;
-                const max_qty = Math.max(0, total - actual);
-                
-                if (max_qty == 0){
-                    return 0;
-                }else{
-                    return Number(p.data?.qty) || 0;
-                }
-            },
-
-            valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
-
-            cellStyle: p => {
-                if (p.data?._is_group && (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) > 0) {
-                    // return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
-                }
-                return {};
-            },
-
-            cellRenderer: p => {
-                if (!p.data?._is_group) {
-                    return p.value ? Number(p.value).toLocaleString('en-IN') : '';
-                }
-
-                const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
-                const actual = (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) || 0;
-
-                if (actual > 0) {
-                    return `<span class="qty-click">${qty}</span>`;
-                }
-
-                return qty;
-            },
-
-            onCellClicked: p => {
-                if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
-
-                const actual = p.data?.actual_qty || 0;
-                const total = p.data?.planned_qty_as_show || 0;
-
-                if (!actual && !total) return;
-
-                frappe.msgprint({
-                    title: 'Stock Details',
-                    message: `
-                        Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-                        Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
-                    `,
-                    indicator: 'blue'
-                });
-            }
+				frappe.msgprint({
+					title: 'Stock Details',
+					message: `
+						Qty As Per BOM: <b>${Number(total).toLocaleString('en-IN')}</b><br>
+						Available Qty in Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
+					`,
+					indicator: 'blue'
+				});
+			},
         },
 
 
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
-
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
 			},
 			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
 
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.grn_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.grn_days) || 0);
 			},
 			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},
 
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.pm_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.pm_days) || 0);
 			},
 			
 			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
@@ -2793,7 +2681,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
             width: 95,
             type: 'numericColumn',
 
-            valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
+			valueGetter: p => p.data?._is_group ? p.data.qty_as_show : null,
 
             valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
 
@@ -2826,8 +2714,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
         {
             headerName: 'Planned Qty',width: 95,type: 'numericColumn',
 
-            valueGetter: p => {
-				const qty = p.data?.actual_qty ?? 0; return qty < 0 ? 0 : qty;},
+			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 
             valueFormatter: p =>
                 p.value !== null && p.value !== undefined
@@ -2845,60 +2732,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
                 return {};
             },
 
-            cellRenderer: p => {
-                
-                if (!p.data?._is_group) return '';
-                const qty =
-                    p.value !== null && p.value !== undefined
-                        ? Number(p.value).toLocaleString('en-IN')
-                        : '';
 
-                const actual = p.data?.actual_qty || 0;
-
-                if (actual > 0) {
-                    return `<span class="qty-click">${qty}</span>`;
-                }
-
-                return qty;
-            },
-        },
-
-		{
-			headerName: 'Qty',
-			width: 95,
-			type: 'numericColumn',
-
-			valueGetter: p => {
-                if (p.data?._is_group) {
-                    const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
-                    const total = Number(p.data?.total_qty) || 0;
-                    return Math.max(0, total - actual); 
-                }
-                const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
-                const total = Number(p.data?.total_qty) || 0;
-                const max_qty = Math.max(0, total - actual); 
-                if (max_qty == 0){
-                    return 0;
-                }else{
-                    return Number(p.data?.qty) || 0;
-                }
-            },
-
-			valueFormatter: p =>
-				p.value !== null && p.value !== undefined
-					? Number(p.value).toLocaleString('en-IN')
-					: '',
-
-			cellStyle: p => {
-				if (p.data?._is_group && p.value > 0) {
-					// return {
-					// 	color: '#2563eb',
-					// 	fontWeight: 'bold',
-					// 	cursor: 'pointer'
-					// };
-				}
-				return {};
-			},
 
 			cellRenderer: p => {
 				const qty =
@@ -2906,11 +2740,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 						? Number(p.value).toLocaleString('en-IN')
 						: '';
 
-				if (!p.data?._is_group) {
-					return qty;
-				}
+				if (!p.data?._is_group) return qty;
 
-				if (p.value > 0) {
+				const actual = p.data?.actual_qty || 0;
+
+				if (actual > 0) {
 					return `<span class="qty-click">${qty}</span>`;
 				}
 
@@ -2918,7 +2752,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			},
 
 			onCellClicked: p => {
-				if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
+				if (p.colDef.headerName !== 'Planned Qty' || !p.data?._is_group) return;
 
 				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Number(p.data?.qty_as_show) || 0;
@@ -2928,41 +2762,32 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				frappe.msgprint({
 					title: 'Stock Details',
 					message: `
-						Total Planned Qty: <b>${total.toLocaleString('en-IN')}</b><br>
-						Available Qty in Default Warehouse: <b>${actual.toLocaleString('en-IN')}</b>
+						Qty As Per BOM: <b>${total.toLocaleString('en-IN')}</b><br>
+						Available Qty in Warehouse: <b>${actual.toLocaleString('en-IN')}</b>
 					`,
 					indicator: 'blue'
 				});
-			}
-		},
+			},
+        },
 
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
 			},
 			cellRenderer: p => p.value != null ? String(p.value) : ''
 		},
 
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.grn_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.grn_days) || 0);
 			},
 
 			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
@@ -2970,15 +2795,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			// valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
 			valueGetter: p => {
-				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				const remaining = Math.max(0, total - actual);
-
 				if (p.data?._is_group) {return null;}
 
-				return remaining === 0 ? 0 : (Number(p.data?.pm_days) || 0);
+				return total === 0 ? 0 : (Number(p.data?.pm_days) || 0);
 			},
 			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
 		},

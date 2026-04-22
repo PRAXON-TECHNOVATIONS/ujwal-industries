@@ -145,12 +145,13 @@ def adjust_mr_items_and_propagate(doc: Document, method: str | None = None) -> N
         all_rm_schedules: dict[str, Any] = {
             row.item_code: getdate(row.schedule_date)
             for row in doc.mr_items
-            if row.get("schedule_date")
+            if row.get("item_code") and row.get("schedule_date")
         }
-        if doc.get("sub_assembly_items"):
-            _propagate_rm_delays_to_sfg_and_fg(doc, all_rm_schedules)
-        else:
-            _propagate_rm_delays_to_fg(doc, all_rm_schedules)
+        if all_rm_schedules:
+            if doc.get("sub_assembly_items"):
+                _propagate_rm_delays_to_sfg_and_fg(doc, all_rm_schedules)
+            else:
+                _propagate_rm_delays_to_fg(doc, all_rm_schedules)
 
     # --- Step 4: Enforce FG planned_start >= all top-level SFG end dates ---
     # Runs always when SFGs exist — catches both RM propagation and manual SFG changes
@@ -171,6 +172,9 @@ def _propagate_rm_delays_to_sfg_and_fg(doc: Document, adjusted_rm_schedules: dic
       - Subcontract SFGs: lead_time_days + grn_days (holiday-adjusted), from Item master
       - In House SFGs:    shift_aware_forward_schedule using BOM operation minutes
     """
+    if not adjusted_rm_schedules:
+        return
+
     _shift_cfg     = _get_effective_shift_config()
     _shift_start_raw = _as_timedelta(_shift_cfg.get("start_time"))
     shift_start_td = _shift_start_raw if _shift_start_raw is not None else timedelta(hours=0)

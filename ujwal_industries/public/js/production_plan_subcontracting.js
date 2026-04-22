@@ -70,17 +70,6 @@ frappe.ui.form.on('Production Plan', {
 				}
 			};
 		});
-		// Auto-populate suppliers and schedule_dates when form loads
-		// But DON'T trigger on every refresh - only when needed
-		if (frm.doc.sub_assembly_items && frm.doc.sub_assembly_items.length > 0) {
-			// Check if any subcontract item is missing supplier
-			const needs_update = frm.doc.sub_assembly_items.some(row =>
-				(row.type_of_manufacturing === 'Subcontract' || row.type_of_manufacturing === 'In House - Vendor') && !row.supplier
-			);
-			if (needs_update) {
-				populate_subcontracting_data(frm);
-			}
-		}
 
 	},
 

@@ -13,6 +13,8 @@
   "posting_date",
   "filters",
   "to_delivery_date",
+    "item_code",
+    "customer",
   "section_break_sales_orders",
   "get_sales_orders",
   "start_pre_production",
@@ -75,6 +77,18 @@
    "label": "Till Delivery Date",
    "reqd": 1
   },
+    {
+     "fieldname": "item_code",
+     "fieldtype": "Link",
+     "label": "Item Code",
+     "options": "Item"
+    },
+    {
+     "fieldname": "customer",
+     "fieldtype": "Link",
+     "label": "Customer",
+     "options": "Customer"
+    },
   {
    "fieldname": "section_break_sales_orders",
    "fieldtype": "Section Break",
