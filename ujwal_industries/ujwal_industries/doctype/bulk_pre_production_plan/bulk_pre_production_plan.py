@@ -1716,7 +1716,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no    = sfg.bom_no or ""
 			item_code = sfg.production_item
-   
+			item_name = sfg.item_name
 			default_warehouse = frappe.db.sql("""
 				SELECT id.default_warehouse
 				FROM `tabItem Default` id
@@ -1857,7 +1857,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			# Next deadline = this SFG's batch[0].start_date
 			deadline_dt = b0_start
 			sfg_chain_bwd.append({
-				"item_code": item_code, "bom_no": bom_no,
+				"item_code": item_code,
+				"item_name":item_name,
+    			"bom_no": bom_no,
 				"tool": selected_tool, "tools": tool_info.get("tools") or [],
 				"bom_level": sfg.bom_level or 0, 
     			"qty": sales_qty,
@@ -1874,7 +1876,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"tool_load_qty": tool_load_qty, "pm_days": pm_days,
 				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
 				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
-				"supplier": sfg.supplier or "", "supplier_list": supplier_list,
+				"supplier": sfg.supplier or "",
+    			"supplier_name": sfg.supplier_name,
+    			"supplier_list": supplier_list,
     			"row_name": sfg.name, "batches": batch_rows,
 			})
 
@@ -2035,6 +2039,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no     = fg.bom_no or ""
 			item_code  = fg.item_code
+			item_name  = frappe.get_value("Item", fg.item_code, "item_name")
 
 			default_warehouse = frappe.db.sql("""
 				SELECT id.default_warehouse
@@ -2171,6 +2176,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
+				"item_name":               item_name,
 				"bom_no":                  fg.bom_no or "",
 				"tool":                    tool_details.get("tool") or "",
 				"tools":                   tool_details.get("tools") or [],

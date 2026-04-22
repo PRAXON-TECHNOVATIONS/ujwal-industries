@@ -2026,6 +2026,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				_fg_idx: idx,
 				_row_name: fg.row_name,
 				item_code: fg.item_code,
+				item_name: fg.item_name,
 				bom_no: fg.bom_no,
 				tool: fg.tool || '',
 				tools: fg.tools || [],
@@ -2107,6 +2108,15 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
+
+		{
+			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `${p.value}` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
+		},
+
 		{
 			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
@@ -2600,6 +2610,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				_sfg_idx: idx,
 				_row_name: sfg.row_name,
 				item_code: sfg.item_code,
+				item_name: sfg.item_name,
 				bom_no: sfg.bom_no,
 				tool: sfg.tool || '',
 				tools: sfg.tools || [],
@@ -2608,6 +2619,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				type: sfg.type_of_manufacturing,
 				target_warehouse: sfg.target_warehouse || '',
 				supplier: sfg.supplier,
+				supplier_name: sfg.supplier_name,
 				supplier_list: sfg.supplier_list || [],
 				total_batches: batches.length,
 				actual_qty: sfg.actual_qty,
@@ -2678,6 +2690,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
+			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `${p.value}` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
+		},
+		{
 			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -2705,14 +2724,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
 			}
 		},
-
+		
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
 			autoHeight: true,
-
 			cellStyle: p => {
 				if (!p.data?._is_group) return null;
 
@@ -2845,51 +2862,6 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
                 return qty;
             },
         },
-
-		// {
-		// 	headerName: 'Qty',width: 95,type: 'numericColumn',
-		// 	valueGetter: p => p.data?._is_group ? (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) : p.data?.qty,
-		// 	valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
-		// 	cellStyle: p => {
-		// 		if (p.data?._is_group && (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) > 0) {
-		// 			return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
-		// 		}
-		// 		return {};
-		// 	},
-
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) {
-		// 			return p.value ? Number(p.value).toLocaleString('en-IN') : '';
-		// 		}
-
-		// 		const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
-		// 		const actual = (p.data.total_qty - (p.data?.actual_qty < 0 ? 0 : p.data?.actual_qty)) || 0;
-
-		// 		if (actual > 0) {
-		// 			return `<span class="qty-click">${qty}</span>`;
-		// 		}
-
-		// 		return qty;
-		// 	},
-
-		// 	onCellClicked: p => {
-		// 		if (p.colDef.headerName !== 'Qty' || !p.data?._is_group) return;
-
-		// 		const actual = p.data?.actual_qty || 0;
-		// 		const total = p.data?.qty_as_show || 0;
-
-		// 		if (!actual && !total) return;
-
-		// 		frappe.msgprint({
-		// 			title: 'Stock Details',
-		// 			message: `
-		// 				Total Planned Qty: <b>${Number(total).toLocaleString('en-IN')}</b><br>
-		// 				Available Qty in Default Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>
-		// 			`,
-		// 			indicator: 'blue'
-		// 		});
-		// 	}
-		// },
 
 		{
 			headerName: 'Qty',
