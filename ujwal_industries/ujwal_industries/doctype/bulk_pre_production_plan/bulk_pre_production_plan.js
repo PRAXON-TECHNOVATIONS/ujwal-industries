@@ -4581,10 +4581,17 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			headerName: 'Item Name', field: 'item_name', width: 160,
 			cellRenderer: p => `<span style="color:#64748b;font-size:11px;">${p.data ? (p.data.item_name || p.data.description || '') : ''}</span>`
 		},
+
+		{
+			headerName: 'Qty As Per BOM', field: _par ? 'required_bom_qty' : 'quantity', width: 150, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+
 		{
 			headerName: 'Qty', field: _par ? 'qty' : 'quantity', width: 90, type: 'numericColumn',
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
+
 		{ headerName: 'UOM', field: 'uom', width: 65 },
 		...(_par ? [
 			{ headerName: 'GRN Days', field: 'grn_days', width: 80, type: 'numericColumn' },
@@ -4602,7 +4609,22 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			cellStyle: { color: '#842029', fontWeight: '600' },
 			valueFormatter: p => _format_bpp_date(p.value, '')
 		},
-		{ headerName: 'Supplier', field: _par ? 'supplier' : 'custom_supplier', width: 150 },
+
+		// { headerName: 'Supplier', field: _par ? 'supplier' : 'custom_supplier', width: 150 },
+		{
+			headerName: 'Supplier',
+			field: _par ? 'supplier' : 'custom_supplier',
+			width: 190,
+			editable: true,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: p => ({
+				values: p.data?.supplier_list || []
+			}),
+			cellRenderer: p => {
+				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+			}
+		},
+		
 	];
 
 	agGrid.createGrid(mr_el, {

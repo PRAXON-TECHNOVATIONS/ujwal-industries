@@ -8,6 +8,7 @@
  "field_order": [
   "include_exploded_items",
   "item_code",
+  "item_name",
   "bom_no",
   "tool",
   "tool_load_qty",
@@ -272,12 +273,18 @@
    "fieldname": "supplier_name",
    "fieldtype": "Data",
    "label": "Supplier Name"
+  },
+  {
+   "fetch_from": "item_code.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-04-23 01:21:54.958211",
+ "modified": "2026-04-25 17:10:08.298918",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk PP Item",
