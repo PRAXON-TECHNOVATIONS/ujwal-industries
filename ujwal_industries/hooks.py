@@ -75,6 +75,7 @@ doctype_js = {
 	"Asset Category": "public/js/asset_category.js",
 	"Sales Order": "public/js/sales_order_custom.js",
 	"Purchase Order": "public/js/purchase_order_custom.js",
+	"Purchase Receipt": "public/js/purchase_receipt.js",
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
