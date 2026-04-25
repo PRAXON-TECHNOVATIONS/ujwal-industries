@@ -29,7 +29,7 @@ def supplier_query(doctype, txt, searchfield, start, page_len, filters):
     return get_list(
         doctype,
         filters=final_filters,
-        fields=["name", "supplier_name"],
+        fields=["name", "supplier_name","custom_supplier_names","supplier_group"],
         limit_start=start,
         limit_page_length=page_len,
         order_by="name asc",

@@ -80,3 +80,5 @@ def autoname(self, method):
     
     else:
         frappe.msgprint("Dynamic Supplier Naming Series is Currently Disabled in Buying Settings. Please Enable it to Apply Automatic Numbering.")
+        
+    self.custom_supplier_names = self.supplier_name
