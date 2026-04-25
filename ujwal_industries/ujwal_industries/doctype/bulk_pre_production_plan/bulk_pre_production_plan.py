@@ -2041,10 +2041,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no    = sfg.bom_no or ""
 			item_code = sfg.production_item
+
 			requirement_state = sfg_requirement_map.get(getattr(sfg, "name", "") or "") or {}
 			sales_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
 			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
 			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(sfg, "qty", 0) or 0), 0.0)
+
     
 			grn_days  = int(grn_map.get(item_code, 0))
 
@@ -2167,7 +2169,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			# Next deadline = this SFG's batch[0].start_date
 			deadline_dt = b0_start
 			sfg_chain_bwd.append({
-				"item_code": item_code, "bom_no": bom_no,
+				"item_code": item_code,
+				"item_name":item_name,
+    			"bom_no": bom_no,
 				"tool": selected_tool, "tools": tool_info.get("tools") or [],
 				"bom_level": sfg.bom_level or 0, 
     			"qty": sales_qty,
@@ -2184,7 +2188,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"tool_load_qty": tool_load_qty, "pm_days": pm_days,
 				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
 				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
-				"supplier": sfg.supplier or "", "supplier_list": supplier_list,
+				"supplier": sfg.supplier or "",
+    			"supplier_name": sfg.supplier_name,
+    			"supplier_list": supplier_list,
     			"row_name": sfg.name, "batches": batch_rows,
 			})
 
@@ -2347,10 +2353,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			bom_no     = fg.bom_no or ""
 			item_code  = fg.item_code
+
 			requirement_state = fg_requirement_map.get(getattr(fg, "name", "") or "") or {}
 			planned_qty = max(flt(requirement_state.get("net_qty") or 0), 0.0)
 			actual_qty = max(flt(requirement_state.get("stock_qty") or 0), 0.0)
 			gross_qty = max(flt(requirement_state.get("gross_qty") or getattr(fg, "planned_qty", 0) or 0), 0.0)
+
 
 			sales_qty  = planned_qty
 			tool_info = _resolve_bom_tool_info(
@@ -2468,6 +2476,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
+				"item_name":               item_name,
 				"bom_no":                  fg.bom_no or "",
 				"tool":                    tool_details.get("tool") or "",
 				"tools":                   tool_details.get("tools") or [],

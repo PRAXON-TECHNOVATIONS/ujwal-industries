@@ -173,7 +173,6 @@
   {
    "fieldname": "sub_assembly_items",
    "fieldtype": "Table",
-   "hidden": 1,
    "label": "Sub Assembly Items",
    "no_copy": 1,
    "options": "Bulk PP Sub Assembly Item"
@@ -253,7 +252,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-04-01 17:37:45.747890",
+ "modified": "2026-04-23 01:13:41.581611",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",

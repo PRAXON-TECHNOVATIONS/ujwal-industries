@@ -2028,6 +2028,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				_fg_idx: idx,
 				_row_name: fg.row_name,
 				item_code: fg.item_code,
+				item_name: fg.item_name,
 				bom_no: fg.bom_no,
 				tool: fg.tool || '',
 				tools: fg.tools || [],
@@ -2109,6 +2110,15 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
+
+		{
+			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `${p.value}` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
+		},
+
 		{
 			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
@@ -2488,6 +2498,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				_sfg_idx: idx,
 				_row_name: sfg.row_name,
 				item_code: sfg.item_code,
+				item_name: sfg.item_name,
 				bom_no: sfg.bom_no,
 				tool: sfg.tool || '',
 				tools: sfg.tools || [],
@@ -2496,6 +2507,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				type: sfg.type_of_manufacturing,
 				target_warehouse: sfg.target_warehouse || '',
 				supplier: sfg.supplier,
+				supplier_name: sfg.supplier_name,
 				supplier_list: sfg.supplier_list || [],
 				total_batches: batches.length,
 				actual_qty: sfg.actual_qty,
@@ -2566,6 +2578,13 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
+			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			cellRenderer: p => {
+				if (p.data?._is_group) return p.value ? `${p.value}` : '';
+				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
+			}
+		},
+		{
 			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -2593,14 +2612,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
 			}
 		},
-
+		
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
 			autoHeight: true,
-
 			cellStyle: p => {
 				if (!p.data?._is_group) return null;
 
@@ -2714,6 +2731,8 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
                 }
                 return {};
             },
+
+
 
 			cellRenderer: p => {
 				const qty =
