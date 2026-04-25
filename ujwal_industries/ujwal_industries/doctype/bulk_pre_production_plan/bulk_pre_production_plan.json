@@ -13,8 +13,8 @@
   "posting_date",
   "filters",
   "to_delivery_date",
-    "item_code",
-    "customer",
+  "item_code",
+  "customer",
   "section_break_sales_orders",
   "get_sales_orders",
   "start_pre_production",
@@ -77,18 +77,18 @@
    "label": "Till Delivery Date",
    "reqd": 1
   },
-    {
-     "fieldname": "item_code",
-     "fieldtype": "Link",
-     "label": "Item Code",
-     "options": "Item"
-    },
-    {
-     "fieldname": "customer",
-     "fieldtype": "Link",
-     "label": "Customer",
-     "options": "Customer"
-    },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
   {
    "fieldname": "section_break_sales_orders",
    "fieldtype": "Section Break",
@@ -252,7 +252,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-04-23 01:13:41.581611",
+ "modified": "2026-04-25 17:20:58.448835",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",

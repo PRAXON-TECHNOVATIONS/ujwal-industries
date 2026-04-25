@@ -2,9 +2,14 @@ frappe.ui.form.on('Purchase Receipt', {
     refresh: function(frm) {
         toggle_rate_amount_visibility(frm);
     },
+
     onload: function(frm) {
         toggle_rate_amount_visibility(frm);
-    }
+    },
+
+    setup: function(frm) {
+        toggle_rate_amount_visibility(frm);
+    },
 });
 
 function toggle_rate_amount_visibility(frm) {
@@ -14,7 +19,6 @@ function toggle_rate_amount_visibility(frm) {
                     || frappe.user_roles.includes('System Manager');  // ← added
 
     if (is_stock_user && !is_privileged) {
-
         frm.set_df_property('total', 'hidden', 1);
         frm.set_df_property('grand_total', 'hidden', 1);
         frm.set_df_property('rounding_adjustment', 'hidden', 1);
