@@ -13,12 +13,15 @@ frappe.ui.form.on('Purchase Receipt', {
 });
 
 function toggle_rate_amount_visibility(frm) {
-    var is_stock_user = frappe.user_roles.includes('Stock User');
+
+    var is_restricted_user = frappe.user_roles.includes('Outsource Store Manager')
+                    || frappe.user_roles.includes('Store Incharge');
+
     var is_privileged = frappe.session.user === 'Administrator'
                     || frappe.user_roles.includes('Administrator')
                     || frappe.user_roles.includes('System Manager');  // ← added
 
-    if (is_stock_user && !is_privileged) {
+    if (is_restricted_user && !is_privileged) {
         frm.set_df_property('total', 'hidden', 1);
         frm.set_df_property('grand_total', 'hidden', 1);
         frm.set_df_property('rounding_adjustment', 'hidden', 1);
@@ -31,7 +34,6 @@ function toggle_rate_amount_visibility(frm) {
         frm.set_df_property('taxes_and_charges_deducted', 'hidden', 1);
         frm.set_df_property('total_taxes_and_charges', 'hidden', 1);
 
-        // Hide columns in the child table grid
         frm.fields_dict.items.grid.update_docfield_property('rate', 'hidden', 1);
         frm.fields_dict.items.grid.update_docfield_property('amount', 'hidden', 1);
 
