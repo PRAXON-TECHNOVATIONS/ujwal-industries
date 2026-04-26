@@ -13,7 +13,7 @@ def supplier_query(doctype, txt, searchfield, start, page_len, filters):
 
     or_filters = [
         [searchfield, "like", f"%{txt}%"],
-        ["supplier_name", "like", f"%{txt}%"],
+        ["custom_supplier_names", "like", f"%{txt}%"],
     ]
 
     if isinstance(filters, str):

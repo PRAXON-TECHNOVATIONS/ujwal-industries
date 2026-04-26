@@ -441,20 +441,22 @@ fixtures = [
 	# 		]
 	# 	]
 	# },
-	# {
-	# 	"doctype": "Role",
-	# 	"filters": [
-	# 		[
-	# 			"name",
-	# 			"in",
-	# 			(
-	# 				"Store Manager",
-	# 				"Sales Executive"
-	# 				"Super Approver",
-	# 			),
-	# 		]
-	# 	],
-	# },
+	{
+		"doctype": "Role",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"Store Manager",
+					"Sales Executive"
+					"Super Approver",
+					"Store Incharge",
+					"Outsource Store Manager",
+				),
+			]
+		],
+	},
 	# {
 	# 	"doctype": "Notification",
 	# 	"filters": [
