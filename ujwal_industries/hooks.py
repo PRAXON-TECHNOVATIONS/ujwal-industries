@@ -453,6 +453,7 @@ fixtures = [
 					"Super Approver",
 					"Store Incharge",
 					"Outsource Store Manager",
+					
 				),
 			]
 		],
