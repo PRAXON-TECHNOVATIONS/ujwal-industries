@@ -2119,33 +2119,30 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 
-		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.item_code, p.value)
-			}),
-			cellRenderer: p => (!p.data?._is_group) ? '' :
-				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
-		},
-		{
-			headerName: 'Tool',field: 'tool',width: 190,
-
-			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-
-			cellRenderer: p => {
-				if (!p.data?._is_group) return '';
-
-				if (p.data?.type === 'Subcontract') return '';
-
-				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
-			}
-		},
+		// BOM column commented out
+		// {
+		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: _get_bom_options(p.data?.item_code, p.value)
+		// 	}),
+		// 	cellRenderer: p => (!p.data?._is_group) ? '' :
+		// 		(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		// },
+		// Tool column commented out
+		// {
+		// 	headerName: 'Tool',field: 'tool',width: 190,
+		// 	editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type === 'Subcontract') return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+		// 	}
+		// },
 
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
@@ -2584,35 +2581,31 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
-		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.item_code, p.value)
-			}),
-			cellRenderer: p => (!p.data?._is_group) ? '' :
-				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
-		},
+		// BOM column commented out
+		// {
+		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: _get_bom_options(p.data?.item_code, p.value)
+		// 	}),
+		// 	cellRenderer: p => (!p.data?._is_group) ? '' :
+		// 		(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		// },
+		// Tool column commented out
+		// {
+		// 	headerName: 'Tool',field: 'tool',width: 190,
+		// 	editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type === 'Subcontract') return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+		// 	}
+		// },
 
-		{
-			headerName: 'Tool',field: 'tool',width: 190,
-
-			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-
-			cellRenderer: p => {
-				if (!p.data?._is_group) return '';
-
-				if (p.data?.type === 'Subcontract') return '';
-
-				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
-			}
-		},
-		
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
 
@@ -3036,6 +3029,7 @@ function _fg_section_html(fg_items, so_name) {
 					<span style="color:#BE123C;font-weight:700;font-size:12px;">${end}</span>
 				</span>
 			</td>
+			<!-- BOM cell commented out
 			<td style="padding:10px 14px;">
 				<select
 					class="bpp-fg-bom-select"
@@ -3047,6 +3041,8 @@ function _fg_section_html(fg_items, so_name) {
 					${_render_bom_select_options(item.item_code, item.bom_no)}
 				</select>
 			</td>
+			-->
+			<!-- Tool cell commented out
 			<td style="padding:10px 14px;">
 				<select
 					class="bpp-fg-tool-select"
@@ -3057,6 +3053,7 @@ function _fg_section_html(fg_items, so_name) {
 					${_render_tool_select_options(item.tools || [], item.tool || '')}
 				</select>
 			</td>
+			-->
 			<td style="padding:10px 14px; position:relative; overflow:visible;">
 				<div
 					class="bpp-fg-machine-inline"
@@ -3093,8 +3090,8 @@ function _fg_section_html(fg_items, so_name) {
 						<th style="${_th_style()}">Target Warehouse</th>
 						<th style="${_th_style()}">Start Date</th>
 						<th style="${_th_style()}">End Date</th>
-						<th style="${_th_style()}">BOM</th>
-						<th style="${_th_style()}">Tool</th>
+						<!-- <th style="${_th_style()}">BOM</th> -->
+						<!-- <th style="${_th_style()}">Tool</th> -->
 						<th style="${_th_style()}">Machines</th>
 						<th style="${_th_style()}">Shifts</th>
 					</tr>
@@ -3421,17 +3418,20 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 	const wrapper = document.createElement('div');
 	wrapper.style.cssText = _TAG_WRAPPER_STYLE;
 
+	// ── Tags row ──────────────────────────────────────────────────────────────
 	const tagsContainer = document.createElement('span');
 	tagsContainer.style.cssText = 'display:contents;';
 	wrapper.appendChild(tagsContainer);
 
+	// ── Search input ──────────────────────────────────────────────────────────
 	const input = document.createElement('input');
 	input.type = 'text';
-	input.placeholder = 'Type to add…';
+	input.placeholder = 'Search machines…';
 	input.style.cssText = _TAG_INPUT_STYLE;
 	input.setAttribute('autocomplete', 'off');
 	wrapper.appendChild(input);
 
+	// ── Dropdown ──────────────────────────────────────────────────────────────
 	const dropdown = document.createElement('div');
 	dropdown.style.cssText = _DROPDOWN_STYLE;
 	dropdown.style.display = 'none';
@@ -3454,11 +3454,7 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 				_fireChange();
 			});
 		});
-		if (!selected.length) {
-			input.placeholder = 'Type to add…';
-		} else {
-			input.placeholder = '';
-		}
+		input.placeholder = selected.length ? '' : 'Search machines…';
 	}
 
 	function _fireChange() {
@@ -3516,13 +3512,14 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 		_searchTimeout = setTimeout(() => _searchOptions(input.value), 200);
 	});
 
+	// Show all options immediately on focus (no typing required)
 	input.addEventListener('focus', () => {
 		_searchOptions(input.value);
 	});
 
 	input.addEventListener('blur', () => {
 		setTimeout(() => {
-			dropdown.style.display = 'none';
+			if (!_destroyed) dropdown.style.display = 'none';
 		}, 200);
 	});
 
@@ -3568,7 +3565,11 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 			selected = vals.slice();
 			_renderTags();
 		},
-		focus: () => input.focus(),
+		focus: () => {
+			input.focus();
+			// Pre-load all machines so they're visible immediately without typing
+			_searchOptions('');
+		},
 		destroy: () => {
 			_destroyed = true;
 			clearTimeout(_searchTimeout);

@@ -690,6 +690,13 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		}
 	</style>
 	<div id="md-root" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:2px 0 4px;">
+		<div style="display:flex;align-items:flex-start;gap:8px;background:#fffbeb;border:1px solid #fde68a;
+			border-radius:8px;padding:8px 12px;margin-bottom:10px;">
+			<span style="font-size:14px;line-height:1.4;flex-shrink:0;">⚠</span>
+			<span style="font-size:11px;color:#78350f;line-height:1.5;">
+				This is a manual task — dates must be edited individually for each item and will not be updated automatically.
+			</span>
+		</div>
 		<div class="md-layout" style="display:flex;border-radius:10px;overflow:hidden;
 			box-shadow:0 2px 12px rgba(79,70,229,0.1);border:1px solid #e2e8f0;margin-bottom:4px;">
 
