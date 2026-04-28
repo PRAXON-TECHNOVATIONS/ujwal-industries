@@ -346,6 +346,32 @@ def _calculate_row_production_minutes(
 	return total_minutes
 
 
+def _backfill_po_item_names(doc: Document) -> None:
+	"""Fill item_name for FG (po_items) and SFG (sub_assembly_items) rows saved before item_name was populated."""
+	# po_items uses item_code; sub_assembly_items uses production_item
+	table_defs = [
+		(doc.get("po_items") or [], "item_code"),
+		(doc.get("sub_assembly_items") or [], "production_item"),
+	]
+	all_missing = set()
+	for rows, code_field in table_defs:
+		for row in rows:
+			code = getattr(row, code_field, None)
+			if code and not getattr(row, "item_name", None):
+				all_missing.add(code)
+	if not all_missing:
+		return
+	names_map = {
+		r.name: r.item_name
+		for r in frappe.get_all("Item", filters=[["name", "in", list(all_missing)]], fields=["name", "item_name"])
+	}
+	for rows, code_field in table_defs:
+		for row in rows:
+			code = getattr(row, code_field, None)
+			if code and not getattr(row, "item_name", None) and code in names_map:
+				row.item_name = names_map[code]
+
+
 def _ensure_default_workstations_on_doc(doc: Document) -> None:
 	"""Backfill missing workstation CSV on FG/SFG rows from the BOM first operation."""
 	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
@@ -1644,6 +1670,10 @@ def recalculate_existing_schedule(docname: str, planning_mode: str | None = None
 	"""Recalculate dates/schedule using existing FG/SFG rows without regenerating items."""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
 	mode = planning_mode or doc.custom_planning_mode or "Sequential"
+
+	# Backfill item_name for po_items rows that were saved before the fix
+	_backfill_po_item_names(doc)
+
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
@@ -1742,6 +1772,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	Returns dict keyed by SO name.
 	"""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	_backfill_po_item_names(doc)
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
@@ -2569,6 +2600,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 	Returns dict keyed by SO name.
 	"""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	_backfill_po_item_names(doc)
 	merge_sales_order = []
 	for rec in doc.sales_orders:
 		if rec.merged == 1:
@@ -3565,6 +3597,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 		SELECT
 			soi.name AS sales_order_item,
 			soi.item_code,
+			soi.item_name,
 			soi.qty,
 			soi.stock_uom,
 			soi.warehouse,
@@ -3647,6 +3680,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			'sales_order': so_name,
 			'sales_order_item': item.sales_order_item,
 			'item_code': item.item_code,
+			'item_name': item.item_name or '',
 			'bom_no': bom,
 			'tool': tool_details.get('tool') or '',
 			'tool_load_qty': cint(tool_details.get('tool_load_qty') or 0),
@@ -3742,6 +3776,7 @@ def get_sub_assembly_items_from_bom(
 	bom_items = frappe.db.sql("""
 		SELECT
 			bi.item_code,
+			i.item_name,
 			bi.stock_qty / NULLIF(b.quantity, 0) as qty_per_unit,
 			bi.stock_uom,
 			bi.bom_no as item_bom_no,
@@ -3783,6 +3818,7 @@ def get_sub_assembly_items_from_bom(
 				'sales_order': so_name,
 				'fg_item_code': fg_item,
 				'production_item': bom_item.item_code,
+				'item_name': bom_item.item_name or '',
 				'parent_item_code': parent_item or fg_item,
 				'bom_no': bom_item.item_bom_no,
 				'tool': tool_details.get('tool') or '',

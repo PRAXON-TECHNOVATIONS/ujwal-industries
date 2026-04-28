@@ -74,8 +74,7 @@
   {
    "fieldname": "to_delivery_date",
    "fieldtype": "Date",
-   "label": "Till Delivery Date",
-   "reqd": 1
+   "label": "Till Delivery Date"
   },
   {
    "fieldname": "item_code",
@@ -252,7 +251,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-04-25 17:20:58.448835",
+ "modified": "2026-04-27 12:37:59.256685",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",
