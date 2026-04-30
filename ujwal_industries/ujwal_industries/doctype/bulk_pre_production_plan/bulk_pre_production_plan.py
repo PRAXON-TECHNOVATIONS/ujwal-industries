@@ -896,7 +896,53 @@ class BulkPreProductionPlan(Document):
 			self.total_produced_qty += flt(d.produced_qty)
 
 	def before_submit(self):
+		self.validate_all_production_plans_created()
 		self.check_machine_available()
+
+	def get_target_sales_orders_for_submission(self):
+		"""Return Sales Orders that have generated production items in this document."""
+		target_sales_orders = []
+		seen = set()
+
+		for row in self.po_items or []:
+			if row.sales_order and row.sales_order not in seen:
+				target_sales_orders.append(row.sales_order)
+				seen.add(row.sales_order)
+
+		if target_sales_orders:
+			return target_sales_orders
+
+		for row in self.sales_orders or []:
+			if cint(getattr(row, "is_selected", 0)) and row.sales_order and row.sales_order not in seen:
+				target_sales_orders.append(row.sales_order)
+				seen.add(row.sales_order)
+
+		return target_sales_orders
+
+	def validate_all_production_plans_created(self):
+		"""Allow submit only after Production Plans are created for every target Sales Order."""
+		target_sales_orders = self.get_target_sales_orders_for_submission()
+		if not target_sales_orders:
+			frappe.throw(_("Generate Production Plan items before submitting."))
+
+		sales_order_rows = {
+			row.sales_order: row
+			for row in self.sales_orders or []
+			if row.sales_order
+		}
+		pending_sales_orders = [
+			sales_order
+			for sales_order in target_sales_orders
+			if not sales_order_rows.get(sales_order)
+			or not cint(getattr(sales_order_rows.get(sales_order), "custom_pp_created", 0))
+		]
+
+		if pending_sales_orders:
+			frappe.throw(
+				_("Please create Production Plans for all Sales Orders before submitting this Bulk Pre Production Plan. Pending: {0}")
+				.format(", ".join(pending_sales_orders)),
+				title=_("Production Plans Required"),
+			)
   
 	def check_machine_available(self):
 		for idx, row in enumerate(self.po_items or [], start=1): 
@@ -908,8 +954,15 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.planned_start_date)
 			new_end = get_datetime(row.custom_planned_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all(
+				"Production Plan",
+				filters={"docstatus": ["!=", 2]},
+				fields=["name", "custom_bulk_pre_production_plan"],
+			)
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
+
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.po_items:
 					if not item.custom_workstation:
@@ -1083,11 +1136,7 @@ class BulkPreProductionPlan(Document):
 			self.status = "Cancelled"
 
 	def on_submit(self):
-		"""
-		Prevent full submission of Bulk Pre Production Plan as per user request.
-		Production Plans should be created individually using the 'Create Production Plans' button.
-		"""
-		frappe.throw(_("Full submission of Bulk Pre Production Plan is disabled. Please use the 'Create Production Plans' button to process Sales Orders individually."))
+		self.set_status()
   
 	@frappe.whitelist()
 	def get_items(self):
@@ -2330,7 +2379,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			lead_days  = int(lead_map.get(item_code, 0))
 			total_days = grn_days + lead_days
 
-			mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier","custom_supplier_name"])
+			mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier"])
 			mr_supplier_list = []
 			for d in mr_suppliers:
 				supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
@@ -5082,4 +5131,4 @@ def get_bin_data(item_code=None, warehouse=None):
 		query = query.where(bin.warehouse == warehouse)
 
 	p_qty = query.run(as_dict=True)
-	return p_qty	
+	return p_qty

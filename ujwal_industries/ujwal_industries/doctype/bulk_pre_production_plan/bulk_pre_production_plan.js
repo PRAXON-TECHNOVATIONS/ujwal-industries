@@ -79,6 +79,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			load_bom_selections(frm);
 		}
 
+		setTimeout(() => update_bulk_pp_submit_button(frm), 300);
 
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
@@ -137,6 +138,17 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			// Listen for tab clicks to update button
 			frm.fields_dict.production_items_html.$wrapper.on('click', '.bpp-so-tab', function () {
 				setTimeout(update_submit_btn, 100);
+			});
+		}
+	},
+	before_submit: function (frm) {
+		const pending_sales_orders = get_pending_pp_sales_orders(frm);
+		if (pending_sales_orders.length) {
+			frappe.validated = false;
+			frappe.msgprint({
+				title: __('Production Plans Required'),
+				indicator: 'orange',
+				message: __('Please create Production Plans for all Sales Orders before submitting this Bulk Pre Production Plan. Pending: {0}', [pending_sales_orders.join(', ')])
 			});
 		}
 	},
@@ -417,6 +429,110 @@ function set_bom_selection_query(frm) {
 			}
 		};
 	};
+}
+
+
+function get_bulk_pp_target_sales_orders(frm) {
+	const target_sales_orders = [
+		...new Set((frm.doc.po_items || []).map(row => row.sales_order).filter(Boolean))
+	];
+
+	if (target_sales_orders.length) {
+		return target_sales_orders;
+	}
+
+	return (frm.doc.sales_orders || [])
+		.filter(row => row.is_selected)
+		.map(row => row.sales_order)
+		.filter(Boolean);
+}
+
+
+function get_pending_pp_sales_orders(frm) {
+	const sales_order_rows = {};
+	(frm.doc.sales_orders || []).forEach(row => {
+		if (row.sales_order) sales_order_rows[row.sales_order] = row;
+	});
+
+	return get_bulk_pp_target_sales_orders(frm).filter(sales_order => {
+		const row = sales_order_rows[sales_order];
+		return !row || cint(row.custom_pp_created) !== 1;
+	});
+}
+
+
+function update_bulk_pp_submit_button(frm) {
+	if (frm.doc.docstatus !== 0) return;
+	if (frm.is_dirty()) {
+		reset_bulk_pp_submit_button_styles(frm);
+		return;
+	}
+
+	const $buttons = frm.page && frm.page.wrapper
+		? frm.page.wrapper.find('.page-actions button')
+		: $();
+
+	const $submit_btn = $buttons.filter(function () {
+		const label = ($(this).attr('data-label') || '').replace(/%20/g, ' ').trim();
+		const text = ($(this).text() || '').trim();
+		return label === 'Submit' || text === __('Submit');
+	}).first();
+
+	if (!$submit_btn.length) return;
+
+	const pending_sales_orders = get_pending_pp_sales_orders(frm);
+	const is_ready = pending_sales_orders.length === 0 && get_bulk_pp_target_sales_orders(frm).length > 0;
+
+	if (is_ready) {
+		$submit_btn
+			.prop('disabled', false)
+			.removeClass('bpp-submit-disabled')
+			.removeAttr('title')
+			.css({
+				'background-color': '',
+				'border-color': '',
+				'color': '',
+				'cursor': '',
+				'box-shadow': '',
+				'opacity': ''
+			});
+		return;
+	}
+
+	const tooltip = pending_sales_orders.length
+		? __('Create Production Plans for all Sales Orders before submitting. Pending: {0}', [pending_sales_orders.join(', ')])
+		: __('Generate Production Plan items before submitting.');
+
+	$submit_btn
+		.prop('disabled', true)
+		.addClass('bpp-submit-disabled')
+		.attr('title', tooltip)
+		.css({
+			'background-color': '#d1d5db',
+			'border-color': '#d1d5db',
+			'color': '#6b7280',
+			'cursor': 'not-allowed',
+			'box-shadow': 'none',
+			'opacity': '1'
+		});
+}
+
+
+function reset_bulk_pp_submit_button_styles(frm) {
+	if (!frm.page || !frm.page.wrapper) return;
+
+	frm.page.wrapper.find('.bpp-submit-disabled')
+		.prop('disabled', false)
+		.removeClass('bpp-submit-disabled')
+		.removeAttr('title')
+		.css({
+			'background-color': '',
+			'border-color': '',
+			'color': '',
+			'cursor': '',
+			'box-shadow': '',
+			'opacity': ''
+		});
 }
 
 

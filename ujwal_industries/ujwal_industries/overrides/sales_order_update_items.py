@@ -547,7 +547,7 @@ def _notify_approvers(doctype, docname, changed_rows, reason):
 	approvers = frappe.get_all(
 		"Has Role",
 		filters={"role": ("in", list(approval_roles)), "parenttype": "User"},
-		fields=["parent as user"],
+		fields=["parent as user", "parent as email"],
 		pluck="user",
 	)
 	approvers = list(
@@ -564,19 +564,77 @@ def _notify_approvers(doctype, docname, changed_rows, reason):
 	subject = _("{0} {1}: {2} item row(s) pending your approval").format(
 		doctype, docname, row_count
 	)
-	message = _(
+	plain_message = _(
 		"{0} updated {1} item row(s) in {2} {3} and the change requires approval.{4}"
 	).format(requester, row_count, doctype, docname, reason_text)
 
-	for user in approvers:
+	doc_url = frappe.utils.get_url_to_form(doctype, docname)
+
+	# Build change detail rows for the email table
+	change_rows_html = ""
+	for row in changed_rows:
+		data = {}
+		try:
+			raw = frappe.db.get_value(
+				ORDER_CONFIG[doctype]["child_doctype"],
+				row,
+				APPROVAL_DATA_FIELD,
+			)
+			if raw:
+				import json as _json
+				data = _json.loads(raw)
+		except Exception:
+			pass
+		changed_fields = ", ".join(data.get("changed_fields", [])) or "—"
+		item_code = data.get("new_values", {}).get("item_code", "") or row
+		change_rows_html += f"<tr><td style='padding:4px 8px;border:1px solid #ddd;'>{item_code}</td><td style='padding:4px 8px;border:1px solid #ddd;'>{changed_fields}</td></tr>"
+
+	email_body = f"""
+<p>Hello,</p>
+<p><b>{requester}</b> has requested approval for changes in <b>{doctype} {docname}</b>.</p>
+{"<p><b>Reason:</b> " + reason + "</p>" if reason else ""}
+<table style="border-collapse:collapse;width:100%;margin:12px 0;">
+  <thead>
+    <tr style="background:#f5f5f5;">
+      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Item</th>
+      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Changed Fields</th>
+    </tr>
+  </thead>
+  <tbody>
+    {change_rows_html if change_rows_html else "<tr><td colspan='2' style='padding:6px 8px;border:1px solid #ddd;'>" + str(row_count) + " row(s) updated</td></tr>"}
+  </tbody>
+</table>
+<p><a href="{doc_url}" style="background:#4CAF50;color:white;padding:8px 16px;text-decoration:none;border-radius:4px;">Open {doctype}</a></p>
+<p style="color:#888;font-size:12px;">This is an automated notification from Ujwal Industries ERP.</p>
+"""
+
+	approver_emails = frappe.get_all(
+		"User",
+		filters={"name": ["in", approvers], "enabled": 1},
+		fields=["name", "email"],
+	)
+
+	for approver in approver_emails:
+		# Bell icon notification
 		frappe.get_doc(
 			{
 				"doctype": "Notification Log",
 				"subject": subject,
-				"email_content": message,
-				"for_user": user,
+				"email_content": plain_message,
+				"for_user": approver["name"],
 				"document_type": doctype,
 				"document_name": docname,
 				"type": "Alert",
 			}
 		).insert(ignore_permissions=True)
+
+		# Email notification
+		if approver.get("email"):
+			frappe.sendmail(
+				recipients=[approver["email"]],
+				subject=subject,
+				message=email_body,
+				reference_doctype=doctype,
+				reference_name=docname,
+				now=True,
+			)
