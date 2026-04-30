@@ -3392,6 +3392,8 @@ def _split_batches(total_qty: float, batch_qty: int | float) -> list[float]:
 	"""Split total_qty into batches of batch_qty. Last batch = remainder."""
 	if batch_qty <= 0:
 		return [total_qty]
+	if total_qty <= 0:
+		return [0.0]
 	n = math.ceil(total_qty / batch_qty)
 	remainder = total_qty - batch_qty * (n - 1)
 	return [float(batch_qty)] * (n - 1) + [float(remainder)]
