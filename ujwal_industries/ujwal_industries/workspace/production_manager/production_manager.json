@@ -1,0 +1,182 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"pm-number-card-1\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"WO - Not Started\", \"col\": 3}}, {\"id\": \"pm-number-card-2\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"WO - In Process\", \"col\": 3}}, {\"id\": \"pm-number-card-3\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"WO - Completed\", \"col\": 3}}, {\"id\": \"pm-number-card-4\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Job Cards (Work In Progress)\", \"col\": 3}}, {\"id\": \"pm-number-card-5\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Job Cards (Completed)\", \"col\": 3}}, {\"id\": \"pm-spacer-1\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"pm-header-1\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Production Operations</b></span>\", \"col\": 12}}, {\"id\": \"pm-shortcut-1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Work Order\", \"col\": 3}}, {\"id\": \"pm-shortcut-2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Job Card\", \"col\": 3}}, {\"id\": \"pm-shortcut-3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Production Plan\", \"col\": 3}}, {\"id\": \"pm-shortcut-4\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Entry\", \"col\": 3}}, {\"id\": \"pm-spacer-2\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"pm-header-2\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Documents</b></span>\", \"col\": 12}}, {\"id\": \"pm-card-ops\", \"type\": \"card\", \"data\": {\"card_name\": \"Production Operations\", \"col\": 6}}, {\"id\": \"pm-card-ref\", \"type\": \"card\", \"data\": {\"card_name\": \"Stock & Reference\", \"col\": 6}}]",
+ "creation": "2026-04-28 00:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "chart",
+ "idx": 0,
+ "indicator_color": "",
+ "is_hidden": 0,
+ "label": "Production Manager",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Production Operations",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Work Order",
+   "link_count": 0,
+   "link_to": "Work Order",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Job Card",
+   "link_count": 0,
+   "link_to": "Job Card",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Production Plan",
+   "link_count": 0,
+   "link_to": "Production Plan",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Stock & Reference",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Stock Entry",
+   "link_count": 0,
+   "link_to": "Stock Entry",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Workstation",
+   "link_count": 0,
+   "link_to": "Workstation",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "BOM",
+   "link_count": 0,
+   "link_to": "BOM",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-04-28 14:19:04.956285",
+ "modified_by": "Administrator",
+ "module": "",
+ "name": "Production Manager",
+ "number_cards": [
+  {
+   "label": "WO - Not Started",
+   "number_card_name": "WO - Not Started"
+  },
+  {
+   "label": "WO - In Process",
+   "number_card_name": "WO - In Process"
+  },
+  {
+   "label": "WO - Completed",
+   "number_card_name": "WO - Completed"
+  },
+  {
+   "label": "Job Cards (Work In Progress)",
+   "number_card_name": "Job Cards (Work In Progress)"
+  },
+  {
+   "label": "Job Cards (Completed)",
+   "number_card_name": "Job Cards (Completed)"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Production Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "color": "Orange",
+   "doc_view": "",
+   "label": "Work Order",
+   "link_to": "Work Order",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "Job Card",
+   "link_to": "Job Card",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "",
+   "label": "Production Plan",
+   "link_to": "Production Plan",
+   "type": "DocType"
+  },
+  {
+   "color": "Cyan",
+   "doc_view": "",
+   "label": "Stock Entry",
+   "link_to": "Stock Entry",
+   "type": "DocType"
+  }
+ ],
+ "title": "Production Manager"
+}

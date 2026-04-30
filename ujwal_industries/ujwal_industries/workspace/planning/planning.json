@@ -1,0 +1,163 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"planning-number-card-1\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Bulk Pre Prod\", \"col\": 3}}, {\"id\": \"planning-number-card-2\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Plans from Bulk PP\", \"col\": 3}}, {\"id\": \"planning-number-card-3\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Plans Submitted\", \"col\": 3}}, {\"id\": \"planning-number-card-4\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Plans Completed\", \"col\": 3}}, {\"id\": \"planning-number-spacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"planning-header\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Planning Shortcuts</b></span>\", \"col\": 12}}, {\"id\": \"planning-shortcut-1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Bulk Pre Production Plan\", \"col\": 3}}, {\"id\": \"planning-shortcut-2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Production Plan\", \"col\": 3}}, {\"id\": \"planning-shortcut-3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Work Order\", \"col\": 3}}, {\"id\": \"planning-shortcut-4\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Purchase Order\", \"col\": 3}}, {\"id\": \"planning-shortcut-5\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Material Request\", \"col\": 3}}, {\"id\": \"planning-spacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"planning-cards-header\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Planning Links</b></span>\", \"col\": 12}}, {\"id\": \"planning-card-main\", \"type\": \"card\", \"data\": {\"card_name\": \"Planning Documents\", \"col\": 6}}, {\"id\": \"planning-card-linked\", \"type\": \"card\", \"data\": {\"card_name\": \"Linked Documents\", \"col\": 6}}]",
+ "creation": "2026-04-27 14:45:03.093384",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "branch",
+ "idx": 0,
+ "indicator_color": "blue",
+ "is_hidden": 0,
+ "label": "Planning",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Planning Documents",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Bulk Pre Production Plan",
+   "link_count": 0,
+   "link_to": "Bulk Pre Production Plan",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Production Plan",
+   "link_count": 0,
+   "link_to": "Production Plan",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Linked Documents",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Work Order",
+   "link_count": 0,
+   "link_to": "Work Order",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Order",
+   "link_count": 0,
+   "link_to": "Purchase Order",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Material Request",
+   "link_count": 0,
+   "link_to": "Material Request",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-04-27 16:28:31.378176",
+ "modified_by": "Administrator",
+ "module": "",
+ "name": "Planning",
+ "number_cards": [
+  {
+   "label": "Bulk Pre Prod",
+   "number_card_name": "Bulk Pre Prod"
+  },
+  {
+   "label": "Plans from Bulk PP",
+   "number_card_name": "Plans from Bulk PP"
+  },
+  {
+   "label": "Plans Submitted",
+   "number_card_name": "Plans Submitted"
+  },
+  {
+   "label": "Plans Completed",
+   "number_card_name": "Plans Completed"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Planning supervisor"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "Bulk Pre Production Plan",
+   "link_to": "Bulk Pre Production Plan",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "",
+   "label": "Production Plan",
+   "link_to": "Production Plan",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "",
+   "label": "Work Order",
+   "link_to": "Work Order",
+   "type": "DocType"
+  },
+  {
+   "color": "Cyan",
+   "doc_view": "",
+   "label": "Purchase Order",
+   "link_to": "Purchase Order",
+   "type": "DocType"
+  },
+  {
+   "color": "Yellow",
+   "doc_view": "",
+   "label": "Material Request",
+   "link_to": "Material Request",
+   "type": "DocType"
+  }
+ ],
+ "title": "Planning"
+}

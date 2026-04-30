@@ -1,0 +1,258 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"st-number-card-1\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"WO - In Process\", \"col\": 3}}, {\"id\": \"st-number-card-2\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"SE - Material Issue\", \"col\": 3}}, {\"id\": \"st-number-card-3\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"SC Orders - Open\", \"col\": 3}}, {\"id\": \"st-number-card-4\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"PR - Draft\", \"col\": 3}}, {\"id\": \"st-spacer-1\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"st-header-1\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Quick Access</b></span>\", \"col\": 12}}, {\"id\": \"st-shortcut-1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Entry\", \"col\": 3}}, {\"id\": \"st-shortcut-2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Work Order\", \"col\": 3}}, {\"id\": \"st-shortcut-3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Material Request\", \"col\": 3}}, {\"id\": \"st-shortcut-4\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Balance\", \"col\": 3}}, {\"id\": \"st-shortcut-5\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Subcontracting Order\", \"col\": 3}}, {\"id\": \"st-shortcut-6\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Subcontracting Receipt\", \"col\": 3}}, {\"id\": \"st-shortcut-7\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Purchase Receipt\", \"col\": 3}}, {\"id\": \"st-spacer-2\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"st-header-2\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Documents</b></span>\", \"col\": 12}}, {\"id\": \"st-card-1\", \"type\": \"card\", \"data\": {\"card_name\": \"Store Transactions\", \"col\": 6}}, {\"id\": \"st-card-2\", \"type\": \"card\", \"data\": {\"card_name\": \"Reports & Masters\", \"col\": 6}}]",
+ "creation": "2026-04-28 00:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "stock",
+ "idx": 0,
+ "indicator_color": "yellow",
+ "is_hidden": 0,
+ "label": "Store",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Store Transactions",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Stock Entry",
+   "link_count": 0,
+   "link_to": "Stock Entry",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Work Order",
+   "link_count": 0,
+   "link_to": "Work Order",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Material Request",
+   "link_count": 0,
+   "link_to": "Material Request",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Subcontracting Order",
+   "link_count": 0,
+   "link_to": "Subcontracting Order",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Subcontracting Receipt",
+   "link_count": 0,
+   "link_to": "Subcontracting Receipt",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Receipt",
+   "link_count": 0,
+   "link_to": "Purchase Receipt",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Delivery Note",
+   "link_count": 0,
+   "link_to": "Delivery Note",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports & Masters",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Stock Balance",
+   "link_count": 0,
+   "link_to": "Stock Balance",
+   "link_type": "Report",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Stock Ledger",
+   "link_count": 0,
+   "link_to": "Stock Ledger",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Warehouse",
+   "link_count": 0,
+   "link_to": "Warehouse",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Subcontracting Order Summary",
+   "link_count": 0,
+   "link_to": "Subcontract Order Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-04-28 17:37:22.115901",
+ "modified_by": "Administrator",
+ "module": "",
+ "name": "Store",
+ "number_cards": [
+  {
+   "label": "WO - In Process",
+   "number_card_name": "WO - In Process"
+  },
+  {
+   "label": "SE - Material Issue",
+   "number_card_name": "SE - Material Issue"
+  },
+  {
+   "label": "SC Orders - Open",
+   "number_card_name": "SC Orders - Open"
+  },
+  {
+   "label": "PR - Draft",
+   "number_card_name": "PR - Draft"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Store Manager"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Store Incharge"
+  },
+  {
+   "role": "Outsource Store Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "color": "Orange",
+   "doc_view": "",
+   "label": "Stock Entry",
+   "link_to": "Stock Entry",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "",
+   "label": "Work Order",
+   "link_to": "Work Order",
+   "type": "DocType"
+  },
+  {
+   "color": "Yellow",
+   "doc_view": "",
+   "label": "Material Request",
+   "link_to": "Material Request",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "",
+   "label": "Stock Balance",
+   "link_to": "Stock Balance",
+   "report_ref_doctype": "Stock Ledger Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "Subcontracting Order",
+   "link_to": "Subcontracting Order",
+   "type": "DocType"
+  },
+  {
+   "color": "Cyan",
+   "doc_view": "",
+   "label": "Subcontracting Receipt",
+   "link_to": "Subcontracting Receipt",
+   "type": "DocType"
+  },
+  {
+   "color": "Purple",
+   "doc_view": "",
+   "label": "Purchase Receipt",
+   "link_to": "Purchase Receipt",
+   "type": "DocType"
+  }
+ ],
+ "title": "Store"
+}

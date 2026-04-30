@@ -148,11 +148,6 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 	},
 
 	get_sales_orders: function (frm) {
-		if (!frm.doc.to_delivery_date) {
-			frappe.msgprint(__('Please set Till Delivery Date'));
-			return;
-		}
-
 		if (!frm.doc.company) {
 			frappe.msgprint(__('Please set Company'));
 			return;
@@ -161,10 +156,15 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
-				to_delivery_date: frm.doc.to_delivery_date,
-				company: frm.doc.company,
-				item_code: frm.doc.item_code,
-				customer: frm.doc.customer
+				company:              frm.doc.company,
+				from_date:            frm.doc.from_date            || null,
+				to_date:              frm.doc.to_date              || null,
+				from_delivery_date:   frm.doc.from_delivery_date   || null,
+				to_delivery_date:     frm.doc.to_delivery_date     || null,
+				customer:             frm.doc.customer             || null,
+				project:              frm.doc.project              || null,
+				sales_order_status:   frm.doc.sales_order_status   || null,
+				item_code:            frm.doc.item_code            || null,
 			},
 			callback: function (r) {
 				if (r.message && r.message.sales_orders) {
