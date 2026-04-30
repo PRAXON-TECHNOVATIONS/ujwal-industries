@@ -1394,112 +1394,144 @@ class BulkPreProductionPlan(Document):
 
 @frappe.whitelist()
 def get_sales_orders(
-	to_delivery_date: str,
 	company: str,
-	item_code: str | None = None,
+	to_delivery_date: str | None = None,
+	from_date: str | None = None,
+	to_date: str | None = None,
+	from_delivery_date: str | None = None,
 	customer: str | None = None,
+	project: str | None = None,
+	sales_order_status: str | None = None,
+	item_code: str | None = None,
 ) -> dict[str, Any]:
 	"""
-	Fetch Sales Orders with delivery_date up to to_delivery_date (Bulk PP workflow)
-
-	Args:
-		to_delivery_date: Show all SOs up to this delivery date
-		company: Company name
-		item_code: Optional item filter
-		customer: Optional customer filter
-
-	Returns:
-		Dict with sales_orders list
+	Fetch Sales Orders using the same logic as Production Plan's get_sales_orders():
+	  - Excludes Stopped / Closed SOs
+	  - Only includes SOs where at least one item has qty > production_plan_qty
+	  - Requires an active BOM or packed items with an active BOM
+	  - Supports the same optional filters: date ranges, customer, project,
+	    sales_order_status, item_code
 	"""
-	if not to_delivery_date:
-		frappe.throw(_("Please set Till Delivery Date"))
-
 	if not company:
 		frappe.throw(_("Please set Company"))
 
-	filters = {
-		'to_date': to_delivery_date,
-		'company': company,
-		'item_code': item_code,
-		'customer': customer,
-	}
+	filters: dict = {'company': company}
 
-	item_condition = """
-		AND EXISTS(
-			SELECT 1
-			FROM `tabSales Order Item` soi_filter
-			WHERE soi_filter.parent = so.name
-				AND soi_filter.docstatus = 1
-				AND soi_filter.item_code = %(item_code)s
-		)
-	""" if item_code else ""
+	# ── Build WHERE conditions matching PP's get_sales_orders() ─────────────
+	conditions = [
+		"so.docstatus = 1",
+		"so.status NOT IN ('Stopped', 'Closed')",
+		"so.company = %(company)s",
+		# Mirror PP: only SOs where at least one item has remaining planned qty
+		"so_item.qty > so_item.production_plan_qty",
+	]
 
-	customer_condition = "AND so.customer = %(customer)s" if customer else ""
-	production_plan_condition = """
-		AND NOT EXISTS(
-			SELECT 1
-			FROM `tabProduction Plan` pp
-			LEFT JOIN `tabProduction Plan Sales Order` ppso
-				ON ppso.parent = pp.name
-				AND ppso.parenttype = 'Production Plan'
-			LEFT JOIN `tabProduction Plan Item` ppi
-				ON ppi.parent = pp.name
-				AND ppi.parenttype = 'Production Plan'
-			WHERE pp.docstatus < 2
-				AND (
-					ppso.sales_order = so.name
-					OR ppi.sales_order = so.name
-				)
+	# Transaction date range (same as PP's from_date / to_date)
+	if from_date:
+		conditions.append("so.transaction_date >= %(from_date)s")
+		filters['from_date'] = from_date
+	if to_date:
+		conditions.append("so.transaction_date <= %(to_date)s")
+		filters['to_date'] = to_date
+
+	# Delivery date range (same as PP's from_delivery_date / to_delivery_date)
+	if from_delivery_date:
+		conditions.append("so_item.delivery_date >= %(from_delivery_date)s")
+		filters['from_delivery_date'] = from_delivery_date
+	if to_delivery_date:
+		conditions.append("so_item.delivery_date <= %(to_delivery_date)s")
+		filters['to_delivery_date'] = to_delivery_date
+
+	# Optional: customer, project, sales_order_status
+	if customer:
+		conditions.append("so.customer = %(customer)s")
+		filters['customer'] = customer
+	if project:
+		conditions.append("so.project = %(project)s")
+		filters['project'] = project
+	if sales_order_status:
+		conditions.append("so.status = %(sales_order_status)s")
+		filters['sales_order_status'] = sales_order_status
+
+	# Optional: item_code filter (scoped to SO items, matching PP logic)
+	bom_item_condition = ""
+	if item_code and frappe.db.exists("Item", item_code):
+		conditions.append("so_item.item_code = %(item_code)s")
+		filters['item_code'] = item_code
+		bom_item_condition = "AND bom.item = %(item_code)s"
+
+	where_clause = "\n\t\t\t\tAND ".join(conditions)
+
+	# ── BOM check: mirror PP's ExistsCriterion logic ─────────────────────────
+	# SO is eligible when any item has an active BOM, or any packed item has one
+	bom_check = f"""
+		AND (
+			EXISTS(
+				SELECT 1 FROM `tabBOM` bom
+				WHERE bom.item = so_item.item_code
+					AND bom.is_active = 1
+					{bom_item_condition}
+			)
+			OR EXISTS(
+				SELECT 1 FROM `tabPacked Item` pi
+				WHERE pi.parent = so.name
+					AND pi.parent_item = so_item.item_code
+					AND EXISTS(
+						SELECT 1 FROM `tabBOM` bom2
+						WHERE bom2.item = pi.item_code AND bom2.is_active = 1
+					)
+			)
 		)
 	"""
 
-	# Fetch only Sales Orders that do not already have a non-cancelled Production Plan
 	sales_orders = frappe.db.sql(f"""
-		SELECT
-			so.name as sales_order,
+		SELECT DISTINCT
+			so.name            AS sales_order,
 			so.customer,
 			so.delivery_date,
-			so.grand_total,
+			so.base_grand_total AS grand_total,
 			so.status,
 			so.order_type,
 			EXISTS(
 				SELECT 1
-				FROM `tabSales Order Item` soi
-				INNER JOIN `tabItem` item ON item.name = soi.item_code
-				WHERE
-					soi.parent = so.name
-					AND soi.docstatus = 1
-					AND COALESCE(item.custom_planning_type, '') = '2'
-			) as has_level_2_item
+				FROM `tabSales Order Item` soi2
+				INNER JOIN `tabItem` itm ON itm.name = soi2.item_code
+				WHERE soi2.parent = so.name
+					AND soi2.docstatus = 1
+					AND COALESCE(itm.custom_planning_type, '') = '2'
+			) AS has_level_2_item
 		FROM
 			`tabSales Order` so
+			INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
 		WHERE
-			so.docstatus = 1
-			AND so.status NOT IN ('Closed', 'Cancelled', 'Completed')
-			AND so.delivery_date <= %(to_date)s
-			AND so.company = %(company)s
-			{customer_condition}
-			{item_condition}
-			{production_plan_condition}
+			{where_clause}
+			{bom_check}
 		ORDER BY
 			so.delivery_date ASC
 	""", filters, as_dict=True)
 
-	# Just return the sales_orders data - don't save to avoid naming series issues
-	# The frontend will populate the child table
-
-	filter_bits = [_('till delivery date')]
+	# ── Build user-facing message ────────────────────────────────────────────
+	filter_bits = []
+	if from_date or to_date:
+		filter_bits.append(_('transaction date'))
+	if from_delivery_date or to_delivery_date:
+		filter_bits.append(_('delivery date'))
 	if customer:
 		filter_bits.append(_('customer {0}').format(frappe.bold(customer)))
+	if project:
+		filter_bits.append(_('project {0}').format(frappe.bold(project)))
+	if sales_order_status:
+		filter_bits.append(_('status {0}').format(frappe.bold(sales_order_status)))
 	if item_code:
 		filter_bits.append(_('item {0}').format(frappe.bold(item_code)))
-	filter_bits.append(_('without an existing Production Plan'))
 
 	frappe.msgprint(
-		_('Found {0} Sales Orders for {1}').format(len(sales_orders), ', '.join(filter_bits))
+		_('Found {0} Sales Orders{1}').format(
+			len(sales_orders),
+			(' for ' + ', '.join(filter_bits)) if filter_bits else ''
+		)
 	)
 
-	# Return formatted data for frontend to populate
 	return {
 		'sales_orders': [
 			{
@@ -1512,7 +1544,7 @@ def get_sales_orders(
 				'has_level_2_item': cint(so.has_level_2_item),
 				'is_selected': 1,
 				'for_warehouse': '',
-				'items_generated': 0
+				'items_generated': 0,
 			}
 			for so in sales_orders
 		]
