@@ -14,6 +14,23 @@ from frappe.utils import getdate, add_days, nowdate, flt
 
 
 @frappe.whitelist()
+def get_so_items_for_list(sales_orders):
+	"""Return item_code and item_name for given Sales Order names (for list view columns)."""
+	import json
+	if isinstance(sales_orders, str):
+		sales_orders = json.loads(sales_orders)
+	if not sales_orders:
+		return []
+	return frappe.db.get_all(
+		'Sales Order Item',
+		filters={'parent': ['in', sales_orders], 'parenttype': 'Sales Order'},
+		fields=['parent', 'item_code', 'item_name'],
+		order_by='idx asc',
+		ignore_permissions=True,
+	)
+
+
+@frappe.whitelist()
 def get_sales_orders(days="30", limit_page_length=6, limit_page_offset=0):
 	"""
 	Get Sales Orders with complete tracking information (paginated).
