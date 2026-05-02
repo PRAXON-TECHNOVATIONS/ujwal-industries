@@ -690,6 +690,13 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		}
 	</style>
 	<div id="md-root" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:2px 0 4px;">
+		<div style="display:flex;align-items:flex-start;gap:8px;background:#fffbeb;border:1px solid #fde68a;
+			border-radius:8px;padding:8px 12px;margin-bottom:10px;">
+			<span style="font-size:14px;line-height:1.4;flex-shrink:0;">⚠</span>
+			<span style="font-size:11px;color:#78350f;line-height:1.5;">
+				This is a manual task — dates must be edited individually for each item and will not be updated automatically.
+			</span>
+		</div>
 		<div class="md-layout" style="display:flex;border-radius:10px;overflow:hidden;
 			box-shadow:0 2px 12px rgba(79,70,229,0.1);border:1px solid #e2e8f0;margin-bottom:4px;">
 
@@ -751,6 +758,13 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 	let _step = 0;
 
 	d.$wrapper.find('.btn-modal-secondary').hide();
+
+	// Add a persistent Apply button visible on every non-last step, placed next to Next →
+	const $footer_apply = $('<button class="btn btn-sm btn-default md-footer-apply-btn" style="margin-right:8px;">' + __('Apply') + '</button>')
+		.on('click', _apply_changes);
+	d.$wrapper.find('.btn-modal-primary').before($footer_apply);
+	$footer_apply.hide();
+
 	// Initialize to first step
 	setTimeout(() => _go_to_step(0), 50);
 
@@ -763,6 +777,9 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 
 		const is_last = (_step === ALL_STEPS.length - 1);
 		d.set_primary_action(is_last ? __('Apply') : __('Next  →'), is_last ? _apply_changes : () => _go_next());
+
+		// Show footer Apply button on non-last steps so user can save without navigating forward
+		$footer_apply.toggle(!is_last);
 
 		if (_step > 0) {
 			d.$wrapper.find('.btn-modal-secondary').show();
@@ -820,7 +837,20 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		});
 
 		const $btn = d.get_primary_btn();
-		$btn.prop('disabled', true).text(__('Saving…'));
+		const _via_footer = (_step < ALL_STEPS.length - 1);
+		if (_via_footer) {
+			$footer_apply.prop('disabled', true).text(__('Saving…'));
+		} else {
+			$btn.prop('disabled', true).text(__('Saving…'));
+		}
+
+		const _restore_btn = () => {
+			if (_via_footer) {
+				$footer_apply.prop('disabled', false).text(__('Apply'));
+			} else {
+				$btn.prop('disabled', false).text(__('Apply'));
+			}
+		};
 
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.overrides.pp_mr_dates.save_managed_dates',
@@ -831,16 +861,34 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 				mr_data:              JSON.stringify(mr_data),
 			},
 			callback(r) {
-				$btn.prop('disabled', false).text(__('Apply'));
+				_restore_btn();
 				if (r.message && r.message.status === 'ok') {
+					// Sync changed values into frm.doc in-memory — avoids a ~1.9 MB full reload
+					po_data.forEach(entry => {
+						const row = (frm.doc.po_items || []).find(r => r.name === entry.name);
+						if (!row) return;
+						if (entry.planned_start_date      != null) row.planned_start_date      = entry.planned_start_date;
+						if (entry.custom_planned_end_date != null) row.custom_planned_end_date = entry.custom_planned_end_date;
+					});
+					sfg_data.forEach(entry => {
+						const row = (frm.doc.sub_assembly_items || []).find(r => r.name === entry.name);
+						if (!row) return;
+						if (entry.schedule_date            != null) row.schedule_date            = entry.schedule_date;
+						if (entry.custom_schedule_end_date != null) row.custom_schedule_end_date = entry.custom_schedule_end_date;
+					});
+					mr_data.forEach(entry => {
+						const row = (frm.doc.mr_items || []).find(r => r.name === entry.name);
+						if (!row) return;
+						if (entry.custom_supplier  !== undefined) row.custom_supplier   = entry.custom_supplier;
+						if (entry.custom_start_date != null)      row.custom_start_date = entry.custom_start_date;
+						if (entry.schedule_date     != null)      row.schedule_date     = entry.schedule_date;
+					});
+					frm.refresh_fields(['po_items', 'sub_assembly_items', 'mr_items']);
 					frappe.show_alert({ message: __('Production dates saved.'), indicator: 'green' });
 					d.hide();
-					frm.reload_doc();
 				}
 			},
-			error() {
-				$btn.prop('disabled', false).text(__('Apply'));
-			},
+			error() { _restore_btn(); },
 		});
 	}
 

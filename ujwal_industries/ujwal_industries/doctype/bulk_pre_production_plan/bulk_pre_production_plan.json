@@ -69,13 +69,58 @@
   {
    "fieldname": "filters",
    "fieldtype": "Section Break",
-   "label": "Delivery Date Range"
+   "label": "Get Items From"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "From Date"
+  },
+  {
+   "fieldname": "column_break_filters_1",
+   "fieldtype": "Column Break",
+   "hidden": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "To Date"
+  },
+  {
+   "fieldname": "from_delivery_date",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "From Delivery Date"
+  },
+  {
+   "fieldname": "column_break_filters_2",
+   "fieldtype": "Column Break",
+   "hidden": 1
   },
   {
    "fieldname": "to_delivery_date",
    "fieldtype": "Date",
-   "label": "Till Delivery Date",
-   "reqd": 1
+   "label": "To Delivery Date"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_filters_3",
+   "fieldtype": "Column Break",
+   "hidden": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Project",
+   "options": "Project"
   },
   {
    "fieldname": "item_code",
@@ -84,10 +129,16 @@
    "options": "Item"
   },
   {
-   "fieldname": "customer",
-   "fieldtype": "Link",
-   "label": "Customer",
-   "options": "Customer"
+   "fieldname": "column_break_filters_4",
+   "fieldtype": "Column Break",
+   "hidden": 1
+  },
+  {
+   "fieldname": "sales_order_status",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Sales Order Status",
+   "options": "\nDraft\nOn Hold\nTo Deliver and Bill\nTo Bill\nTo Deliver\nCompleted\nCancelled\nClosed"
   },
   {
    "fieldname": "section_break_sales_orders",
@@ -252,7 +303,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-04-25 17:20:58.448835",
+ "modified": "2026-04-27 12:37:59.256685",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",

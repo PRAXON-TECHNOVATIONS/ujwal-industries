@@ -36,13 +36,13 @@ from ujwal_industries.overrides import work_order_override
 # include js, css files in header of desk.html
 app_include_css = [
     "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29",
-    "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.2",
+    "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.3",
 ]
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
-	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.0",
+	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.1",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -86,6 +86,7 @@ doctype_tree_js = {
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
+	"Sales Order": "public/js/sales_order_list.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}

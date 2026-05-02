@@ -79,6 +79,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			load_bom_selections(frm);
 		}
 
+		setTimeout(() => update_bulk_pp_submit_button(frm), 300);
 
 		// Setup Production Plan items tabs if items are generated
 		if (frm.doc.po_items && frm.doc.po_items.length > 0) {
@@ -140,6 +141,17 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			});
 		}
 	},
+	before_submit: function (frm) {
+		const pending_sales_orders = get_pending_pp_sales_orders(frm);
+		if (pending_sales_orders.length) {
+			frappe.validated = false;
+			frappe.msgprint({
+				title: __('Production Plans Required'),
+				indicator: 'orange',
+				message: __('Please create Production Plans for all Sales Orders before submitting this Bulk Pre Production Plan. Pending: {0}', [pending_sales_orders.join(', ')])
+			});
+		}
+	},
 	after_save: function (frm) {
 		if (!frm._bom_changed || _bom_recalc_inflight) return;
 
@@ -148,11 +160,6 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 	},
 
 	get_sales_orders: function (frm) {
-		if (!frm.doc.to_delivery_date) {
-			frappe.msgprint(__('Please set Till Delivery Date'));
-			return;
-		}
-
 		if (!frm.doc.company) {
 			frappe.msgprint(__('Please set Company'));
 			return;
@@ -161,10 +168,15 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_orders',
 			args: {
-				to_delivery_date: frm.doc.to_delivery_date,
-				company: frm.doc.company,
-				item_code: frm.doc.item_code,
-				customer: frm.doc.customer
+				company:              frm.doc.company,
+				from_date:            frm.doc.from_date            || null,
+				to_date:              frm.doc.to_date              || null,
+				from_delivery_date:   frm.doc.from_delivery_date   || null,
+				to_delivery_date:     frm.doc.to_delivery_date     || null,
+				customer:             frm.doc.customer             || null,
+				project:              frm.doc.project              || null,
+				sales_order_status:   frm.doc.sales_order_status   || null,
+				item_code:            frm.doc.item_code            || null,
 			},
 			callback: function (r) {
 				if (r.message && r.message.sales_orders) {
@@ -417,6 +429,110 @@ function set_bom_selection_query(frm) {
 			}
 		};
 	};
+}
+
+
+function get_bulk_pp_target_sales_orders(frm) {
+	const target_sales_orders = [
+		...new Set((frm.doc.po_items || []).map(row => row.sales_order).filter(Boolean))
+	];
+
+	if (target_sales_orders.length) {
+		return target_sales_orders;
+	}
+
+	return (frm.doc.sales_orders || [])
+		.filter(row => row.is_selected)
+		.map(row => row.sales_order)
+		.filter(Boolean);
+}
+
+
+function get_pending_pp_sales_orders(frm) {
+	const sales_order_rows = {};
+	(frm.doc.sales_orders || []).forEach(row => {
+		if (row.sales_order) sales_order_rows[row.sales_order] = row;
+	});
+
+	return get_bulk_pp_target_sales_orders(frm).filter(sales_order => {
+		const row = sales_order_rows[sales_order];
+		return !row || cint(row.custom_pp_created) !== 1;
+	});
+}
+
+
+function update_bulk_pp_submit_button(frm) {
+	if (frm.doc.docstatus !== 0) return;
+	if (frm.is_dirty()) {
+		reset_bulk_pp_submit_button_styles(frm);
+		return;
+	}
+
+	const $buttons = frm.page && frm.page.wrapper
+		? frm.page.wrapper.find('.page-actions button')
+		: $();
+
+	const $submit_btn = $buttons.filter(function () {
+		const label = ($(this).attr('data-label') || '').replace(/%20/g, ' ').trim();
+		const text = ($(this).text() || '').trim();
+		return label === 'Submit' || text === __('Submit');
+	}).first();
+
+	if (!$submit_btn.length) return;
+
+	const pending_sales_orders = get_pending_pp_sales_orders(frm);
+	const is_ready = pending_sales_orders.length === 0 && get_bulk_pp_target_sales_orders(frm).length > 0;
+
+	if (is_ready) {
+		$submit_btn
+			.prop('disabled', false)
+			.removeClass('bpp-submit-disabled')
+			.removeAttr('title')
+			.css({
+				'background-color': '',
+				'border-color': '',
+				'color': '',
+				'cursor': '',
+				'box-shadow': '',
+				'opacity': ''
+			});
+		return;
+	}
+
+	const tooltip = pending_sales_orders.length
+		? __('Create Production Plans for all Sales Orders before submitting. Pending: {0}', [pending_sales_orders.join(', ')])
+		: __('Generate Production Plan items before submitting.');
+
+	$submit_btn
+		.prop('disabled', true)
+		.addClass('bpp-submit-disabled')
+		.attr('title', tooltip)
+		.css({
+			'background-color': '#d1d5db',
+			'border-color': '#d1d5db',
+			'color': '#6b7280',
+			'cursor': 'not-allowed',
+			'box-shadow': 'none',
+			'opacity': '1'
+		});
+}
+
+
+function reset_bulk_pp_submit_button_styles(frm) {
+	if (!frm.page || !frm.page.wrapper) return;
+
+	frm.page.wrapper.find('.bpp-submit-disabled')
+		.prop('disabled', false)
+		.removeClass('bpp-submit-disabled')
+		.removeAttr('title')
+		.css({
+			'background-color': '',
+			'border-color': '',
+			'color': '',
+			'cursor': '',
+			'box-shadow': '',
+			'opacity': ''
+		});
 }
 
 
@@ -2119,33 +2235,30 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 
-		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.item_code, p.value)
-			}),
-			cellRenderer: p => (!p.data?._is_group) ? '' :
-				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
-		},
-		{
-			headerName: 'Tool',field: 'tool',width: 190,
-
-			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-
-			cellRenderer: p => {
-				if (!p.data?._is_group) return '';
-
-				if (p.data?.type === 'Subcontract') return '';
-
-				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
-			}
-		},
+		// BOM column commented out
+		// {
+		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: _get_bom_options(p.data?.item_code, p.value)
+		// 	}),
+		// 	cellRenderer: p => (!p.data?._is_group) ? '' :
+		// 		(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		// },
+		// Tool column commented out
+		// {
+		// 	headerName: 'Tool',field: 'tool',width: 190,
+		// 	editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type === 'Subcontract') return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+		// 	}
+		// },
 
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
@@ -2584,35 +2697,31 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
-		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.item_code, p.value)
-			}),
-			cellRenderer: p => (!p.data?._is_group) ? '' :
-				(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
-		},
+		// BOM column commented out
+		// {
+		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: _get_bom_options(p.data?.item_code, p.value)
+		// 	}),
+		// 	cellRenderer: p => (!p.data?._is_group) ? '' :
+		// 		(p.value ? `<small style="color:#6b7280">${p.value}</small>` : '')
+		// },
+		// Tool column commented out
+		// {
+		// 	headerName: 'Tool',field: 'tool',width: 190,
+		// 	editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type === 'Subcontract') return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Tool</span>';
+		// 	}
+		// },
 
-		{
-			headerName: 'Tool',field: 'tool',width: 190,
-
-			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
-
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-
-			cellRenderer: p => {
-				if (!p.data?._is_group) return '';
-
-				if (p.data?.type === 'Subcontract') return '';
-
-				return p.value || '<span style="color:#94a3b8;">No Tool</span>';
-			}
-		},
-		
 		{
 			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
 
@@ -3036,6 +3145,7 @@ function _fg_section_html(fg_items, so_name) {
 					<span style="color:#BE123C;font-weight:700;font-size:12px;">${end}</span>
 				</span>
 			</td>
+			<!-- BOM cell commented out
 			<td style="padding:10px 14px;">
 				<select
 					class="bpp-fg-bom-select"
@@ -3047,6 +3157,8 @@ function _fg_section_html(fg_items, so_name) {
 					${_render_bom_select_options(item.item_code, item.bom_no)}
 				</select>
 			</td>
+			-->
+			<!-- Tool cell commented out
 			<td style="padding:10px 14px;">
 				<select
 					class="bpp-fg-tool-select"
@@ -3057,6 +3169,7 @@ function _fg_section_html(fg_items, so_name) {
 					${_render_tool_select_options(item.tools || [], item.tool || '')}
 				</select>
 			</td>
+			-->
 			<td style="padding:10px 14px; position:relative; overflow:visible;">
 				<div
 					class="bpp-fg-machine-inline"
@@ -3093,8 +3206,8 @@ function _fg_section_html(fg_items, so_name) {
 						<th style="${_th_style()}">Target Warehouse</th>
 						<th style="${_th_style()}">Start Date</th>
 						<th style="${_th_style()}">End Date</th>
-						<th style="${_th_style()}">BOM</th>
-						<th style="${_th_style()}">Tool</th>
+						<!-- <th style="${_th_style()}">BOM</th> -->
+						<!-- <th style="${_th_style()}">Tool</th> -->
 						<th style="${_th_style()}">Machines</th>
 						<th style="${_th_style()}">Shifts</th>
 					</tr>
@@ -3421,17 +3534,20 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 	const wrapper = document.createElement('div');
 	wrapper.style.cssText = _TAG_WRAPPER_STYLE;
 
+	// ── Tags row ──────────────────────────────────────────────────────────────
 	const tagsContainer = document.createElement('span');
 	tagsContainer.style.cssText = 'display:contents;';
 	wrapper.appendChild(tagsContainer);
 
+	// ── Search input ──────────────────────────────────────────────────────────
 	const input = document.createElement('input');
 	input.type = 'text';
-	input.placeholder = 'Type to add…';
+	input.placeholder = 'Search machines…';
 	input.style.cssText = _TAG_INPUT_STYLE;
 	input.setAttribute('autocomplete', 'off');
 	wrapper.appendChild(input);
 
+	// ── Dropdown ──────────────────────────────────────────────────────────────
 	const dropdown = document.createElement('div');
 	dropdown.style.cssText = _DROPDOWN_STYLE;
 	dropdown.style.display = 'none';
@@ -3454,11 +3570,7 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 				_fireChange();
 			});
 		});
-		if (!selected.length) {
-			input.placeholder = 'Type to add…';
-		} else {
-			input.placeholder = '';
-		}
+		input.placeholder = selected.length ? '' : 'Search machines…';
 	}
 
 	function _fireChange() {
@@ -3516,13 +3628,14 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 		_searchTimeout = setTimeout(() => _searchOptions(input.value), 200);
 	});
 
+	// Show all options immediately on focus (no typing required)
 	input.addEventListener('focus', () => {
 		_searchOptions(input.value);
 	});
 
 	input.addEventListener('blur', () => {
 		setTimeout(() => {
-			dropdown.style.display = 'none';
+			if (!_destroyed) dropdown.style.display = 'none';
 		}, 200);
 	});
 
@@ -3568,7 +3681,11 @@ function _create_inline_tag_editor(initial_csv, onchange) {
 			selected = vals.slice();
 			_renderTags();
 		},
-		focus: () => input.focus(),
+		focus: () => {
+			input.focus();
+			// Pre-load all machines so they're visible immediately without typing
+			_searchOptions('');
+		},
 		destroy: () => {
 			_destroyed = true;
 			clearTimeout(_searchTimeout);

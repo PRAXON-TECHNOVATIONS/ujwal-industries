@@ -5,6 +5,11 @@
 	const META_MIN_WIDTH = 110;
 	const META_MAX_WIDTH = 220;
 	const SUBJECT_MIN_WIDTH = 160;
+	const SALES_ORDER_COLUMNS = [
+		{ key: "custom_customer_names", label: __("Customer") },
+		{ key: "item_code", label: __("Item Code") },
+		{ key: "item_name", label: __("Item Name") },
+	];
 
 	function clamp(value, min, max) {
 		return Math.max(min, Math.min(max, value));
@@ -96,6 +101,133 @@
 		});
 	}
 
+	function get_unique_values(rows, fieldname) {
+		return [
+			...new Set(
+				(rows || [])
+					.map((row) => row[fieldname])
+					.filter(Boolean)
+			),
+		];
+	}
+
+	function add_sales_order_headers(listview) {
+		const $headerLeft = listview.$result.find(".list-row-head .level-left");
+		if (!$headerLeft.length) return;
+
+		SALES_ORDER_COLUMNS.forEach((column) => {
+			if ($headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`).length) return;
+
+			$headerLeft.append(
+				`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
+					<span>${frappe.utils.escape_html(column.label)}</span>
+				</div>`
+			);
+		});
+	}
+
+	function add_sales_order_row_columns(listview, salesOrder, values) {
+		const $matched = listview.$result
+			.find(".list-row-container [data-name], .list-row[data-name]")
+			.filter(function () {
+				return $(this).attr("data-name") === salesOrder;
+			});
+		const $row = $matched.hasClass("list-row") ? $matched.first() : $matched.find(".list-row").first();
+		const $rowLeft = $row.find(".level-left");
+		if (!$rowLeft.length) return;
+
+		SALES_ORDER_COLUMNS.forEach((column) => {
+			const value = values[column.key] || "";
+			const html = `<span class="ellipsis">${frappe.utils.escape_html(value)}</span>`;
+			const $existing = $rowLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`);
+
+			if ($existing.length) {
+				$existing.html(html);
+			} else {
+				$rowLeft.append(
+					`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
+						${html}
+					</div>`
+				);
+			}
+		});
+	}
+
+	function add_sales_order_columns(listview) {
+		if (listview.doctype !== "Sales Order" || !listview?.$result?.length || listview.view_name !== "List") {
+			return Promise.resolve();
+		}
+
+		const docs = listview.data || [];
+		const salesOrders = docs.map((doc) => doc.name).filter(Boolean);
+		if (!salesOrders.length) return Promise.resolve();
+
+		return Promise.all([
+			frappe.db.get_list("Sales Order Item", {
+				filters: {
+					parenttype: "Sales Order",
+					parent: ["in", salesOrders],
+				},
+				fields: ["parent", "item_code", "item_name"],
+				order_by: "idx asc",
+				limit_page_length: 0,
+			}),
+			frappe.db.get_list("Sales Order", {
+				filters: {
+					name: ["in", salesOrders],
+				},
+				fields: ["name", "customer", "customer_name", "customer_name_"],
+				limit_page_length: salesOrders.length,
+			}),
+		]).then(([items, salesOrderRows]) => {
+			const itemsBySalesOrder = {};
+			(items || []).forEach((item) => {
+				if (!item.parent) return;
+				itemsBySalesOrder[item.parent] = itemsBySalesOrder[item.parent] || [];
+				itemsBySalesOrder[item.parent].push(item);
+			});
+
+			const salesOrderByName = {};
+			const customers = [];
+			(salesOrderRows || []).forEach((row) => {
+				salesOrderByName[row.name] = row;
+				if (row.customer) customers.push(row.customer);
+			});
+
+			const uniqueCustomers = [...new Set(customers)];
+			const customerQuery = uniqueCustomers.length
+				? frappe.db.get_list("Customer", {
+					filters: {
+						name: ["in", uniqueCustomers],
+					},
+					fields: ["name", "custom_customer_names", "customer_name"],
+					limit_page_length: uniqueCustomers.length,
+				})
+				: Promise.resolve([]);
+
+			return customerQuery.then((customerRows) => {
+				const customerByName = {};
+				(customerRows || []).forEach((row) => {
+					customerByName[row.name] = row;
+				});
+
+				add_sales_order_headers(listview);
+
+				docs.forEach((doc) => {
+					const salesOrderRow = salesOrderByName[doc.name] || doc;
+					const customerRow = customerByName[salesOrderRow.customer] || {};
+					const itemsForSalesOrder = itemsBySalesOrder[doc.name] || [];
+
+					add_sales_order_row_columns(listview, doc.name, {
+						custom_customer_names: customerRow.custom_customer_names || salesOrderRow.customer_name_ || salesOrderRow.customer_name || customerRow.customer_name || "",
+						item_code: get_unique_values(itemsForSalesOrder, "item_code").join(", "),
+						item_name: get_unique_values(itemsForSalesOrder, "item_name").join(", "),
+					});
+				});
+			});
+		});
+	}
+
 	function patch_list_view() {
 		if (!frappe?.views?.ListView || frappe.views.ListView.__ujwal_revamp_patched) return;
 		frappe.views.ListView.__ujwal_revamp_patched = true;
@@ -103,7 +235,9 @@
 		const original_after_render = frappe.views.ListView.prototype.after_render;
 		frappe.views.ListView.prototype.after_render = function () {
 			original_after_render.call(this);
-			requestAnimationFrame(() => align_list_view(this));
+			requestAnimationFrame(() => {
+				add_sales_order_columns(this).then(() => align_list_view(this));
+			});
 		};
 	}
 

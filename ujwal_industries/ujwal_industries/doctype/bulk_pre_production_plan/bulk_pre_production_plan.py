@@ -346,6 +346,32 @@ def _calculate_row_production_minutes(
 	return total_minutes
 
 
+def _backfill_po_item_names(doc: Document) -> None:
+	"""Fill item_name for FG (po_items) and SFG (sub_assembly_items) rows saved before item_name was populated."""
+	# po_items uses item_code; sub_assembly_items uses production_item
+	table_defs = [
+		(doc.get("po_items") or [], "item_code"),
+		(doc.get("sub_assembly_items") or [], "production_item"),
+	]
+	all_missing = set()
+	for rows, code_field in table_defs:
+		for row in rows:
+			code = getattr(row, code_field, None)
+			if code and not getattr(row, "item_name", None):
+				all_missing.add(code)
+	if not all_missing:
+		return
+	names_map = {
+		r.name: r.item_name
+		for r in frappe.get_all("Item", filters=[["name", "in", list(all_missing)]], fields=["name", "item_name"])
+	}
+	for rows, code_field in table_defs:
+		for row in rows:
+			code = getattr(row, code_field, None)
+			if code and not getattr(row, "item_name", None) and code in names_map:
+				row.item_name = names_map[code]
+
+
 def _ensure_default_workstations_on_doc(doc: Document) -> None:
 	"""Backfill missing workstation CSV on FG/SFG rows from the BOM first operation."""
 	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
@@ -870,7 +896,53 @@ class BulkPreProductionPlan(Document):
 			self.total_produced_qty += flt(d.produced_qty)
 
 	def before_submit(self):
+		self.validate_all_production_plans_created()
 		self.check_machine_available()
+
+	def get_target_sales_orders_for_submission(self):
+		"""Return Sales Orders that have generated production items in this document."""
+		target_sales_orders = []
+		seen = set()
+
+		for row in self.po_items or []:
+			if row.sales_order and row.sales_order not in seen:
+				target_sales_orders.append(row.sales_order)
+				seen.add(row.sales_order)
+
+		if target_sales_orders:
+			return target_sales_orders
+
+		for row in self.sales_orders or []:
+			if cint(getattr(row, "is_selected", 0)) and row.sales_order and row.sales_order not in seen:
+				target_sales_orders.append(row.sales_order)
+				seen.add(row.sales_order)
+
+		return target_sales_orders
+
+	def validate_all_production_plans_created(self):
+		"""Allow submit only after Production Plans are created for every target Sales Order."""
+		target_sales_orders = self.get_target_sales_orders_for_submission()
+		if not target_sales_orders:
+			frappe.throw(_("Generate Production Plan items before submitting."))
+
+		sales_order_rows = {
+			row.sales_order: row
+			for row in self.sales_orders or []
+			if row.sales_order
+		}
+		pending_sales_orders = [
+			sales_order
+			for sales_order in target_sales_orders
+			if not sales_order_rows.get(sales_order)
+			or not cint(getattr(sales_order_rows.get(sales_order), "custom_pp_created", 0))
+		]
+
+		if pending_sales_orders:
+			frappe.throw(
+				_("Please create Production Plans for all Sales Orders before submitting this Bulk Pre Production Plan. Pending: {0}")
+				.format(", ".join(pending_sales_orders)),
+				title=_("Production Plans Required"),
+			)
   
 	def check_machine_available(self):
 		for idx, row in enumerate(self.po_items or [], start=1): 
@@ -882,8 +954,15 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.planned_start_date)
 			new_end = get_datetime(row.custom_planned_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all(
+				"Production Plan",
+				filters={"docstatus": ["!=", 2]},
+				fields=["name", "custom_bulk_pre_production_plan"],
+			)
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
+
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.po_items:
 					if not item.custom_workstation:
@@ -1057,11 +1136,7 @@ class BulkPreProductionPlan(Document):
 			self.status = "Cancelled"
 
 	def on_submit(self):
-		"""
-		Prevent full submission of Bulk Pre Production Plan as per user request.
-		Production Plans should be created individually using the 'Create Production Plans' button.
-		"""
-		frappe.throw(_("Full submission of Bulk Pre Production Plan is disabled. Please use the 'Create Production Plans' button to process Sales Orders individually."))
+		self.set_status()
   
 	@frappe.whitelist()
 	def get_items(self):
@@ -1368,112 +1443,144 @@ class BulkPreProductionPlan(Document):
 
 @frappe.whitelist()
 def get_sales_orders(
-	to_delivery_date: str,
 	company: str,
-	item_code: str | None = None,
+	to_delivery_date: str | None = None,
+	from_date: str | None = None,
+	to_date: str | None = None,
+	from_delivery_date: str | None = None,
 	customer: str | None = None,
+	project: str | None = None,
+	sales_order_status: str | None = None,
+	item_code: str | None = None,
 ) -> dict[str, Any]:
 	"""
-	Fetch Sales Orders with delivery_date up to to_delivery_date (Bulk PP workflow)
-
-	Args:
-		to_delivery_date: Show all SOs up to this delivery date
-		company: Company name
-		item_code: Optional item filter
-		customer: Optional customer filter
-
-	Returns:
-		Dict with sales_orders list
+	Fetch Sales Orders using the same logic as Production Plan's get_sales_orders():
+	  - Excludes Stopped / Closed SOs
+	  - Only includes SOs where at least one item has qty > production_plan_qty
+	  - Requires an active BOM or packed items with an active BOM
+	  - Supports the same optional filters: date ranges, customer, project,
+	    sales_order_status, item_code
 	"""
-	if not to_delivery_date:
-		frappe.throw(_("Please set Till Delivery Date"))
-
 	if not company:
 		frappe.throw(_("Please set Company"))
 
-	filters = {
-		'to_date': to_delivery_date,
-		'company': company,
-		'item_code': item_code,
-		'customer': customer,
-	}
+	filters: dict = {'company': company}
 
-	item_condition = """
-		AND EXISTS(
-			SELECT 1
-			FROM `tabSales Order Item` soi_filter
-			WHERE soi_filter.parent = so.name
-				AND soi_filter.docstatus = 1
-				AND soi_filter.item_code = %(item_code)s
-		)
-	""" if item_code else ""
+	# ── Build WHERE conditions matching PP's get_sales_orders() ─────────────
+	conditions = [
+		"so.docstatus = 1",
+		"so.status NOT IN ('Stopped', 'Closed')",
+		"so.company = %(company)s",
+		# Mirror PP: only SOs where at least one item has remaining planned qty
+		"so_item.qty > so_item.production_plan_qty",
+	]
 
-	customer_condition = "AND so.customer = %(customer)s" if customer else ""
-	production_plan_condition = """
-		AND NOT EXISTS(
-			SELECT 1
-			FROM `tabProduction Plan` pp
-			LEFT JOIN `tabProduction Plan Sales Order` ppso
-				ON ppso.parent = pp.name
-				AND ppso.parenttype = 'Production Plan'
-			LEFT JOIN `tabProduction Plan Item` ppi
-				ON ppi.parent = pp.name
-				AND ppi.parenttype = 'Production Plan'
-			WHERE pp.docstatus < 2
-				AND (
-					ppso.sales_order = so.name
-					OR ppi.sales_order = so.name
-				)
+	# Transaction date range (same as PP's from_date / to_date)
+	if from_date:
+		conditions.append("so.transaction_date >= %(from_date)s")
+		filters['from_date'] = from_date
+	if to_date:
+		conditions.append("so.transaction_date <= %(to_date)s")
+		filters['to_date'] = to_date
+
+	# Delivery date range (same as PP's from_delivery_date / to_delivery_date)
+	if from_delivery_date:
+		conditions.append("so_item.delivery_date >= %(from_delivery_date)s")
+		filters['from_delivery_date'] = from_delivery_date
+	if to_delivery_date:
+		conditions.append("so_item.delivery_date <= %(to_delivery_date)s")
+		filters['to_delivery_date'] = to_delivery_date
+
+	# Optional: customer, project, sales_order_status
+	if customer:
+		conditions.append("so.customer = %(customer)s")
+		filters['customer'] = customer
+	if project:
+		conditions.append("so.project = %(project)s")
+		filters['project'] = project
+	if sales_order_status:
+		conditions.append("so.status = %(sales_order_status)s")
+		filters['sales_order_status'] = sales_order_status
+
+	# Optional: item_code filter (scoped to SO items, matching PP logic)
+	bom_item_condition = ""
+	if item_code and frappe.db.exists("Item", item_code):
+		conditions.append("so_item.item_code = %(item_code)s")
+		filters['item_code'] = item_code
+		bom_item_condition = "AND bom.item = %(item_code)s"
+
+	where_clause = "\n\t\t\t\tAND ".join(conditions)
+
+	# ── BOM check: mirror PP's ExistsCriterion logic ─────────────────────────
+	# SO is eligible when any item has an active BOM, or any packed item has one
+	bom_check = f"""
+		AND (
+			EXISTS(
+				SELECT 1 FROM `tabBOM` bom
+				WHERE bom.item = so_item.item_code
+					AND bom.is_active = 1
+					{bom_item_condition}
+			)
+			OR EXISTS(
+				SELECT 1 FROM `tabPacked Item` pi
+				WHERE pi.parent = so.name
+					AND pi.parent_item = so_item.item_code
+					AND EXISTS(
+						SELECT 1 FROM `tabBOM` bom2
+						WHERE bom2.item = pi.item_code AND bom2.is_active = 1
+					)
+			)
 		)
 	"""
 
-	# Fetch only Sales Orders that do not already have a non-cancelled Production Plan
 	sales_orders = frappe.db.sql(f"""
-		SELECT
-			so.name as sales_order,
+		SELECT DISTINCT
+			so.name            AS sales_order,
 			so.customer,
 			so.delivery_date,
-			so.grand_total,
+			so.base_grand_total AS grand_total,
 			so.status,
 			so.order_type,
 			EXISTS(
 				SELECT 1
-				FROM `tabSales Order Item` soi
-				INNER JOIN `tabItem` item ON item.name = soi.item_code
-				WHERE
-					soi.parent = so.name
-					AND soi.docstatus = 1
-					AND COALESCE(item.custom_planning_type, '') = '2'
-			) as has_level_2_item
+				FROM `tabSales Order Item` soi2
+				INNER JOIN `tabItem` itm ON itm.name = soi2.item_code
+				WHERE soi2.parent = so.name
+					AND soi2.docstatus = 1
+					AND COALESCE(itm.custom_planning_type, '') = '2'
+			) AS has_level_2_item
 		FROM
 			`tabSales Order` so
+			INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
 		WHERE
-			so.docstatus = 1
-			AND so.status NOT IN ('Closed', 'Cancelled', 'Completed')
-			AND so.delivery_date <= %(to_date)s
-			AND so.company = %(company)s
-			{customer_condition}
-			{item_condition}
-			{production_plan_condition}
+			{where_clause}
+			{bom_check}
 		ORDER BY
 			so.delivery_date ASC
 	""", filters, as_dict=True)
 
-	# Just return the sales_orders data - don't save to avoid naming series issues
-	# The frontend will populate the child table
-
-	filter_bits = [_('till delivery date')]
+	# ── Build user-facing message ────────────────────────────────────────────
+	filter_bits = []
+	if from_date or to_date:
+		filter_bits.append(_('transaction date'))
+	if from_delivery_date or to_delivery_date:
+		filter_bits.append(_('delivery date'))
 	if customer:
 		filter_bits.append(_('customer {0}').format(frappe.bold(customer)))
+	if project:
+		filter_bits.append(_('project {0}').format(frappe.bold(project)))
+	if sales_order_status:
+		filter_bits.append(_('status {0}').format(frappe.bold(sales_order_status)))
 	if item_code:
 		filter_bits.append(_('item {0}').format(frappe.bold(item_code)))
-	filter_bits.append(_('without an existing Production Plan'))
 
 	frappe.msgprint(
-		_('Found {0} Sales Orders for {1}').format(len(sales_orders), ', '.join(filter_bits))
+		_('Found {0} Sales Orders{1}').format(
+			len(sales_orders),
+			(' for ' + ', '.join(filter_bits)) if filter_bits else ''
+		)
 	)
 
-	# Return formatted data for frontend to populate
 	return {
 		'sales_orders': [
 			{
@@ -1486,7 +1593,7 @@ def get_sales_orders(
 				'has_level_2_item': cint(so.has_level_2_item),
 				'is_selected': 1,
 				'for_warehouse': '',
-				'items_generated': 0
+				'items_generated': 0,
 			}
 			for so in sales_orders
 		]
@@ -1644,6 +1751,10 @@ def recalculate_existing_schedule(docname: str, planning_mode: str | None = None
 	"""Recalculate dates/schedule using existing FG/SFG rows without regenerating items."""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
 	mode = planning_mode or doc.custom_planning_mode or "Sequential"
+
+	# Backfill item_name for po_items rows that were saved before the fix
+	_backfill_po_item_names(doc)
+
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
@@ -1742,6 +1853,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	Returns dict keyed by SO name.
 	"""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	_backfill_po_item_names(doc)
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
@@ -2267,7 +2379,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			lead_days  = int(lead_map.get(item_code, 0))
 			total_days = grn_days + lead_days
 
-			mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier","custom_supplier_name"])
+			mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier"])
 			mr_supplier_list = []
 			for d in mr_suppliers:
 				supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
@@ -2569,6 +2681,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 	Returns dict keyed by SO name.
 	"""
 	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	_backfill_po_item_names(doc)
 	merge_sales_order = []
 	for rec in doc.sales_orders:
 		if rec.merged == 1:
@@ -3328,6 +3441,8 @@ def _split_batches(total_qty: float, batch_qty: int | float) -> list[float]:
 	"""Split total_qty into batches of batch_qty. Last batch = remainder."""
 	if batch_qty <= 0:
 		return [total_qty]
+	if total_qty <= 0:
+		return [0.0]
 	n = math.ceil(total_qty / batch_qty)
 	remainder = total_qty - batch_qty * (n - 1)
 	return [float(batch_qty)] * (n - 1) + [float(remainder)]
@@ -3565,6 +3680,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 		SELECT
 			soi.name AS sales_order_item,
 			soi.item_code,
+			soi.item_name,
 			soi.qty,
 			soi.stock_uom,
 			soi.warehouse,
@@ -3647,6 +3763,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			'sales_order': so_name,
 			'sales_order_item': item.sales_order_item,
 			'item_code': item.item_code,
+			'item_name': item.item_name or '',
 			'bom_no': bom,
 			'tool': tool_details.get('tool') or '',
 			'tool_load_qty': cint(tool_details.get('tool_load_qty') or 0),
@@ -3742,6 +3859,7 @@ def get_sub_assembly_items_from_bom(
 	bom_items = frappe.db.sql("""
 		SELECT
 			bi.item_code,
+			i.item_name,
 			bi.stock_qty / NULLIF(b.quantity, 0) as qty_per_unit,
 			bi.stock_uom,
 			bi.bom_no as item_bom_no,
@@ -3783,6 +3901,7 @@ def get_sub_assembly_items_from_bom(
 				'sales_order': so_name,
 				'fg_item_code': fg_item,
 				'production_item': bom_item.item_code,
+				'item_name': bom_item.item_name or '',
 				'parent_item_code': parent_item or fg_item,
 				'bom_no': bom_item.item_bom_no,
 				'tool': tool_details.get('tool') or '',
@@ -5012,4 +5131,4 @@ def get_bin_data(item_code=None, warehouse=None):
 		query = query.where(bin.warehouse == warehouse)
 
 	p_qty = query.run(as_dict=True)
-	return p_qty	
+	return p_qty
