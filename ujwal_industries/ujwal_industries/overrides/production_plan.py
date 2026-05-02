@@ -47,3 +47,29 @@ from .pp_cascade import calculate_sfg_fg_dates_from_mr_items as calculate_sfg_fg
 
 from .tool_limit import validate_tool_limit as validate_tool_limit
 from .pp_mr_dates import set_item_type_in_production_plan as set_item_type_in_production_plan
+
+
+def on_trash_production_plan(doc, method=None):
+	"""Reset custom_pp_created on the Bulk Pre Production Plan when a Production Plan is deleted."""
+	bulk_pp_name = getattr(doc, "custom_bulk_pre_production_plan", None)
+	if not bulk_pp_name:
+		return
+
+	so_names = [row.sales_order for row in (doc.get("sales_orders") or []) if getattr(row, "sales_order", None)]
+	if not so_names:
+		return
+
+	try:
+		import frappe
+		bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+		changed = False
+		for row in bulk_pp.get("sales_orders") or []:
+			if row.sales_order in so_names and getattr(row, "custom_pp_created", 0):
+				row.custom_pp_created = 0
+				changed = True
+		if changed:
+			bulk_pp.flags.ignore_mandatory = True
+			bulk_pp.save()
+	except Exception:
+		import frappe
+		frappe.log_error(frappe.get_traceback(), "on_trash_production_plan: failed to reset custom_pp_created")

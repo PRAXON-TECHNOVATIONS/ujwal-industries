@@ -221,7 +221,8 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate",
 			# "ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
-		]
+		],
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.production_plan.on_trash_production_plan",
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",

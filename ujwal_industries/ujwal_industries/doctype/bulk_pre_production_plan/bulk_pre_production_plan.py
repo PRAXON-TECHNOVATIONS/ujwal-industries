@@ -375,6 +375,9 @@ def _backfill_po_item_names(doc: Document) -> None:
 def _ensure_default_workstations_on_doc(doc: Document) -> None:
 	"""Backfill missing workstation CSV on FG/SFG rows from the BOM first operation."""
 	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
+		mfg_type = getattr(row, "manufacturing_type", None) or getattr(row, "type_of_manufacturing", None)
+		if mfg_type == "Subcontract":
+			continue
 		if not getattr(row, "bom_no", None) or getattr(row, "custom_workstations_csv", None):
 			continue
 		details = _get_bom_spm_details_map(row.bom_no)
@@ -509,7 +512,7 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				continue
 			if fg_data.get("bom_no"):
 				row.bom_no = fg_data.get("bom_no")
-			if fg_data.get("custom_workstations_csv"):
+			if fg_data.get("custom_workstations_csv") and getattr(row, "manufacturing_type", "") != "Subcontract":
 				row.custom_workstations_csv = fg_data.get("custom_workstations_csv")
 			if "tool" in fg_data:
 				row.tool = fg_data.get("tool") or ""
@@ -530,7 +533,7 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				continue
 			if sfg_data.get("bom_no"):
 				row.bom_no = sfg_data.get("bom_no")
-			if sfg_data.get("custom_workstations_csv"):
+			if sfg_data.get("custom_workstations_csv") and getattr(row, "type_of_manufacturing", "") != "Subcontract":
 				row.custom_workstations_csv = sfg_data.get("custom_workstations_csv")
 			if "tool" in sfg_data:
 				row.tool = sfg_data.get("tool") or ""
@@ -879,12 +882,18 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 class BulkPreProductionPlan(Document):
 	def validate(self):
 		"""Validate the document before save"""
-		# Calculate total planned qty
 		self.calculate_total_planned_qty()
-		# self.check_machine_available()
-
-		# Set status
+		self._clear_subcontract_machine_fields()
 		self.set_status()
+
+	def _clear_subcontract_machine_fields(self):
+		"""Subcontract rows don't use machines — clear any stale workstation data so conflict checks are not triggered."""
+		for row in list(self.po_items or []):
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				row.custom_workstations_csv = ""
+		for row in list(self.sub_assembly_items or []):
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				row.custom_workstations_csv = ""
 
 	def calculate_total_planned_qty(self):
 		"""Calculate total planned quantity from po_items"""
@@ -945,8 +954,10 @@ class BulkPreProductionPlan(Document):
 			)
   
 	def check_machine_available(self):
-		for idx, row in enumerate(self.po_items or [], start=1): 
+		for idx, row in enumerate(self.po_items or [], start=1):
 
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				continue
 			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
 				continue
 
@@ -994,8 +1005,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 	
-		for idx, row in enumerate(self.po_items or [], start=1): 
+		for idx, row in enumerate(self.po_items or [], start=1):
 
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				continue
+			if not getattr(row, "item_code", None):
+				continue
 			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
 				continue
 
@@ -1003,8 +1018,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.planned_start_date)
 			new_end = get_datetime(row.custom_planned_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.sub_assembly_items:
 					if not item.custom_workstation:
@@ -1036,8 +1053,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 		
-		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1):
 
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				continue
+			if not getattr(row, "production_item", None):
+				continue
 			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
 				continue
 
@@ -1045,8 +1066,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.schedule_date)
 			new_end = get_datetime(row.custom_schedule_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.po_items:
 					if not item.custom_workstation:
@@ -1078,8 +1101,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 	
-		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1):
 
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				continue
+			if not getattr(row, "production_item", None):
+				continue
 			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
 				continue
 
@@ -1087,8 +1114,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.schedule_date)
 			new_end = get_datetime(row.custom_schedule_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.sub_assembly_items:
 					if not item.custom_workstation:
@@ -4747,19 +4776,26 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 def _run_machine_availability_check_for_production_plan(pp_doc):
 	"""Reuse Bulk PP machine validation for Production Plan rows before save."""
 	validation_doc = frappe._dict({
+		"name": getattr(pp_doc, "custom_bulk_pre_production_plan", None) or "",
 		"po_items": [],
 		"sub_assembly_items": [],
 	})
 
 	for row in pp_doc.po_items or []:
+		mfg_type = getattr(row, "custom_manufacturing_type", "") or getattr(row, "manufacturing_type", "") or ""
 		validation_doc.po_items.append(frappe._dict({
+			"item_code": getattr(row, "item_code", None),
+			"manufacturing_type": mfg_type,
 			"custom_workstations_csv": row.custom_workstation,
 			"planned_start_date": row.planned_start_date,
 			"custom_planned_end_date": row.custom_planned_end_date,
 		}))
 
 	for row in pp_doc.sub_assembly_items or []:
+		mfg_type = getattr(row, "type_of_manufacturing", "") or getattr(row, "custom_manufacturing_type", "") or ""
 		validation_doc.sub_assembly_items.append(frappe._dict({
+			"production_item": getattr(row, "production_item", None),
+			"type_of_manufacturing": mfg_type,
 			"custom_workstations_csv": row.custom_workstation,
 			"schedule_date": row.schedule_date,
 			"custom_schedule_end_date": row.custom_schedule_end_date,
