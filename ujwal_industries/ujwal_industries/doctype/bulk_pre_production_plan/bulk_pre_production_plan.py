@@ -2303,13 +2303,24 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
 				b0_end     = deadline_dt  # visual chain anchor unchanged
 			else:
-				# Normal backward-schedule from SO delivery deadline
-				mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
-				               if grn_days > 0 else deadline_dt
-				b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
+				# Backward-schedule the ENTIRE batch chain from deadline so the LAST
+				# batch ends at the deadline (not just batch-0 pinned to it).
+				# Iterate backwards: last batch → first batch, each peeling off its
+				# production time + GRN + PM gap from the rolling deadline.
+				_bwd_dl   = deadline_dt
+				_bi_start = deadline_dt  # fallback if batches is empty
+				for _bi in reversed(range(len(batches))):
+					_bq = batches[_bi]
+					_bp = (_bq / real_spm) if real_spm > 0 else shift_minutes
+					_grn_dl   = _snap_start(_working_day_subtract(_bwd_dl, grn_days, holidays), shift_config) \
+					            if grn_days > 0 else _bwd_dl
+					_bi_start = _snap_start(_backward_schedule(_grn_dl, _bp, shift_config), shift_config)
+					if _bi > 0:
+						_bwd_dl = _working_day_subtract(_bi_start, pm_days, holidays) if pm_days > 0 else _bi_start
+				b0_start   = _bi_start
 				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
-				# Force b0_end = deadline_dt so the chain is visually tight
-				b0_end     = deadline_dt
+				b0_end     = _snap_end(_working_day_add(b0_mfg_end, grn_days, holidays), shift_config) \
+				             if grn_days > 0 else b0_mfg_end
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
 			hc_b0 = 0
@@ -2541,6 +2552,16 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
 
+		# ── Level-0 SFG cumulative availability timeline (for pipeline FG scheduling) ──
+		# sfg_chain_out is deepest-first; last entry = level-0 (direct FG input)
+		_sfg_l0_timeline: list[tuple[datetime, float]] = []
+		if sfg_chain_out:
+			_sfg_l0_batches = sfg_chain_out[-1].get("batches") or []
+			_cum_sfg = 0.0
+			for _sb in _sfg_l0_batches:
+				_cum_sfg += flt(_sb["qty"])
+				_sfg_l0_timeline.append((get_datetime(_sb["end_date"]), _cum_sfg))
+
 		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
 
 		fg_rows_out: list[dict] = []
@@ -2548,7 +2569,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
 
 		fg_rows_sorted =  items["fg"]
-		
+
 		prev_fg_row0_end: str | None = None
 		for fg_idx, fg in enumerate(fg_rows_sorted):	
 			fg.spm = 0
@@ -2643,13 +2664,41 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
 
-				# if fg.manufacturing_type == "Subcontract":
-				# 	mfg_end_dt = start_dt + timedelta(days=mfg_days)
-				# else:
-				# 	mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-    
-				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-    
+				# Pipeline-aware mfg_end: process available SFG immediately, pause when
+				# material runs out, resume when the next SFG batch arrives.
+				if _sfg_l0_timeline and real_spm > 0:
+					_fg_consumed = sum(flt(br["qty"]) for br in batch_rows)
+					_sfg_avail = 0.0
+					_sfg_future: list[tuple[datetime, float]] = []
+					_prev_cum = 0.0
+					for _end_dt, _cum_qty in _sfg_l0_timeline:
+						_batch_chunk = _cum_qty - _prev_cum
+						if _end_dt <= start_dt:
+							_sfg_avail += _batch_chunk
+						else:
+							_sfg_future.append((_end_dt, _batch_chunk))
+						_prev_cum = _cum_qty
+					_sfg_avail = max(0.0, _sfg_avail - _fg_consumed)
+					_cur_time = start_dt
+					_remaining = batch_qty
+					_future_copy = list(_sfg_future)
+					while _remaining > 0:
+						if _sfg_avail > 0:
+							_chunk = min(_remaining, _sfg_avail)
+							_cur_time = shift_aware_forward_schedule(_cur_time, _chunk / real_spm, shift_config)
+							_remaining -= _chunk
+							_sfg_avail -= _chunk
+						elif _future_copy:
+							_next_end, _next_qty = _future_copy.pop(0)
+							_cur_time = max(_cur_time, _next_end)
+							_sfg_avail += _next_qty
+						else:
+							_cur_time = shift_aware_forward_schedule(_cur_time, _remaining / real_spm, shift_config)
+							_remaining = 0
+					mfg_end_dt = _cur_time
+				else:
+					mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
+
 				if fg.manufacturing_type == "Subcontract":
 					end_dt = mfg_end_dt + timedelta(days=grn_days)
 				else:
