@@ -690,6 +690,54 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 	fg_rows = list(items.get("fg") or [])
 	sfg_rows = sorted(items.get("sfg") or [], key=lambda row: cint(getattr(row, "bom_level", 0) or 0))
 	mr_rows = list(items.get("mr") or [])
+	bom_component_map = _fetch_bom_component_map([
+		bom_no
+		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
+		if bom_no
+	])
+
+	def _resolve_parent_state_for_sfg(
+		sfg_row: Any,
+		level: int,
+		base_gross_qty: float,
+		sfg_rows_at_prev_level: list[Any],
+	) -> dict[str, Any]:
+		"""Resolve parent demand for an SFG row, falling back to BOM links when row metadata is stale."""
+		fg_item_code = getattr(sfg_row, "fg_item_code", "") or ""
+		parent_item_code = getattr(sfg_row, "parent_item_code", "") or fg_item_code
+
+		if level <= 0:
+			return fg_item_states.get(fg_item_code) or {
+				"gross_qty": base_gross_qty,
+				"net_qty": base_gross_qty,
+			}
+
+		direct_parent_state = sfg_parent_states.get((fg_item_code, parent_item_code, level - 1))
+		if direct_parent_state:
+			return direct_parent_state
+
+		child_item_code = getattr(sfg_row, "production_item", "") or ""
+		for prev_row in sfg_rows_at_prev_level or []:
+			if (getattr(prev_row, "fg_item_code", "") or "") != fg_item_code:
+				continue
+
+			prev_item_code = getattr(prev_row, "production_item", "") or ""
+			prev_bom_no = getattr(prev_row, "bom_no", None)
+			if not prev_item_code or not prev_bom_no:
+				continue
+
+			if any(
+				(component.get("item_code") or "") == child_item_code
+				for component in bom_component_map.get(prev_bom_no, [])
+			):
+				inferred_parent_state = sfg_parent_states.get((fg_item_code, prev_item_code, level - 1))
+				if inferred_parent_state:
+					return inferred_parent_state
+
+		return {
+			"gross_qty": base_gross_qty,
+			"net_qty": base_gross_qty,
+		}
 
 	fg_row_states: dict[str, dict[str, Any]] = {}
 	fg_item_states: dict[str, dict[str, Any]] = {}
@@ -746,14 +794,12 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			row_key = getattr(sfg, "name", None) or f"sfg::{fg_item_code}::{item_code}::{level}"
 			warehouse = _get_stock_warehouse_for_requirement_row(sfg, item_code, target_warehouse_map)
 			base_gross_qty = max(flt(getattr(sfg, "qty", 0) or 0), 0.0)
-
-			if level <= 0:
-				parent_state = fg_item_states.get(fg_item_code) or {"gross_qty": base_gross_qty, "net_qty": base_gross_qty}
-			else:
-				parent_state = sfg_parent_states.get((fg_item_code, parent_item_code, level - 1)) or {
-					"gross_qty": base_gross_qty,
-					"net_qty": base_gross_qty,
-				}
+			parent_state = _resolve_parent_state_for_sfg(
+				sfg,
+				level,
+				base_gross_qty,
+				sfg_rows_by_level.get(level - 1, []),
+			)
 
 			parent_gross_qty = max(flt(parent_state.get("gross_qty") or 0), 0.0)
 			parent_net_qty = max(flt(parent_state.get("net_qty") or 0), 0.0)
@@ -789,12 +835,6 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 				parent_state["gross_qty"] += row.get("bom_qty", row["gross_qty"])
 				parent_state["net_qty"] += row_net_qty
 			parent_state["stock_qty"] = max(flt(parent_state.get("stock_qty") or 0), stock_qty)
-
-	bom_component_map = _fetch_bom_component_map([
-		bom_no
-		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
-		if bom_no
-	])
 
 	mr_meta_by_item: dict[str, dict[str, Any]] = {}
 	for mr in mr_rows:
