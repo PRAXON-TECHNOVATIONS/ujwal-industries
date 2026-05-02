@@ -2238,11 +2238,17 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			)
 			selected_tool = tool_info.get("tool") or ""
    
-			item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			# item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			# supplier_list = []
+			# for d in item_suppliers:
+			# 	supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
+			# 	label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+			# 	supplier_list.append(label)
+   
+			item_suppliers = frappe.get_all("Supplier",fields=["name","custom_supplier_names"])
 			supplier_list = []
 			for d in item_suppliers:
-				supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-				label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+				label = f"{d.name} - {d.custom_supplier_names}"
 				supplier_list.append(label)
    
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
@@ -2448,11 +2454,18 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			lead_days  = int(lead_map.get(item_code, 0))
 			total_days = grn_days + lead_days
 
-			mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier"])
+			# mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier"])
+			# mr_supplier_list = []
+			# for d in mr_suppliers:
+			# 	supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
+			# 	label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+			# 	mr_supplier_list.append(label)
+
+			mr_suppliers = frappe.get_all("Supplier", fields=["name", "custom_supplier_names"])
 			mr_supplier_list = []
 			for d in mr_suppliers:
-				supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-				label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+				# supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
+				label = f"{d.name} - {d.custom_supplier_names}" 
 				mr_supplier_list.append(label)
    
 			if deepest_sfg_batch0_start:
@@ -2560,13 +2573,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				fallback_lot_capacity=cint((bom_tool_map.get(bom_no) or {}).get("fallback_lot_capacity") or 0),
 			)
    
-			item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			# item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
+			# supplier_list = []
+			# for d in item_suppliers:
+			# 	supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
+			# 	label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+			# 	supplier_list.append(label)
+
+			item_suppliers = frappe.get_all("Supplier",fields=["name","custom_supplier_names"])
 			supplier_list = []
 			for d in item_suppliers:
-				supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-				label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
+				label = f"{d.name} - {d.custom_supplier_names}"
 				supplier_list.append(label)
-   
+				
 			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
 			tool_details  = _get_bom_spm_details_map(bom_no, selected_tool=selected_tool or None)
