@@ -17,16 +17,30 @@ from frappe.utils import getdate, add_days, nowdate, flt
 def get_so_items_for_list(sales_orders):
 	"""Return item_code and item_name for given Sales Order names (for list view columns)."""
 	import json
+
 	if isinstance(sales_orders, str):
 		sales_orders = json.loads(sales_orders)
 	if not sales_orders:
 		return []
-	return frappe.db.get_all(
-		'Sales Order Item',
-		filters={'parent': ['in', sales_orders], 'parenttype': 'Sales Order'},
-		fields=['parent', 'item_code', 'item_name'],
-		order_by='idx asc',
-		ignore_permissions=True,
+
+	permitted_sales_orders = [
+		sales_order
+		for sales_order in sales_orders
+		if sales_order and frappe.has_permission('Sales Order', 'read', sales_order)
+	]
+	if not permitted_sales_orders:
+		return []
+
+	return frappe.db.sql(
+		"""
+		SELECT parent, item_code, item_name
+		FROM `tabSales Order Item`
+		WHERE parenttype = 'Sales Order'
+			AND parent IN %(sales_orders)s
+		ORDER BY parent, idx
+		""",
+		{'sales_orders': tuple(permitted_sales_orders)},
+		as_dict=True,
 	)
 
 
