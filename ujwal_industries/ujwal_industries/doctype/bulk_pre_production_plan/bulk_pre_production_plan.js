@@ -2533,12 +2533,25 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 		
+		// {
+		// 	headerName: 'Supplier', field: 'supplier', width: 160,
+		// 	editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: p.data?.supplier_list || []
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+		// 	}
+		// },
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
 			editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
 			cellEditorParams: p => ({
-				values: p.data?.supplier_list || []
+				supplier_list: p.data?.supplier_list || []
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
@@ -2994,12 +3007,26 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 		
+		// {
+		// 	headerName: 'Supplier', field: 'supplier', width: 160,
+		// 	editable: p => !!p.data?._is_group,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: p.data?.supplier_list || []
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+		// 	}
+		// },
+
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
 			editable: p => !!p.data?._is_group,
-			cellEditor: 'agSelectCellEditor',
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
 			cellEditorParams: p => ({
-				values: p.data?.supplier_list || []
+				supplier_list: p.data?.supplier_list || []
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
@@ -3506,8 +3533,104 @@ function _shift_display_html(csv_value) {
 	</div>`;
 }
 
+function _get_supplier_options(txt) {
+    return _get_link_options('Supplier', txt);
+}
+
 function _get_workstation_options(txt) {
 	return _get_link_options('Workstation', txt);
+}
+
+function _create_inline_supplier_editor(initial_value, supplier_list, onchange) {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = _TAG_WRAPPER_STYLE;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search supplier…';
+    input.value = initial_value || '';
+    input.style.cssText = _TAG_INPUT_STYLE;
+    input.setAttribute('autocomplete', 'off');
+    wrapper.appendChild(input);
+
+    const dropdown = document.createElement('div');
+    dropdown.style.cssText = _DROPDOWN_STYLE;
+    dropdown.style.display = 'none';
+    wrapper.appendChild(dropdown);
+
+    let _options = supplier_list && supplier_list.length ? [...supplier_list] : [];
+    let highlightIdx = -1;
+    let _searchTimeout = null;
+    let _destroyed = false;
+    let _currentValue = initial_value || '';
+
+    function _renderDropdown(list) {
+        if (!list.length || _destroyed) {
+            dropdown.style.display = 'none';
+            dropdown.innerHTML = '';
+            return;
+        }
+        highlightIdx = Math.min(Math.max(highlightIdx, -1), list.length - 1);
+        dropdown.innerHTML = list.map((o, i) => {
+            const hl = i === highlightIdx ? _DROPDOWN_ITEM_HOVER : '';
+            return `<div class="bpp-sup-dd-item" data-value="${frappe.utils.escape_html(o)}"
+                style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o)}</div>`;
+        }).join('');
+        dropdown.style.display = 'block';
+        dropdown.querySelectorAll('.bpp-sup-dd-item').forEach(item => {
+            item.addEventListener('mousedown', e => {
+                e.preventDefault();
+                const val = item.getAttribute('data-value');
+                input.value = val;
+                _currentValue = val;
+                dropdown.style.display = 'none';
+                if (onchange) onchange(val);
+            });
+            item.addEventListener('mouseenter', () => { item.style.background = '#EFF6FF'; item.style.color = '#1E40AF'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; item.style.color = '#334155'; });
+        });
+    }
+
+    function _search(txt) {
+        const lower = (txt || '').toLowerCase();
+        if (_options.length) {
+            _renderDropdown(_options.filter(o => o.toLowerCase().includes(lower)));
+        } else {
+            _get_supplier_options(txt).then(results => {
+                if (_destroyed) return;
+                _renderDropdown(results || []);
+            });
+        }
+    }
+
+    input.addEventListener('input', () => {
+        _currentValue = input.value;
+        clearTimeout(_searchTimeout);
+        _searchTimeout = setTimeout(() => _search(input.value), 150);
+    });
+    input.addEventListener('focus', () => _search(input.value));
+    input.addEventListener('blur', () => {
+        setTimeout(() => { if (!_destroyed) dropdown.style.display = 'none'; }, 200);
+    });
+    input.addEventListener('keydown', e => {
+        const items = [...dropdown.querySelectorAll('.bpp-sup-dd-item')];
+        if (e.key === 'ArrowDown') { e.preventDefault(); highlightIdx = Math.min(highlightIdx + 1, items.length - 1); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); highlightIdx = Math.max(highlightIdx - 1, 0); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
+        else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < items.length) {
+            e.preventDefault();
+            const val = items[highlightIdx].getAttribute('data-value');
+            input.value = val; _currentValue = val;
+            dropdown.style.display = 'none';
+            if (onchange) onchange(val);
+        } else if (e.key === 'Escape') { dropdown.style.display = 'none'; }
+    });
+
+    return {
+        el: wrapper,
+        getValue: () => _currentValue,
+        focus: () => { input.focus(); _search(''); },
+        destroy: () => { _destroyed = true; clearTimeout(_searchTimeout); }
+    };
 }
 
 function _get_shift_type_options(txt) {
@@ -3858,6 +3981,28 @@ function _create_inline_shift_editor(initial_csv, onchange) {
 /**
  * AG Grid cell editor — inline tag autocomplete (no popup).
  */
+
+class SupplierPopupEditor {
+    init(params) {
+        this.params = params;
+        this._currentValue = params.value || '';
+        this._editor = _create_inline_supplier_editor(
+            params.value || '',
+            params.supplier_list || [],
+            val => { this._currentValue = val; }
+        );
+        this.eGui = this._editor.el;
+        const w = Math.max(200, (params.column?.getActualWidth?.() || 160));
+        this.eGui.style.cssText += `width:${w}px;min-width:${w}px;box-sizing:border-box;margin-left:8px;`;
+    }
+    getGui() { return this.eGui; }
+    afterGuiAttached() { this._editor.focus(); }
+    getValue() { return this._currentValue; }
+    isPopup() { return true; }
+    getPopupPosition() { return 'under'; }
+    destroy() { if (this._editor) this._editor.destroy(); }
+}
+
 class WorkstationPopupEditor {
 	init(params) {
 		this.params = params;
@@ -4239,7 +4384,7 @@ function _on_par_bom_changed(frm, params, par_data) {
 	if (!target_row) return;
 	const fieldname = params.colDef.field;
 
-	if (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool') {
+	if (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool' || fieldname === 'supplier') {
 		_mark_bom_form_dirty(frm);
 		target_row[fieldname] = params.newValue;
 		params.data[fieldname] = params.newValue;
@@ -4326,6 +4471,18 @@ function _on_par_bom_changed(frm, params, par_data) {
 			}
 		});
 	}
+
+	if (fieldname === 'supplier') {
+        const db_field = row_table === 'fg' ? 'custom_supplier' : 'supplier';
+        frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue).then(() => {
+            _sync_parallel_schedule_override(frm, target_row.name, row_table, {
+                supplier: params.newValue,
+                custom_supplier: params.newValue
+            });
+            _mark_form_dirty(frm);
+        });
+        return;
+    }
 }
 
 function get_bom_details(bom_no, selected_workstations_csv = null, selected_tool = null) {
@@ -4758,15 +4915,28 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			valueFormatter: p => _format_bpp_date(p.value, '')
 		},
 
-		// { headerName: 'Supplier', field: _par ? 'supplier' : 'custom_supplier', width: 150 },
+		// {
+		// 	headerName: 'Supplier',
+		// 	field: _par ? 'supplier' : 'custom_supplier',
+		// 	width: 190,
+		// 	editable: true,
+		// 	cellEditor: 'agSelectCellEditor',
+		// 	cellEditorParams: p => ({
+		// 		values: p.data?.supplier_list || []
+		// 	}),
+		// 	cellRenderer: p => {
+		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+		// 	}
+		// },
 		{
 			headerName: 'Supplier',
 			field: _par ? 'supplier' : 'custom_supplier',
 			width: 190,
 			editable: true,
-			cellEditor: 'agSelectCellEditor',
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
 			cellEditorParams: p => ({
-				values: p.data?.supplier_list || []
+				supplier_list: p.data?.supplier_list || []
 			}),
 			cellRenderer: p => {
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
@@ -4775,13 +4945,52 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		
 	];
 
+	// agGrid.createGrid(mr_el, {
+	// 	columnDefs: mr_cols,
+	// 	rowData: mr_items,
+	// 	defaultColDef: { resizable: true, sortable: true, filter: true },
+	// 	rowHeight: 36,
+	// 	headerHeight: 40,
+	// });
+
 	agGrid.createGrid(mr_el, {
-		columnDefs: mr_cols,
-		rowData: mr_items,
-		defaultColDef: { resizable: true, sortable: true, filter: true },
-		rowHeight: 36,
-		headerHeight: 40,
-	});
+    columnDefs: mr_cols,
+    rowData: mr_items,
+    defaultColDef: { resizable: true, sortable: true, filter: true },
+    rowHeight: 36,
+    headerHeight: 40,
+    onCellValueChanged: p => {
+    if (!p.data || p.oldValue === p.newValue) return;
+    const fieldname = p.colDef.field;
+    if (!fieldname) return;
+
+    const mr_row = (frm.doc.mr_items || []).find(r =>
+        r.item_code === p.data.item_code &&
+        r.sales_order === p.data.sales_order
+    );
+
+    if (!mr_row) {
+        _mark_form_dirty(frm);
+        return;
+    }
+
+    const db_field = _par ? 'supplier' : 'custom_supplier';
+
+    if (fieldname === 'supplier' || fieldname === 'custom_supplier') {
+        frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
+            _mark_form_dirty(frm);
+        });
+        return;
+    }
+
+    // Handle date fields
+    if (['start_date', 'custom_start_date', 'end_date', 'schedule_date'].includes(fieldname)) {
+        frappe.model.set_value(mr_row.doctype, mr_row.name, fieldname, p.newValue).then(() => {
+            _mark_form_dirty(frm);
+        });
+    }
+}
+});
 }
 
 
