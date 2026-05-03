@@ -4700,13 +4700,44 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		},
 
 		{
-			headerName: 'Qty As Per BOM', field: _par ? 'required_bom_qty' : 'quantity', width: 150, type: 'numericColumn',
+			headerName: 'Qty As Per BOM', field: 'required_bom_qty', width: 130, type: 'numericColumn',
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
 
 		{
-			headerName: 'Qty', field: _par ? 'qty' : 'quantity', width: 90, type: 'numericColumn',
-			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+			headerName: 'Planned Qty', field: _par ? 'qty' : 'quantity', width: 100, type: 'numericColumn',
+			valueFormatter: p => p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '',
+			cellStyle: p => {
+				const bom_qty = Number(p.data?.required_bom_qty) || 0;
+				const actual = Number(p.data?.actual_qty) || 0;
+				if (bom_qty > 0 || actual > 0) {
+					return { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' };
+				}
+				return {};
+			},
+			cellRenderer: p => {
+				const qty = p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '';
+				const bom_qty = Number(p.data?.required_bom_qty) || 0;
+				const actual = Number(p.data?.actual_qty) || 0;
+				if (bom_qty > 0 || actual > 0) {
+					return `<span class="qty-click">${qty}</span>`;
+				}
+				return qty;
+			},
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Planned Qty') return;
+				const bom_qty = Number(p.data?.required_bom_qty) || 0;
+				const actual = Math.max(0, Number(p.data?.actual_qty) || 0);
+				if (!bom_qty && !actual) return;
+				frappe.msgprint({
+					title: 'Stock Details',
+					message: `
+						Qty As Per BOM: <b>${bom_qty.toLocaleString('en-IN')}</b><br>
+						Available Qty in Warehouse: <b>${actual.toLocaleString('en-IN')}</b>
+					`,
+					indicator: 'blue'
+				});
+			}
 		},
 
 		{ headerName: 'UOM', field: 'uom', width: 65 },

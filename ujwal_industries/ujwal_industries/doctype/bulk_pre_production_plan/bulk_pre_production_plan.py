@@ -850,8 +850,11 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 
 	mr_totals: dict[tuple[str, str], dict[str, Any]] = {}
 
-	def _accumulate_mr_from_bom(bom_no: str | None, net_parent_qty: float) -> None:
-		if not bom_no or net_parent_qty <= 0:
+	def _accumulate_mr_from_bom(bom_no: str | None, net_parent_qty: float, gross_parent_qty: float | None = None) -> None:
+		if gross_parent_qty is None:
+			gross_parent_qty = net_parent_qty
+		# Use gross to gate entry creation so covered SFGs still register 0-demand items for display
+		if not bom_no or gross_parent_qty <= 0:
 			return
 
 		for component in bom_component_map.get(bom_no, []):
@@ -868,36 +871,61 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 				"uom": meta.get("uom") or component.get("stock_uom") or "",
 				"item_name": meta.get("item_name") or item_code,
 				"row_name": meta.get("row_name") or "",
-				"required_bom_qty": 0.0,
+				"required_bom_qty": 0.0,  # gross — shown as "Qty As Per BOM"
+				"net_required_qty": 0.0,  # net  — used for planned qty calculation
 			})
-			entry["required_bom_qty"] += max(flt(component.get("qty_per_unit") or 0), 0.0) * net_parent_qty
+			qty_pu = max(flt(component.get("qty_per_unit") or 0), 0.0)
+			entry["required_bom_qty"] += qty_pu * gross_parent_qty
+			entry["net_required_qty"] += qty_pu * net_parent_qty
 
 	for fg in fg_rows:
 		row_key = getattr(fg, "name", None) or f"fg::{getattr(fg, 'item_code', '') or ''}"
-		net_parent_qty = max(flt((fg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
-		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty)
+		row_state = fg_row_states.get(row_key) or {}
+		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
+		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty, gross_parent_qty)
 
 	for sfg in sfg_rows:
 		row_key = getattr(sfg, "name", None) or f"sfg::{getattr(sfg, 'fg_item_code', '') or ''}::{getattr(sfg, 'production_item', '') or ''}::{cint(getattr(sfg, 'bom_level', 0) or 0)}"
-		net_parent_qty = max(flt((sfg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
-		_accumulate_mr_from_bom(getattr(sfg, "bom_no", None), net_parent_qty)
+		row_state = sfg_row_states.get(row_key) or {}
+		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
+		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(sfg, "bom_no", None), net_parent_qty, gross_parent_qty)
+
+	# Batch-fetch default warehouses for RM items that have no warehouse set.
+	# In ERPNext 15, default_warehouse lives in the Item Default child table (per company).
+	_items_needing_wh = list({item_code for (item_code, wh) in mr_totals if not wh})
+	_item_default_wh: dict[str, str] = {}
+	if _items_needing_wh:
+		for _row in frappe.db.get_all(
+			"Item Default",
+			filters={"parent": ["in", _items_needing_wh], "default_warehouse": ["!=", ""]},
+			fields=["parent as item_code", "default_warehouse"],
+		):
+			if _row.default_warehouse and _row.item_code not in _item_default_wh:
+				_item_default_wh[_row.item_code] = _row.default_warehouse
 
 	mr_items_out: list[Any] = []
 	for (_, warehouse), data in sorted(mr_totals.items(), key=lambda item: (item[0][0], item[0][1])):
-		stock_qty = _get_projected_qty_for_requirement(data.get("item_code"), warehouse)
-		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)
+		item_code = data.get("item_code") or ""
+		eff_warehouse = warehouse or _item_default_wh.get(item_code, "")
+		stock_qty = _get_projected_qty_for_requirement(item_code, eff_warehouse)
+		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)  # gross
+		net_required_qty = max(flt(data.get("net_required_qty") or 0), 0.0)  # net
 		mr_items_out.append(frappe._dict({
-			"item_code": data.get("item_code") or "",
-			"warehouse": warehouse,
+			"item_code": item_code,
+			"warehouse": eff_warehouse,
 			"uom": data.get("uom") or "",
-			"item_name": data.get("item_name") or data.get("item_code") or "",
+			"item_name": data.get("item_name") or item_code or "",
 			"name": data.get("row_name") or "",
 			"required_bom_qty": required_bom_qty,
-			"quantity": max(required_bom_qty - stock_qty, 0.0),
+			"quantity": max(net_required_qty - stock_qty, 0.0),
 			"actual_qty": stock_qty,
 		}))
 
-	if not mr_items_out:
+	# Only fall back to raw doctype values when no BOM coverage exists at all
+	has_boms = any(getattr(r, "bom_no", None) for r in fg_rows + sfg_rows)
+	if not mr_items_out and not has_boms:
 		for mr in mr_rows:
 			mr_items_out.append(frappe._dict({
 				"item_code": getattr(mr, "item_code", "") or "",
@@ -2552,6 +2580,33 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
 
+		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
+		# Recompute raw material requirements from the final schedule production qtys.
+		# SFGs producing 0 units (fully stock-covered) contribute 0 RM demand.
+		if mr_rows_out and sfg_chain_out:
+			_chain_bom_nos_r = [d.get("bom_no") for d in sfg_chain_out if d.get("bom_no")]
+			_chain_comp_r    = _fetch_bom_component_map(_chain_bom_nos_r) if _chain_bom_nos_r else {}
+			_sfg_rm_req: dict[str, float] = {}
+			_sfg_rm_known: set[str] = set()
+			for _sfg_e in sfg_chain_out:
+				_sfg_bom_r = _sfg_e.get("bom_no", "")
+				_sfg_prod  = sum(flt(b.get("qty", 0)) for b in (_sfg_e.get("batches") or []))
+				for _c in _chain_comp_r.get(_sfg_bom_r, []):
+					if _c.get("child_bom_no"):
+						continue
+					_rc = _c.get("item_code", "")
+					if _rc:
+						_sfg_rm_known.add(_rc)
+						_sfg_rm_req[_rc] = _sfg_rm_req.get(_rc, 0.0) + flt(_c.get("qty_per_unit", 0)) * _sfg_prod
+			for _mr_r in mr_rows_out:
+				_ic_r = _mr_r.get("item_code", "")
+				if _ic_r not in _sfg_rm_known:
+					continue
+				_bom_qty_r = _sfg_rm_req.get(_ic_r, 0.0)
+				_stock_r   = flt(_mr_r.get("actual_qty", 0))
+				# Only update planned qty; preserve required_bom_qty (gross) for popup display
+				_mr_r["qty"] = max(_bom_qty_r - _stock_r, 0.0)
+
 		# ── Level-0 SFG cumulative availability timeline (for pipeline FG scheduling) ──
 		# sfg_chain_out is deepest-first; last entry = level-0 (direct FG input)
 		_sfg_l0_timeline: list[tuple[datetime, float]] = []
@@ -3345,6 +3400,33 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			sfg_chain_out = sfg_chain_rebuilt
 			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
+
+		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
+		# Recompute raw material requirements from the final schedule production qtys.
+		# SFGs producing 0 units (fully stock-covered) contribute 0 RM demand.
+		if mr_rows_out and sfg_chain_out:
+			_chain_bom_nos_r = [d.get("bom_no") for d in sfg_chain_out if d.get("bom_no")]
+			_chain_comp_r    = _fetch_bom_component_map(_chain_bom_nos_r) if _chain_bom_nos_r else {}
+			_sfg_rm_req: dict[str, float] = {}
+			_sfg_rm_known: set[str] = set()
+			for _sfg_e in sfg_chain_out:
+				_sfg_bom_r = _sfg_e.get("bom_no", "")
+				_sfg_prod  = sum(flt(b.get("qty", 0)) for b in (_sfg_e.get("batches") or []))
+				for _c in _chain_comp_r.get(_sfg_bom_r, []):
+					if _c.get("child_bom_no"):
+						continue
+					_rc = _c.get("item_code", "")
+					if _rc:
+						_sfg_rm_known.add(_rc)
+						_sfg_rm_req[_rc] = _sfg_rm_req.get(_rc, 0.0) + flt(_c.get("qty_per_unit", 0)) * _sfg_prod
+			for _mr_r in mr_rows_out:
+				_ic_r = _mr_r.get("item_code", "")
+				if _ic_r not in _sfg_rm_known:
+					continue
+				_bom_qty_r = _sfg_rm_req.get(_ic_r, 0.0)
+				_stock_r   = flt(_mr_r.get("actual_qty", 0))
+				# Only update planned qty; preserve required_bom_qty (gross) for popup display
+				_mr_r["qty"] = max(_bom_qty_r - _stock_r, 0.0)
 
 		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
 
