@@ -876,7 +876,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 				}
 			}
 		});
-	}else if (mode === 'Parallel'){
+	} else if (mode === 'Parallel') {
 		// Parallel: recalculate full schedule + apply dates to child rows
 		frappe.show_alert({ message: __('Calculating parallel batch schedule…'), indicator: 'blue' });
 		frappe.call({
@@ -892,8 +892,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 				}
 			}
 		});
-	}
-	else {
+	} else {
 		let merged_rows = (frm.doc.sales_orders || []).filter(row => row.merged);
 
 		if (merged_rows.length < 2) {
@@ -901,7 +900,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 			return;
 		}
 		let so_names = merged_rows.map(row => row.sales_order).filter(Boolean);
-		
+
 		// consolidated: recalculate full schedule + apply dates to child rows
 		frappe.show_alert({ message: __('Calculating consolidated batch schedule…'), indicator: 'blue' });
 		frappe.call({
@@ -909,7 +908,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 			args: { docname: frm.doc.name, planning_mode: 'Consolidated' },
 			callback(r) {
 				if (r.message) {
-					frappe.show_alert({ message: __('consolidated batch schedule calculated'), indicator: 'green' });
+					frappe.show_alert({ message: __('Consolidated batch schedule calculated'), indicator: 'green' });
 					frm.reload_doc().then(() => {
 						const schedule = JSON.parse(frm.doc.custom_batch_schedule || '{}');
 						_render_all_grids(frm, _build_so_map(frm), 'Consolidated', $wrapper, schedule);
