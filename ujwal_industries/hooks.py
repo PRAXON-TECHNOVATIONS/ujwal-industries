@@ -42,7 +42,7 @@ app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
-	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.1",
+	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.2",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -225,7 +225,8 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.production_plan.master_set_fg_dates_by_type",
 			"ujwal_industries.ujwal_industries.overrides.production_plan.adjust_mr_items_and_propagate",
 			# "ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
-		]
+		],
+		"on_trash": "ujwal_industries.ujwal_industries.overrides.production_plan.on_trash_production_plan",
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",

@@ -375,6 +375,9 @@ def _backfill_po_item_names(doc: Document) -> None:
 def _ensure_default_workstations_on_doc(doc: Document) -> None:
 	"""Backfill missing workstation CSV on FG/SFG rows from the BOM first operation."""
 	for row in list(doc.get("po_items") or []) + list(doc.get("sub_assembly_items") or []):
+		mfg_type = getattr(row, "manufacturing_type", None) or getattr(row, "type_of_manufacturing", None)
+		if mfg_type == "Subcontract":
+			continue
 		if not getattr(row, "bom_no", None) or getattr(row, "custom_workstations_csv", None):
 			continue
 		details = _get_bom_spm_details_map(row.bom_no)
@@ -509,7 +512,7 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				continue
 			if fg_data.get("bom_no"):
 				row.bom_no = fg_data.get("bom_no")
-			if fg_data.get("custom_workstations_csv"):
+			if fg_data.get("custom_workstations_csv") and getattr(row, "manufacturing_type", "") != "Subcontract":
 				row.custom_workstations_csv = fg_data.get("custom_workstations_csv")
 			if "tool" in fg_data:
 				row.tool = fg_data.get("tool") or ""
@@ -530,7 +533,7 @@ def _apply_parallel_schedule_overrides_to_doc(doc: Document) -> None:
 				continue
 			if sfg_data.get("bom_no"):
 				row.bom_no = sfg_data.get("bom_no")
-			if sfg_data.get("custom_workstations_csv"):
+			if sfg_data.get("custom_workstations_csv") and getattr(row, "type_of_manufacturing", "") != "Subcontract":
 				row.custom_workstations_csv = sfg_data.get("custom_workstations_csv")
 			if "tool" in sfg_data:
 				row.tool = sfg_data.get("tool") or ""
@@ -687,6 +690,54 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 	fg_rows = list(items.get("fg") or [])
 	sfg_rows = sorted(items.get("sfg") or [], key=lambda row: cint(getattr(row, "bom_level", 0) or 0))
 	mr_rows = list(items.get("mr") or [])
+	bom_component_map = _fetch_bom_component_map([
+		bom_no
+		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
+		if bom_no
+	])
+
+	def _resolve_parent_state_for_sfg(
+		sfg_row: Any,
+		level: int,
+		base_gross_qty: float,
+		sfg_rows_at_prev_level: list[Any],
+	) -> dict[str, Any]:
+		"""Resolve parent demand for an SFG row, falling back to BOM links when row metadata is stale."""
+		fg_item_code = getattr(sfg_row, "fg_item_code", "") or ""
+		parent_item_code = getattr(sfg_row, "parent_item_code", "") or fg_item_code
+
+		if level <= 0:
+			return fg_item_states.get(fg_item_code) or {
+				"gross_qty": base_gross_qty,
+				"net_qty": base_gross_qty,
+			}
+
+		direct_parent_state = sfg_parent_states.get((fg_item_code, parent_item_code, level - 1))
+		if direct_parent_state:
+			return direct_parent_state
+
+		child_item_code = getattr(sfg_row, "production_item", "") or ""
+		for prev_row in sfg_rows_at_prev_level or []:
+			if (getattr(prev_row, "fg_item_code", "") or "") != fg_item_code:
+				continue
+
+			prev_item_code = getattr(prev_row, "production_item", "") or ""
+			prev_bom_no = getattr(prev_row, "bom_no", None)
+			if not prev_item_code or not prev_bom_no:
+				continue
+
+			if any(
+				(component.get("item_code") or "") == child_item_code
+				for component in bom_component_map.get(prev_bom_no, [])
+			):
+				inferred_parent_state = sfg_parent_states.get((fg_item_code, prev_item_code, level - 1))
+				if inferred_parent_state:
+					return inferred_parent_state
+
+		return {
+			"gross_qty": base_gross_qty,
+			"net_qty": base_gross_qty,
+		}
 
 	fg_row_states: dict[str, dict[str, Any]] = {}
 	fg_item_states: dict[str, dict[str, Any]] = {}
@@ -743,14 +794,12 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			row_key = getattr(sfg, "name", None) or f"sfg::{fg_item_code}::{item_code}::{level}"
 			warehouse = _get_stock_warehouse_for_requirement_row(sfg, item_code, target_warehouse_map)
 			base_gross_qty = max(flt(getattr(sfg, "qty", 0) or 0), 0.0)
-
-			if level <= 0:
-				parent_state = fg_item_states.get(fg_item_code) or {"gross_qty": base_gross_qty, "net_qty": base_gross_qty}
-			else:
-				parent_state = sfg_parent_states.get((fg_item_code, parent_item_code, level - 1)) or {
-					"gross_qty": base_gross_qty,
-					"net_qty": base_gross_qty,
-				}
+			parent_state = _resolve_parent_state_for_sfg(
+				sfg,
+				level,
+				base_gross_qty,
+				sfg_rows_by_level.get(level - 1, []),
+			)
 
 			parent_gross_qty = max(flt(parent_state.get("gross_qty") or 0), 0.0)
 			parent_net_qty = max(flt(parent_state.get("net_qty") or 0), 0.0)
@@ -787,12 +836,6 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 				parent_state["net_qty"] += row_net_qty
 			parent_state["stock_qty"] = max(flt(parent_state.get("stock_qty") or 0), stock_qty)
 
-	bom_component_map = _fetch_bom_component_map([
-		bom_no
-		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
-		if bom_no
-	])
-
 	mr_meta_by_item: dict[str, dict[str, Any]] = {}
 	for mr in mr_rows:
 		item_code = getattr(mr, "item_code", "") or ""
@@ -807,8 +850,11 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 
 	mr_totals: dict[tuple[str, str], dict[str, Any]] = {}
 
-	def _accumulate_mr_from_bom(bom_no: str | None, net_parent_qty: float) -> None:
-		if not bom_no or net_parent_qty <= 0:
+	def _accumulate_mr_from_bom(bom_no: str | None, net_parent_qty: float, gross_parent_qty: float | None = None) -> None:
+		if gross_parent_qty is None:
+			gross_parent_qty = net_parent_qty
+		# Use gross to gate entry creation so covered SFGs still register 0-demand items for display
+		if not bom_no or gross_parent_qty <= 0:
 			return
 
 		for component in bom_component_map.get(bom_no, []):
@@ -825,36 +871,61 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 				"uom": meta.get("uom") or component.get("stock_uom") or "",
 				"item_name": meta.get("item_name") or item_code,
 				"row_name": meta.get("row_name") or "",
-				"required_bom_qty": 0.0,
+				"required_bom_qty": 0.0,  # gross — shown as "Qty As Per BOM"
+				"net_required_qty": 0.0,  # net  — used for planned qty calculation
 			})
-			entry["required_bom_qty"] += max(flt(component.get("qty_per_unit") or 0), 0.0) * net_parent_qty
+			qty_pu = max(flt(component.get("qty_per_unit") or 0), 0.0)
+			entry["required_bom_qty"] += qty_pu * gross_parent_qty
+			entry["net_required_qty"] += qty_pu * net_parent_qty
 
 	for fg in fg_rows:
 		row_key = getattr(fg, "name", None) or f"fg::{getattr(fg, 'item_code', '') or ''}"
-		net_parent_qty = max(flt((fg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
-		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty)
+		row_state = fg_row_states.get(row_key) or {}
+		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
+		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty, gross_parent_qty)
 
 	for sfg in sfg_rows:
 		row_key = getattr(sfg, "name", None) or f"sfg::{getattr(sfg, 'fg_item_code', '') or ''}::{getattr(sfg, 'production_item', '') or ''}::{cint(getattr(sfg, 'bom_level', 0) or 0)}"
-		net_parent_qty = max(flt((sfg_row_states.get(row_key) or {}).get("net_qty") or 0), 0.0)
-		_accumulate_mr_from_bom(getattr(sfg, "bom_no", None), net_parent_qty)
+		row_state = sfg_row_states.get(row_key) or {}
+		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
+		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
+		_accumulate_mr_from_bom(getattr(sfg, "bom_no", None), net_parent_qty, gross_parent_qty)
+
+	# Batch-fetch default warehouses for RM items that have no warehouse set.
+	# In ERPNext 15, default_warehouse lives in the Item Default child table (per company).
+	_items_needing_wh = list({item_code for (item_code, wh) in mr_totals if not wh})
+	_item_default_wh: dict[str, str] = {}
+	if _items_needing_wh:
+		for _row in frappe.db.get_all(
+			"Item Default",
+			filters={"parent": ["in", _items_needing_wh], "default_warehouse": ["!=", ""]},
+			fields=["parent as item_code", "default_warehouse"],
+		):
+			if _row.default_warehouse and _row.item_code not in _item_default_wh:
+				_item_default_wh[_row.item_code] = _row.default_warehouse
 
 	mr_items_out: list[Any] = []
 	for (_, warehouse), data in sorted(mr_totals.items(), key=lambda item: (item[0][0], item[0][1])):
-		stock_qty = _get_projected_qty_for_requirement(data.get("item_code"), warehouse)
-		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)
+		item_code = data.get("item_code") or ""
+		eff_warehouse = warehouse or _item_default_wh.get(item_code, "")
+		stock_qty = _get_projected_qty_for_requirement(item_code, eff_warehouse)
+		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)  # gross
+		net_required_qty = max(flt(data.get("net_required_qty") or 0), 0.0)  # net
 		mr_items_out.append(frappe._dict({
-			"item_code": data.get("item_code") or "",
-			"warehouse": warehouse,
+			"item_code": item_code,
+			"warehouse": eff_warehouse,
 			"uom": data.get("uom") or "",
-			"item_name": data.get("item_name") or data.get("item_code") or "",
+			"item_name": data.get("item_name") or item_code or "",
 			"name": data.get("row_name") or "",
 			"required_bom_qty": required_bom_qty,
-			"quantity": max(required_bom_qty - stock_qty, 0.0),
+			"quantity": max(net_required_qty - stock_qty, 0.0),
 			"actual_qty": stock_qty,
 		}))
 
-	if not mr_items_out:
+	# Only fall back to raw doctype values when no BOM coverage exists at all
+	has_boms = any(getattr(r, "bom_no", None) for r in fg_rows + sfg_rows)
+	if not mr_items_out and not has_boms:
 		for mr in mr_rows:
 			mr_items_out.append(frappe._dict({
 				"item_code": getattr(mr, "item_code", "") or "",
@@ -879,12 +950,18 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 class BulkPreProductionPlan(Document):
 	def validate(self):
 		"""Validate the document before save"""
-		# Calculate total planned qty
 		self.calculate_total_planned_qty()
-		# self.check_machine_available()
-
-		# Set status
+		self._clear_subcontract_machine_fields()
 		self.set_status()
+
+	def _clear_subcontract_machine_fields(self):
+		"""Subcontract rows don't use machines — clear any stale workstation data so conflict checks are not triggered."""
+		for row in list(self.po_items or []):
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				row.custom_workstations_csv = ""
+		for row in list(self.sub_assembly_items or []):
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				row.custom_workstations_csv = ""
 
 	def calculate_total_planned_qty(self):
 		"""Calculate total planned quantity from po_items"""
@@ -945,8 +1022,10 @@ class BulkPreProductionPlan(Document):
 			)
   
 	def check_machine_available(self):
-		for idx, row in enumerate(self.po_items or [], start=1): 
+		for idx, row in enumerate(self.po_items or [], start=1):
 
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				continue
 			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
 				continue
 
@@ -994,8 +1073,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 	
-		for idx, row in enumerate(self.po_items or [], start=1): 
+		for idx, row in enumerate(self.po_items or [], start=1):
 
+			if getattr(row, "manufacturing_type", "") == "Subcontract":
+				continue
+			if not getattr(row, "item_code", None):
+				continue
 			if not row.custom_workstations_csv or not row.planned_start_date or not row.custom_planned_end_date:
 				continue
 
@@ -1003,8 +1086,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.planned_start_date)
 			new_end = get_datetime(row.custom_planned_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.sub_assembly_items:
 					if not item.custom_workstation:
@@ -1036,8 +1121,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 		
-		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1):
 
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				continue
+			if not getattr(row, "production_item", None):
+				continue
 			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
 				continue
 
@@ -1045,8 +1134,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.schedule_date)
 			new_end = get_datetime(row.custom_schedule_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.po_items:
 					if not item.custom_workstation:
@@ -1078,8 +1169,12 @@ class BulkPreProductionPlan(Document):
 							"""
 						))
 	
-		for idx, row in enumerate(self.sub_assembly_items or [], start=1): 
+		for idx, row in enumerate(self.sub_assembly_items or [], start=1):
 
+			if getattr(row, "type_of_manufacturing", "") == "Subcontract":
+				continue
+			if not getattr(row, "production_item", None):
+				continue
 			if not row.custom_workstations_csv or not row.schedule_date or not row.custom_schedule_end_date:
 				continue
 
@@ -1087,8 +1182,10 @@ class BulkPreProductionPlan(Document):
 			new_start = get_datetime(row.schedule_date)
 			new_end = get_datetime(row.custom_schedule_end_date)
 
-			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name"])
+			production_plans = frappe.get_all("Production Plan", filters={"docstatus": ["!=", 2]}, fields=["name", "custom_bulk_pre_production_plan"])
 			for pp in production_plans:
+				if pp.custom_bulk_pre_production_plan == self.name:
+					continue
 				doc = frappe.get_doc("Production Plan", pp.name)
 				for item in doc.sub_assembly_items:
 					if not item.custom_workstation:
@@ -2234,13 +2331,24 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
 				b0_end     = deadline_dt  # visual chain anchor unchanged
 			else:
-				# Normal backward-schedule from SO delivery deadline
-				mfg_deadline = _snap_start(_working_day_subtract(deadline_dt, grn_days, holidays), shift_config) \
-				               if grn_days > 0 else deadline_dt
-				b0_start   = _snap_start(_backward_schedule(mfg_deadline, batch0_prod_mins, shift_config), shift_config)
+				# Backward-schedule the ENTIRE batch chain from deadline so the LAST
+				# batch ends at the deadline (not just batch-0 pinned to it).
+				# Iterate backwards: last batch → first batch, each peeling off its
+				# production time + GRN + PM gap from the rolling deadline.
+				_bwd_dl   = deadline_dt
+				_bi_start = deadline_dt  # fallback if batches is empty
+				for _bi in reversed(range(len(batches))):
+					_bq = batches[_bi]
+					_bp = (_bq / real_spm) if real_spm > 0 else shift_minutes
+					_grn_dl   = _snap_start(_working_day_subtract(_bwd_dl, grn_days, holidays), shift_config) \
+					            if grn_days > 0 else _bwd_dl
+					_bi_start = _snap_start(_backward_schedule(_grn_dl, _bp, shift_config), shift_config)
+					if _bi > 0:
+						_bwd_dl = _working_day_subtract(_bi_start, pm_days, holidays) if pm_days > 0 else _bi_start
+				b0_start   = _bi_start
 				b0_mfg_end = shift_aware_forward_schedule(b0_start, batch0_prod_mins, shift_config)
-				# Force b0_end = deadline_dt so the chain is visually tight
-				b0_end     = deadline_dt
+				b0_end     = _snap_end(_working_day_add(b0_mfg_end, grn_days, holidays), shift_config) \
+				             if grn_days > 0 else b0_mfg_end
 
 			mfg_days_b0 = math.ceil(batch0_qty / per_day_qty) if per_day_qty > 0 else 1
 			hc_b0 = 0
@@ -2472,6 +2580,43 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
 
+		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
+		# Recompute raw material requirements from the final schedule production qtys.
+		# SFGs producing 0 units (fully stock-covered) contribute 0 RM demand.
+		if mr_rows_out and sfg_chain_out:
+			_chain_bom_nos_r = [d.get("bom_no") for d in sfg_chain_out if d.get("bom_no")]
+			_chain_comp_r    = _fetch_bom_component_map(_chain_bom_nos_r) if _chain_bom_nos_r else {}
+			_sfg_rm_req: dict[str, float] = {}
+			_sfg_rm_known: set[str] = set()
+			for _sfg_e in sfg_chain_out:
+				_sfg_bom_r = _sfg_e.get("bom_no", "")
+				_sfg_prod  = sum(flt(b.get("qty", 0)) for b in (_sfg_e.get("batches") or []))
+				for _c in _chain_comp_r.get(_sfg_bom_r, []):
+					if _c.get("child_bom_no"):
+						continue
+					_rc = _c.get("item_code", "")
+					if _rc:
+						_sfg_rm_known.add(_rc)
+						_sfg_rm_req[_rc] = _sfg_rm_req.get(_rc, 0.0) + flt(_c.get("qty_per_unit", 0)) * _sfg_prod
+			for _mr_r in mr_rows_out:
+				_ic_r = _mr_r.get("item_code", "")
+				if _ic_r not in _sfg_rm_known:
+					continue
+				_bom_qty_r = _sfg_rm_req.get(_ic_r, 0.0)
+				_stock_r   = flt(_mr_r.get("actual_qty", 0))
+				# Only update planned qty; preserve required_bom_qty (gross) for popup display
+				_mr_r["qty"] = max(_bom_qty_r - _stock_r, 0.0)
+
+		# ── Level-0 SFG cumulative availability timeline (for pipeline FG scheduling) ──
+		# sfg_chain_out is deepest-first; last entry = level-0 (direct FG input)
+		_sfg_l0_timeline: list[tuple[datetime, float]] = []
+		if sfg_chain_out:
+			_sfg_l0_batches = sfg_chain_out[-1].get("batches") or []
+			_cum_sfg = 0.0
+			for _sb in _sfg_l0_batches:
+				_cum_sfg += flt(_sb["qty"])
+				_sfg_l0_timeline.append((get_datetime(_sb["end_date"]), _cum_sfg))
+
 		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
 
 		fg_rows_out: list[dict] = []
@@ -2479,7 +2624,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		_fg_bom_cache = _fetch_bom_operations_cache(_fg_bom_nos) if _fg_bom_nos else {}
 
 		fg_rows_sorted =  items["fg"]
-		
+
 		prev_fg_row0_end: str | None = None
 		for fg_idx, fg in enumerate(fg_rows_sorted):	
 			fg.spm = 0
@@ -2574,13 +2719,41 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 				batch_prod_mins = (batch_qty / real_spm) if real_spm > 0 else (mfg_days * shift_minutes)
 
-				# if fg.manufacturing_type == "Subcontract":
-				# 	mfg_end_dt = start_dt + timedelta(days=mfg_days)
-				# else:
-				# 	mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-    
-				mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
-    
+				# Pipeline-aware mfg_end: process available SFG immediately, pause when
+				# material runs out, resume when the next SFG batch arrives.
+				if _sfg_l0_timeline and real_spm > 0:
+					_fg_consumed = sum(flt(br["qty"]) for br in batch_rows)
+					_sfg_avail = 0.0
+					_sfg_future: list[tuple[datetime, float]] = []
+					_prev_cum = 0.0
+					for _end_dt, _cum_qty in _sfg_l0_timeline:
+						_batch_chunk = _cum_qty - _prev_cum
+						if _end_dt <= start_dt:
+							_sfg_avail += _batch_chunk
+						else:
+							_sfg_future.append((_end_dt, _batch_chunk))
+						_prev_cum = _cum_qty
+					_sfg_avail = max(0.0, _sfg_avail - _fg_consumed)
+					_cur_time = start_dt
+					_remaining = batch_qty
+					_future_copy = list(_sfg_future)
+					while _remaining > 0:
+						if _sfg_avail > 0:
+							_chunk = min(_remaining, _sfg_avail)
+							_cur_time = shift_aware_forward_schedule(_cur_time, _chunk / real_spm, shift_config)
+							_remaining -= _chunk
+							_sfg_avail -= _chunk
+						elif _future_copy:
+							_next_end, _next_qty = _future_copy.pop(0)
+							_cur_time = max(_cur_time, _next_end)
+							_sfg_avail += _next_qty
+						else:
+							_cur_time = shift_aware_forward_schedule(_cur_time, _remaining / real_spm, shift_config)
+							_remaining = 0
+					mfg_end_dt = _cur_time
+				else:
+					mfg_end_dt = shift_aware_forward_schedule(start_dt, batch_prod_mins, shift_config)
+
 				if fg.manufacturing_type == "Subcontract":
 					end_dt = mfg_end_dt + timedelta(days=grn_days)
 				else:
@@ -3227,6 +3400,33 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			sfg_chain_out = sfg_chain_rebuilt
 			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
 			top_sfg_batch0_end = str(fg_start_override)
+
+		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
+		# Recompute raw material requirements from the final schedule production qtys.
+		# SFGs producing 0 units (fully stock-covered) contribute 0 RM demand.
+		if mr_rows_out and sfg_chain_out:
+			_chain_bom_nos_r = [d.get("bom_no") for d in sfg_chain_out if d.get("bom_no")]
+			_chain_comp_r    = _fetch_bom_component_map(_chain_bom_nos_r) if _chain_bom_nos_r else {}
+			_sfg_rm_req: dict[str, float] = {}
+			_sfg_rm_known: set[str] = set()
+			for _sfg_e in sfg_chain_out:
+				_sfg_bom_r = _sfg_e.get("bom_no", "")
+				_sfg_prod  = sum(flt(b.get("qty", 0)) for b in (_sfg_e.get("batches") or []))
+				for _c in _chain_comp_r.get(_sfg_bom_r, []):
+					if _c.get("child_bom_no"):
+						continue
+					_rc = _c.get("item_code", "")
+					if _rc:
+						_sfg_rm_known.add(_rc)
+						_sfg_rm_req[_rc] = _sfg_rm_req.get(_rc, 0.0) + flt(_c.get("qty_per_unit", 0)) * _sfg_prod
+			for _mr_r in mr_rows_out:
+				_ic_r = _mr_r.get("item_code", "")
+				if _ic_r not in _sfg_rm_known:
+					continue
+				_bom_qty_r = _sfg_rm_req.get(_ic_r, 0.0)
+				_stock_r   = flt(_mr_r.get("actual_qty", 0))
+				# Only update planned qty; preserve required_bom_qty (gross) for popup display
+				_mr_r["qty"] = max(_bom_qty_r - _stock_r, 0.0)
 
 		# ── FG: start = top_sfg_batch0_end (already set above) ─────────────────
 
@@ -4766,19 +4966,26 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 def _run_machine_availability_check_for_production_plan(pp_doc):
 	"""Reuse Bulk PP machine validation for Production Plan rows before save."""
 	validation_doc = frappe._dict({
+		"name": getattr(pp_doc, "custom_bulk_pre_production_plan", None) or "",
 		"po_items": [],
 		"sub_assembly_items": [],
 	})
 
 	for row in pp_doc.po_items or []:
+		mfg_type = getattr(row, "custom_manufacturing_type", "") or getattr(row, "manufacturing_type", "") or ""
 		validation_doc.po_items.append(frappe._dict({
+			"item_code": getattr(row, "item_code", None),
+			"manufacturing_type": mfg_type,
 			"custom_workstations_csv": row.custom_workstation,
 			"planned_start_date": row.planned_start_date,
 			"custom_planned_end_date": row.custom_planned_end_date,
 		}))
 
 	for row in pp_doc.sub_assembly_items or []:
+		mfg_type = getattr(row, "type_of_manufacturing", "") or getattr(row, "custom_manufacturing_type", "") or ""
 		validation_doc.sub_assembly_items.append(frappe._dict({
+			"production_item": getattr(row, "production_item", None),
+			"type_of_manufacturing": mfg_type,
 			"custom_workstations_csv": row.custom_workstation,
 			"schedule_date": row.schedule_date,
 			"custom_schedule_end_date": row.custom_schedule_end_date,

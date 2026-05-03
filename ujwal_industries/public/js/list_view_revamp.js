@@ -162,67 +162,26 @@
 		const salesOrders = docs.map((doc) => doc.name).filter(Boolean);
 		if (!salesOrders.length) return Promise.resolve();
 
-		return Promise.all([
-			frappe.db.get_list("Sales Order Item", {
-				filters: {
-					parenttype: "Sales Order",
-					parent: ["in", salesOrders],
-				},
-				fields: ["parent", "item_code", "item_name"],
-				order_by: "idx asc",
-				limit_page_length: 0,
-			}),
-			frappe.db.get_list("Sales Order", {
-				filters: {
-					name: ["in", salesOrders],
-				},
-				fields: ["name", "customer", "customer_name", "customer_name_"],
-				limit_page_length: salesOrders.length,
-			}),
-		]).then(([items, salesOrderRows]) => {
+		return frappe.call({
+			method: "ujwal_industries.api.sales_order_tracking.get_so_items_for_list",
+			args: { sales_orders: salesOrders },
+		}).then((r) => {
+			const items = r.message || [];
 			const itemsBySalesOrder = {};
-			(items || []).forEach((item) => {
+			items.forEach((item) => {
 				if (!item.parent) return;
 				itemsBySalesOrder[item.parent] = itemsBySalesOrder[item.parent] || [];
 				itemsBySalesOrder[item.parent].push(item);
 			});
 
-			const salesOrderByName = {};
-			const customers = [];
-			(salesOrderRows || []).forEach((row) => {
-				salesOrderByName[row.name] = row;
-				if (row.customer) customers.push(row.customer);
-			});
+			add_sales_order_headers(listview);
 
-			const uniqueCustomers = [...new Set(customers)];
-			const customerQuery = uniqueCustomers.length
-				? frappe.db.get_list("Customer", {
-					filters: {
-						name: ["in", uniqueCustomers],
-					},
-					fields: ["name", "custom_customer_names", "customer_name"],
-					limit_page_length: uniqueCustomers.length,
-				})
-				: Promise.resolve([]);
-
-			return customerQuery.then((customerRows) => {
-				const customerByName = {};
-				(customerRows || []).forEach((row) => {
-					customerByName[row.name] = row;
-				});
-
-				add_sales_order_headers(listview);
-
-				docs.forEach((doc) => {
-					const salesOrderRow = salesOrderByName[doc.name] || doc;
-					const customerRow = customerByName[salesOrderRow.customer] || {};
-					const itemsForSalesOrder = itemsBySalesOrder[doc.name] || [];
-
-					add_sales_order_row_columns(listview, doc.name, {
-						custom_customer_names: customerRow.custom_customer_names || salesOrderRow.customer_name_ || salesOrderRow.customer_name || customerRow.customer_name || "",
-						item_code: get_unique_values(itemsForSalesOrder, "item_code").join(", "),
-						item_name: get_unique_values(itemsForSalesOrder, "item_name").join(", "),
-					});
+			docs.forEach((doc) => {
+				const itemsForSalesOrder = itemsBySalesOrder[doc.name] || [];
+				add_sales_order_row_columns(listview, doc.name, {
+					custom_customer_names: doc.customer_name_ || doc.customer_name || "",
+					item_code: get_unique_values(itemsForSalesOrder, "item_code").join(", "),
+					item_name: get_unique_values(itemsForSalesOrder, "item_name").join(", "),
 				});
 			});
 		});
