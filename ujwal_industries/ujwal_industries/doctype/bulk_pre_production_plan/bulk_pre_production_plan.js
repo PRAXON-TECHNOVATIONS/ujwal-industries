@@ -1,6 +1,39 @@
 // Copyright (c) 2026, Ujwal Industries and contributors
 // For license information, please see license.txt
 
+frappe.ui.form.on('Bulk PP Sales Order', { 
+    sales_order: function(frm, cdt, cdn) {
+        let row = locals[cdt][cdn];
+
+        if (!row.sales_order) {
+            frappe.model.set_value(cdt, cdn, 'items_details', '');
+            return;
+        }
+
+        frappe.call({
+            method: 'frappe.client.get',
+            args: {
+                doctype: 'Sales Order',
+                name: row.sales_order
+            },
+            callback: function(r) {
+                if (r.message && r.message.items) {
+                    let items = r.message.items;
+
+                    let lines = items.map(item => {
+						return `Item - ${item.item_code}, Qty - ${item.qty}`;
+					});
+
+                    let details = lines.join('\n');
+
+                    frappe.model.set_value(cdt, cdn, 'items_details', details);
+                }
+            }
+        });
+    }
+});
+
+
 frappe.ui.form.on('Bulk Pre Production Plan', {
 
 	onload(frm) {
@@ -215,6 +248,34 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 						message: __('{0} Sales Orders loaded', [r.message.sales_orders.length]),
 						indicator: 'green'
 					});
+
+
+					// Fetch item details for each sales order AFTER rows added
+					let rows = frm.doc.sales_orders;
+					if (rows && rows.length > 0) {
+						rows.forEach(row => {
+							if (!row.sales_order) return;
+
+							frappe.call({
+								method: 'frappe.client.get',
+								args: {
+									doctype: 'Sales Order',
+									name: row.sales_order
+								},
+								callback: function(res) {
+									if (res.message && res.message.items) {
+										let lines = res.message.items.map(item => {
+											return `Item - ${item.item_code}, Qty - ${item.qty}`;
+										});
+										frappe.model.set_value(row.doctype, row.name, 'items_details', lines.join('\n'));
+										frm.refresh_field('sales_orders');
+									}
+								}
+							});
+
+						})
+					}
+
 				}
 			}
 		});

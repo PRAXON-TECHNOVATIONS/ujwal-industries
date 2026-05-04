@@ -7,6 +7,7 @@
  "field_order": [
   "sales_order",
   "customer",
+  "customer_name",
   "delivery_date",
   "grand_total",
   "status",
@@ -18,7 +19,9 @@
   "selected_items",
   "items_generated",
   "merged",
-  "custom_pp_created"
+  "custom_pp_created",
+  "order_type",
+  "items_details"
  ],
  "fields": [
   {
@@ -129,12 +132,27 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Merged"
+  },
+  {
+   "fetch_from": "sales_order.customer_name_",
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "items_details",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Items Details",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-03-25 01:10:09.323508",
+ "modified": "2026-05-04 13:03:16.018030",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk PP Sales Order",
