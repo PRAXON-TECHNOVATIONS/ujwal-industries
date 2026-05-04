@@ -83,7 +83,7 @@ def has_permission_query_workstation(user: str) -> str | None:
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access - can see all workstations
         return None
 
@@ -133,7 +133,7 @@ def has_permission_query_job_card(user: str) -> str | None:
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access - can see all job cards
         return None
 
@@ -184,7 +184,7 @@ def has_permission_workstation(doc: Document, user: str, permission_type: str) -
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access
         return True
 
@@ -222,7 +222,7 @@ def has_permission_job_card(doc: Document, user: str, permission_type: str) -> b
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access
         return True
 
