@@ -776,6 +776,7 @@ function setup_production_tabs(frm) {
 
 	html_field.$wrapper.html(`
 		${toolbar_html}
+		<div id="bpp-disclaimer-banner"></div>
 		<div style="background:#fff; border:1px solid #E2E8F0; border-radius:8px;
 			box-shadow:0 1px 4px rgba(0,0,0,.06); overflow:hidden;">
 			<ul class="nav nav-tabs" id="bppTabs"
@@ -876,7 +877,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 				}
 			}
 		});
-	}else if (mode === 'Parallel'){
+	} else if (mode === 'Parallel') {
 		// Parallel: recalculate full schedule + apply dates to child rows
 		frappe.show_alert({ message: __('Calculating parallel batch schedule…'), indicator: 'blue' });
 		frappe.call({
@@ -892,8 +893,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 				}
 			}
 		});
-	}
-	else {
+	} else {
 		let merged_rows = (frm.doc.sales_orders || []).filter(row => row.merged);
 
 		if (merged_rows.length < 2) {
@@ -901,7 +901,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 			return;
 		}
 		let so_names = merged_rows.map(row => row.sales_order).filter(Boolean);
-		
+
 		// consolidated: recalculate full schedule + apply dates to child rows
 		frappe.show_alert({ message: __('Calculating consolidated batch schedule…'), indicator: 'blue' });
 		frappe.call({
@@ -909,7 +909,7 @@ function _on_calculate_click(frm, so_map, $wrapper) {
 			args: { docname: frm.doc.name, planning_mode: 'Consolidated' },
 			callback(r) {
 				if (r.message) {
-					frappe.show_alert({ message: __('consolidated batch schedule calculated'), indicator: 'green' });
+					frappe.show_alert({ message: __('Consolidated batch schedule calculated'), indicator: 'green' });
 					frm.reload_doc().then(() => {
 						const schedule = JSON.parse(frm.doc.custom_batch_schedule || '{}');
 						_render_all_grids(frm, _build_so_map(frm), 'Consolidated', $wrapper, schedule);
@@ -981,7 +981,7 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 
 				if (mode === 'Sequential') {
 					_render_sequential_grid(frm, so_data, $grid_wrap[0]);
-				} 
+				}
 				else if(mode == 'Parallel') {
 					const so_par = par_data ? par_data[so_data.so_name] : null;
 					_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
@@ -990,7 +990,113 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 					_render_parallel_grid(frm, so_data, so_par, $grid_wrap[0]);
 				}
 			});
+
+			_update_delivery_disclaimer(frm, so_map, mode, par_data, $wrapper);
 		});
+}
+
+
+// ---------------------------------------------------------------------------
+// Delivery Disclaimer — warns when FG end date exceeds SO delivery date
+// ---------------------------------------------------------------------------
+
+function _update_delivery_disclaimer(frm, so_map, mode, par_data, $wrapper) {
+	const $banner = $wrapper.find('#bpp-disclaimer-banner');
+	if (!$banner.length) return;
+
+	const overruns = [];
+
+	Object.values(so_map).forEach(so_data => {
+		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
+		if (!so_row.delivery_date) return;
+
+		const delivery_ts = new Date(so_row.delivery_date).setHours(0, 0, 0, 0);
+		const exceeded_items = [];
+
+		if (mode === 'Sequential') {
+			(so_data.fg || []).forEach(item => {
+				if (!item.custom_planned_end_date) return;
+				const end_ts = new Date(item.custom_planned_end_date).setHours(0, 0, 0, 0);
+				if (end_ts > delivery_ts) {
+					exceeded_items.push({
+						item_code: item.item_code,
+						end_date: item.custom_planned_end_date
+					});
+				}
+			});
+		} else {
+			const so_par = par_data ? par_data[so_data.so_name] : null;
+			if (so_par) {
+				(so_par.fg || []).forEach(fg => {
+					const batches = fg.batches || [];
+					const last_end = batches[batches.length - 1]?.end_date;
+					if (!last_end) return;
+					const end_ts = new Date(last_end).setHours(0, 0, 0, 0);
+					if (end_ts > delivery_ts) {
+						exceeded_items.push({
+							item_code: fg.item_code,
+							end_date: last_end
+						});
+					}
+				});
+			}
+		}
+
+		if (exceeded_items.length) {
+			overruns.push({
+				so_name: so_data.so_name,
+				delivery_date: so_row.delivery_date,
+				items: exceeded_items
+			});
+		}
+	});
+
+	if (!overruns.length) {
+		$banner.html('');
+		return;
+	}
+
+	const rows_html = overruns.map(o => {
+		const fmt_del = frappe.format(o.delivery_date, { fieldtype: 'Date' });
+		const item_tags = o.items.map(i => {
+			const fmt_end = frappe.format(i.end_date, { fieldtype: 'Date' });
+			return `<span style="display:inline-flex;align-items:center;gap:5px;
+				background:#FEF3C7;border:1px solid #FCD34D;border-radius:4px;
+				padding:2px 8px;font-size:11px;font-weight:700;color:#92400E;">
+				${frappe.utils.escape_html(i.item_code)}
+				<span style="font-weight:400;color:#B45309;">ends ${fmt_end}</span>
+			</span>`;
+		}).join('');
+		return `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px;">
+			<span style="font-weight:700;color:#7C2D12;font-size:12px;min-width:130px;">
+				${frappe.utils.escape_html(o.so_name)}
+			</span>
+			<span style="color:#9A3412;font-size:11px;">Delivery: <strong>${fmt_del}</strong></span>
+			<span style="color:#CBD5E1;font-size:11px;">&rarr;</span>
+			${item_tags}
+		</div>`;
+	}).join('');
+
+	$banner.html(`
+		<div style="
+			background:#FFF7ED;border:1.5px solid #FB923C;border-radius:8px;
+			padding:12px 16px;margin-bottom:12px;
+			display:flex;align-items:flex-start;gap:12px;">
+			<i class="fa fa-exclamation-triangle"
+				style="color:#EA580C;font-size:20px;margin-top:1px;flex-shrink:0;"></i>
+			<div style="flex:1;">
+				<div style="font-weight:700;color:#9A3412;font-size:13px;margin-bottom:8px;
+					display:flex;align-items:center;gap:6px;">
+					Delivery Date Exceeded &mdash; Please Reconsider Schedule
+				</div>
+				<div style="font-size:12px;line-height:1.8;">${rows_html}</div>
+				<div style="margin-top:8px;font-size:11px;color:#C2410C;font-style:italic;">
+					The above finished goods production end date(s) exceed the sales order delivery date.
+					Recalculate or adjust the schedule accordingly.
+				</div>
+			</div>
+		</div>
+	`);
 }
 
 

@@ -2489,24 +2489,37 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		mr_rows_out: list[dict] = []
 		for mr in effective_mr_items:
 			item_code  = mr.item_code
-			grn_days   = int(grn_map.get(item_code, 0))
-			lead_days  = int(lead_map.get(item_code, 0))
-			total_days = grn_days + lead_days
-
-			# mr_suppliers = frappe.get_all("Item Subcontracting Supplier", filters={"parent": item_code}, fields=["supplier"])
-			# mr_supplier_list = []
-			# for d in mr_suppliers:
-			# 	supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-			# 	label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
-			# 	mr_supplier_list.append(label)
+			mr_qty     = flt(mr.quantity)
 
 			mr_suppliers = frappe.get_all("Supplier", fields=["name", "custom_supplier_names"])
 			mr_supplier_list = []
 			for d in mr_suppliers:
-				# supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-				label = f"{d.name} - {d.custom_supplier_names}" 
+				label = f"{d.name} - {d.custom_supplier_names}"
 				mr_supplier_list.append(label)
-   
+
+			# If planned qty is 0, no ordering needed — skip all date/lead calculations
+			if mr_qty == 0:
+				mr_rows_out.append({
+					"item_code":  item_code,
+					"item_name":  mr.item_name,
+					"qty":        0.0,
+					"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or 0),
+					"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
+					"uom":        mr.uom or "",
+					"grn_days":   0,
+					"lead_days":  0,
+					"start_date": "",
+					"end_date":   "",
+					"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+					"supplier_list": mr_supplier_list,
+					"row_name":   mr.name,
+				})
+				continue
+
+			grn_days   = int(grn_map.get(item_code, 0))
+			lead_days  = int(lead_map.get(item_code, 0))
+			total_days = grn_days + lead_days
+
 			if deepest_sfg_batch0_start:
 				# Ideal: receive exactly when deepest SFG starts
 				rm_end_ideal   = deepest_sfg_batch0_start
@@ -2531,7 +2544,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			mr_rows_out.append({
 				"item_code":  item_code,
 				"item_name":  mr.item_name,
-				"qty":        flt(mr.quantity),
+				"qty":        mr_qty,
 				"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or mr.quantity or 0),
 				"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
 				"uom":        mr.uom or "",
@@ -2540,7 +2553,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"start_date": str(rm_start),
 				"end_date":   str(rm_end),
 				"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
-				"supplier_list": mr_supplier_list, 
+				"supplier_list": mr_supplier_list,
 				"row_name":   mr.name,
 			})
 
@@ -2679,20 +2692,22 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
    
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm = round(flt(spm_details.get("spm") or 0) ,2)
-				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
-				per_day_qty = per_shift_qty * shift_count
-			else:
-				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				display_spm    = round(flt(spm_details.get("spm") or 0) ,2)
+				per_shift_qty  = flt(spm_details.get("subcontract_per_shift_qty") or 0)
+				per_day_qty    = per_shift_qty * shift_count
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
-				per_shift_qty = real_spm * minutes_per_shift
-				per_day_qty = per_shift_qty * shift_count
+				real_spm       = per_shift_qty / minutes_per_shift if minutes_per_shift > 0 else display_spm
+			else:
+				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				per_shift_qty  = real_spm * minutes_per_shift
+				per_day_qty    = per_shift_qty * shift_count
 
 			# Split into batches.
 			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
 			split_qty = tool_load_qty or per_day_qty
 			batches = _split_batches(sales_qty, split_qty)
-   
+
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
 				mfg_days = 0
@@ -2700,9 +2715,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				if fg.manufacturing_type == "Subcontract" and display_spm:
 					total_minutes = batch_qty / display_spm
 					mfg_days =  round(total_minutes / 600 , 2)
-				else: 
+				else:
 					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
-     
+
 				# Start date
 				if b_idx == 0:
 					if fg_idx == 0:
@@ -2824,10 +2839,21 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"batches":                batch_rows,
 			})
 
+		# Check if FG schedule exceeds the SO delivery deadline
+		_deadline_exceeded = False
+		if fg_rows_out:
+			_last_fg_batches = fg_rows_out[-1].get("batches") or []
+			if _last_fg_batches:
+				_last_fg_end = get_datetime(_last_fg_batches[-1]["end_date"])
+				if _last_fg_end > fg_deadline_dt:
+					_deadline_exceeded = True
+
 		result[so_name] = {
-			"fg":        fg_rows_out,
-			"sfg_chain": sfg_chain_out,
-			"mr":        mr_rows_out,
+			"fg":               fg_rows_out,
+			"sfg_chain":        sfg_chain_out,
+			"mr":               mr_rows_out,
+			"deadline_exceeded": _deadline_exceeded,
+			"delivery_date":    str(fg_deadline_dt.date()),
 		}
 
 		# ── Update rolling anchor for next SO in the chain ─────────────────────
@@ -3329,6 +3355,33 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		mr_rows_out: list[dict] = []
 		for mr in effective_mr_items:
 			item_code  = mr.item_code
+			mr_qty     = flt(mr.quantity)
+
+			mr_suppliers = frappe.get_all("Supplier", fields=["name", "custom_supplier_names"])
+			mr_supplier_list = []
+			for d in mr_suppliers:
+				label = f"{d.name} - {d.custom_supplier_names}"
+				mr_supplier_list.append(label)
+
+			# If planned qty is 0, no ordering needed — skip all date/lead calculations
+			if mr_qty == 0:
+				mr_rows_out.append({
+					"item_code":  item_code,
+					"item_name":  mr.item_name or item_code,
+					"qty":        0.0,
+					"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or 0),
+					"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
+					"uom":        mr.uom or "",
+					"grn_days":   0,
+					"lead_days":  0,
+					"start_date": "",
+					"end_date":   "",
+					"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+					"supplier_list": mr_supplier_list,
+					"row_name":   mr.name,
+				})
+				continue
+
 			grn_days   = int(grn_map.get(item_code, 0))
 			lead_days  = int(lead_map.get(item_code, 0))
 			total_days = grn_days + lead_days
@@ -3357,8 +3410,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			mr_rows_out.append({
 				"item_code":  item_code,
 				"item_name":  mr.item_name or item_code,
-				"qty":        flt(mr.quantity),
-				"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or mr.quantity or 0),
+				"qty":        mr_qty,
+				"required_bom_qty": flt(getattr(mr, "required_bom_qty", 0) or mr_qty or 0),
 				"actual_qty": flt(getattr(mr, "actual_qty", 0) or 0),
 				"uom":        mr.uom or "",
 				"grn_days":   grn_days,
@@ -3366,6 +3419,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"start_date": str(rm_start),
 				"end_date":   str(rm_end),
 				"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+				"supplier_list": mr_supplier_list,
 				"row_name":   mr.name,
 			})
 
@@ -3478,21 +3532,22 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			real_spm = (display_spm / shift_count) if shift_count > 0 else display_spm
 
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm = round(flt(spm_details.get("spm") or 0),2)
-				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
-
-				per_day_qty = per_shift_qty * shift_count
-			else:
-				display_spm = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				display_spm    = round(flt(spm_details.get("spm") or 0), 2)
+				per_shift_qty  = flt(spm_details.get("subcontract_per_shift_qty") or 0)
+				per_day_qty    = per_shift_qty * shift_count
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
-				per_shift_qty = real_spm * minutes_per_shift
-				per_day_qty = per_shift_qty * shift_count
+				real_spm       = per_shift_qty / minutes_per_shift if minutes_per_shift > 0 else display_spm
+			else:
+				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				per_shift_qty  = real_spm * minutes_per_shift
+				per_day_qty    = per_shift_qty * shift_count
 
 			# Split into batches.
 			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
 			split_qty = tool_load_qty or per_day_qty
 			batches = _split_batches(sales_qty, split_qty)
-   
+
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
 				mfg_days = 0
@@ -3500,9 +3555,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				if fg.manufacturing_type == "Subcontract" and display_spm:
 					total_minutes = batch_qty / display_spm
 					mfg_days =  round(total_minutes / 600 , 2)
-				else: 
+				else:
 					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
-     
+
 				# Start date
 				if b_idx == 0:
 					if fg_idx == 0:
@@ -3589,10 +3644,21 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"batches":                batch_rows,
 			})
 
+		# Check if FG schedule exceeds the SO delivery deadline
+		_deadline_exceeded = False
+		if fg_rows_out:
+			_last_fg_batches = fg_rows_out[-1].get("batches") or []
+			if _last_fg_batches:
+				_last_fg_end = get_datetime(_last_fg_batches[-1]["end_date"])
+				if _last_fg_end > fg_deadline_dt:
+					_deadline_exceeded = True
+
 		result[so_name] = {
-			"fg":        fg_rows_out,
-			"sfg_chain": sfg_chain_out,
-			"mr":        mr_rows_out,
+			"fg":               fg_rows_out,
+			"sfg_chain":        sfg_chain_out,
+			"mr":               mr_rows_out,
+			"deadline_exceeded": _deadline_exceeded,
+			"delivery_date":    str(fg_deadline_dt.date()),
 		}
 	return result
 
