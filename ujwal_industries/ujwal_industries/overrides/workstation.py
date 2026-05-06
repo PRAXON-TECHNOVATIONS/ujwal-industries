@@ -206,6 +206,38 @@ def get_job_cards_with_operator(workstation: str) -> list:
 
 
 @frappe.whitelist()
+def start_job_with_operator(job_card: str, employee: str, from_time: str) -> dict[str, str]:
+    """
+    Properly start a Job Card from the Workstation view.
+
+    Delegates to our make_time_log wrapper (which validates material availability,
+    tool maintenance, etc.) passing `employees` in the format ERPNext's add_time_log
+    expects.  This ensures:
+      - started_time is set on the Job Card
+      - Status becomes "Work In Progress"
+      - A single correct time log row is created with the chosen operator
+      - The employee Table MultiSelect field is populated
+    """
+    import json
+    from ujwal_industries.ujwal_industries.overrides.job_card import (
+        make_time_log_with_material_check,
+    )
+
+    args = {
+        "job_card_id": job_card,
+        "status": "Work In Progress",
+        "start_time": from_time,
+        "employees": [{"employee": employee}],
+    }
+    make_time_log_with_material_check(json.dumps(args))
+
+    employee_name: str = (
+        frappe.db.get_value("Employee", employee, "employee_name") or employee
+    )
+    return {"employee": employee, "employee_name": employee_name}
+
+
+@frappe.whitelist()
 def change_operator(job_card: str, employee: str) -> dict[str, str]:
     """
     Replace the operator on the currently active time log of a Job Card and
@@ -214,7 +246,6 @@ def change_operator(job_card: str, employee: str) -> dict[str, str]:
     """
     doc = frappe.get_doc("Job Card", job_card)
 
-    # Update the active time log
     for row in doc.time_logs:
         if not row.to_time:
             row.employee = employee
@@ -229,17 +260,6 @@ def change_operator(job_card: str, employee: str) -> dict[str, str]:
         frappe.db.get_value("Employee", employee, "employee_name") or employee
     )
     return {"employee": employee, "employee_name": employee_name}
-
-
-@frappe.whitelist()
-def set_job_card_employee(job_card: str, employee: str) -> None:
-    """
-    Set only the employee Table MultiSelect field on a Job Card.
-    Called after ERPNext's start_job which fills time_logs but not this field.
-    """
-    doc = frappe.get_doc("Job Card", job_card)
-    doc.set("employee", [{"employee": employee}])
-    doc.save(ignore_permissions=True)
 
 
 def has_permission_workstation(doc: Document, user: str, permission_type: str) -> bool:
