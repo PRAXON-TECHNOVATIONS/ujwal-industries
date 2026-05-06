@@ -488,8 +488,8 @@ def _apply_parallel_dates_to_rows(doc: Document, schedule: dict) -> None:
 			if not row_name:
 				continue
 			frappe.db.set_value("Bulk PP Material Request Item", row_name, {
-				"custom_start_date": mr_data.get("start_date"),
-				"schedule_date":     mr_data.get("end_date"),
+				"custom_start_date": mr_data.get("start_date") or None,
+				"schedule_date":     mr_data.get("end_date") or None,
 			})
 
 

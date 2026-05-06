@@ -83,7 +83,7 @@ def has_permission_query_workstation(user: str) -> str | None:
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access - can see all workstations
         return None
 
@@ -133,7 +133,7 @@ def has_permission_query_job_card(user: str) -> str | None:
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access - can see all job cards
         return None
 
@@ -166,6 +166,102 @@ def has_permission_query_job_card(user: str) -> str | None:
     return f"`tabJob Card`.`workstation` IN ({', '.join(repr(w) for w in workstation_names)})"
 
 
+@frappe.whitelist()
+def get_job_cards_with_operator(workstation: str) -> list:
+    """
+    Wrapper around ERPNext's get_job_cards that adds employee_name to each time log.
+    Used by the Workstation dashboard to show the current operator name.
+    """
+    from erpnext.manufacturing.doctype.workstation.workstation import get_job_cards
+
+    job_cards = get_job_cards(workstation)
+    if not job_cards:
+        return job_cards
+
+    # Collect all employee IDs across all time logs
+    employee_ids = set()
+    for card in job_cards:
+        for log in card.get("time_logs") or []:
+            if log.get("employee"):
+                employee_ids.add(log["employee"])
+
+    # Bulk fetch employee names
+    employee_names: dict[str, str] = {}
+    if employee_ids:
+        rows = frappe.db.get_all(
+            "Employee",
+            filters={"name": ["in", list(employee_ids)]},
+            fields=["name", "employee_name"],
+        )
+        employee_names = {r["name"]: r["employee_name"] for r in rows}
+
+    # Attach employee_name to each time log
+    for card in job_cards:
+        for log in card.get("time_logs") or []:
+            emp = log.get("employee")
+            if emp:
+                log["employee_name"] = employee_names.get(emp, emp)
+
+    return job_cards
+
+
+@frappe.whitelist()
+def start_job_with_operator(job_card: str, employee: str, from_time: str) -> dict[str, str]:
+    """
+    Properly start a Job Card from the Workstation view.
+
+    Delegates to our make_time_log wrapper (which validates material availability,
+    tool maintenance, etc.) passing `employees` in the format ERPNext's add_time_log
+    expects.  This ensures:
+      - started_time is set on the Job Card
+      - Status becomes "Work In Progress"
+      - A single correct time log row is created with the chosen operator
+      - The employee Table MultiSelect field is populated
+    """
+    import json
+    from ujwal_industries.ujwal_industries.overrides.job_card import (
+        make_time_log_with_material_check,
+    )
+
+    args = {
+        "job_card_id": job_card,
+        "status": "Work In Progress",
+        "start_time": from_time,
+        "employees": [{"employee": employee}],
+    }
+    make_time_log_with_material_check(json.dumps(args))
+
+    employee_name: str = (
+        frappe.db.get_value("Employee", employee, "employee_name") or employee
+    )
+    return {"employee": employee, "employee_name": employee_name}
+
+
+@frappe.whitelist()
+def change_operator(job_card: str, employee: str) -> dict[str, str]:
+    """
+    Replace the operator on the currently active time log of a Job Card and
+    update the employee Table MultiSelect field so both places stay in sync.
+    "Active" means the time log has no to_time (the job is running right now).
+    """
+    doc = frappe.get_doc("Job Card", job_card)
+
+    for row in doc.time_logs:
+        if not row.to_time:
+            row.employee = employee
+            break
+
+    # Keep the employee Table MultiSelect in sync (single operator at a time)
+    doc.set("employee", [{"employee": employee}])
+
+    doc.save(ignore_permissions=True)
+
+    employee_name: str = (
+        frappe.db.get_value("Employee", employee, "employee_name") or employee
+    )
+    return {"employee": employee, "employee_name": employee_name}
+
+
 def has_permission_workstation(doc: Document, user: str, permission_type: str) -> bool:
     """
     Row-level permission check for Workstation doctype.
@@ -184,7 +280,7 @@ def has_permission_workstation(doc: Document, user: str, permission_type: str) -
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access
         return True
 
@@ -222,7 +318,7 @@ def has_permission_job_card(doc: Document, user: str, permission_type: str) -> b
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles:
+    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
         # Full access
         return True
 
