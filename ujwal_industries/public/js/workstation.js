@@ -14,7 +14,6 @@ frappe.ui.form.on('Workstation', {
 
 frappe.ui.form.on("Workstation", {
 	setup: function(frm) {
-		// Set query filter for employee field in custom_user_list child table
 		// Only show employees with Manufacturing Manager or Manufacturing User role
 		frm.set_query("employee", "custom_user_list", function() {
 			return {
@@ -24,10 +23,7 @@ frappe.ui.form.on("Workstation", {
 	},
 
 	refresh: function(frm) {
-		// Subscribe to real-time status updates
 		setup_workstation_realtime(frm);
-
-		// Show status indicator
 		update_status_indicator(frm);
 	},
 
@@ -46,14 +42,10 @@ function setup_workstation_realtime(frm) {
 
 	frappe.realtime.on("workstation_status_changed", function(data) {
 		if (data.workstation === frm.doc.name) {
-			// Update the status field in the form
 			frm.doc.status = data.status;
 			frm.refresh_field("status");
-
-			// Update status indicator
 			update_status_indicator(frm);
 
-			// Show notification
 			const indicator = data.status === "Problem" ? "red" : "green";
 			frappe.show_alert({
 				message: __("Status changed to {0}", [data.status]),
@@ -73,25 +65,207 @@ function update_status_indicator(frm) {
 	let color = "blue";
 
 	switch(status) {
-		case "Production":
-			color = "green";
-			break;
-		case "Problem":
-			color = "red";
-			break;
-		case "Maintenance":
-			color = "orange";
-			break;
-		case "Off":
-			color = "darkgrey";
-			break;
-		case "Idle":
-			color = "yellow";
-			break;
-		case "Setup":
-			color = "blue";
-			break;
+		case "Production":  color = "green";    break;
+		case "Problem":     color = "red";      break;
+		case "Maintenance": color = "orange";   break;
+		case "Off":         color = "darkgrey"; break;
+		case "Idle":        color = "yellow";   break;
+		case "Setup":       color = "blue";     break;
 	}
 
 	frm.page.set_indicator(status, color);
 }
+
+// ─── Operator management patch on WorkstationDashboard ──────────────────────
+
+(function patch_workstation_dashboard() {
+	if (typeof WorkstationDashboard === "undefined") {
+		// WorkstationDashboard not loaded yet – retry once the form refreshes
+		return;
+	}
+
+	// 1. Replace the data-fetch call with our endpoint that includes employee_name
+	WorkstationDashboard.prototype.prepapre_dashboard = function() {
+		let me = this;
+		frappe.call({
+			method: "ujwal_industries.ujwal_industries.overrides.workstation.get_job_cards_with_operator",
+			args: { workstation: me.frm.doc.name },
+			callback: function(r) {
+				if (r.message) {
+					me.job_cards = r.message;
+					me.render_job_cards();
+				}
+			},
+		});
+	};
+
+	// 2. After the standard template is rendered, inject operator UI
+	const _orig_render = WorkstationDashboard.prototype.render_job_cards;
+	WorkstationDashboard.prototype.render_job_cards = function() {
+		_orig_render.call(this);
+		this._inject_operator_ui();
+	};
+
+	// 3. After start/complete updates the card, re-inject operator UI
+	const _orig_update = WorkstationDashboard.prototype.update_job_card_details;
+	WorkstationDashboard.prototype.update_job_card_details = function() {
+		_orig_update.call(this);
+		this._inject_operator_ui();
+	};
+
+	// 4. Make the Operator field required when starting a job
+	WorkstationDashboard.prototype.start_job = function(job_card) {
+		let me = this;
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Datetime",
+					label: __("Start Time"),
+					fieldname: "start_time",
+					reqd: 1,
+					default: frappe.datetime.now_datetime(),
+				},
+				{
+					label: __("Operator"),
+					fieldname: "employee",
+					fieldtype: "Link",
+					options: "Employee",
+					reqd: 1,
+				},
+			],
+			function(data) {
+				me.frm.call({
+					method: "start_job",
+					doc: me.frm.doc,
+					args: {
+						job_card: job_card,
+						from_time: data.start_time,
+						employee: data.employee,
+					},
+					callback: function(r) {
+						if (!r.message) return;
+
+						me.job_cards = [r.message];
+
+						// Also update the employee Table MultiSelect field on the Job Card
+						frappe.call({
+							method: "ujwal_industries.ujwal_industries.overrides.workstation.set_job_card_employee",
+							args: { job_card: job_card, employee: data.employee },
+						});
+
+						// Attach employee_name so _inject_operator_ui can display it
+						frappe.db.get_value("Employee", data.employee, "employee_name")
+							.then(function(res) {
+								let emp_name = (res.message && res.message.employee_name)
+									? res.message.employee_name
+									: data.employee;
+
+								(me.job_cards[0].time_logs || []).forEach(function(log) {
+									if (log.employee === data.employee && !log.to_time) {
+										log.employee_name = emp_name;
+									}
+								});
+
+								me.prepare_timer();
+								me.update_job_card_details();
+								me.frm.reload_doc();
+							});
+					},
+				});
+			},
+			__("Enter Value"),
+			__("Start Job")
+		);
+	};
+
+	// 5. Inject "Change Operator" button + current operator name for running cards
+	WorkstationDashboard.prototype._inject_operator_ui = function() {
+		let me = this;
+
+		// Remove stale operator elements before re-rendering
+		this.$wrapper.find(".btn-change-operator, .current-operator-display").remove();
+
+		(this.job_cards || []).forEach(function(data) {
+			if (data.status !== "Work In Progress") return;
+
+			// Find the active time log (no to_time = job is currently running)
+			let active_log = null;
+			(data.time_logs || []).forEach(function(log) {
+				if (!log.to_time) active_log = log;
+			});
+
+			let $card = me.$wrapper.find("[data-name='" + data.name + "']");
+			let $btn_col = $card.find(".btn-complete").closest(".form-column");
+
+			// "Change Operator" button – sits right after the Complete button
+			$btn_col.find(".btn-complete").after(
+				'<button style="width:130px;margin-top:5px;" '
+				+ 'class="btn btn-default btn-xs btn-change-operator" '
+				+ 'data-job-card="' + data.name + '">'
+				+ __("Change Operator")
+				+ '</button>'
+			);
+
+			// Current operator label below the buttons
+			let emp_display = active_log
+				? (active_log.employee_name || active_log.employee || __("Not assigned"))
+				: __("Not assigned");
+
+			$btn_col.append(
+				'<div class="current-operator-display text-muted" '
+				+ 'data-job-card="' + data.name + '" '
+				+ 'style="font-size:11px;margin-top:6px;line-height:1.4;">'
+				+ __("Operator") + ': '
+				+ '<strong class="operator-name">' + emp_display + '</strong>'
+				+ '</div>'
+			);
+		});
+
+		// Bind click once (use delegated event to avoid duplicates)
+		this.$wrapper.off("click.change_op").on("click.change_op", ".btn-change-operator", function(e) {
+			let job_card = $(e.currentTarget).data("job-card");
+			me._change_operator_dialog(job_card);
+		});
+	};
+
+	// 6. Dialog to pick the new operator and persist it
+	WorkstationDashboard.prototype._change_operator_dialog = function(job_card) {
+		let me = this;
+		frappe.prompt(
+			[
+				{
+					label: __("New Operator"),
+					fieldname: "employee",
+					fieldtype: "Link",
+					options: "Employee",
+					reqd: 1,
+					description: __("The selected employee will replace the current operator on this machine"),
+				},
+			],
+			function(data) {
+				frappe.call({
+					method: "ujwal_industries.ujwal_industries.overrides.workstation.change_operator",
+					args: { job_card: job_card, employee: data.employee },
+					freeze: true,
+					callback: function(r) {
+						if (!r.message) return;
+
+						let display = r.message.employee_name || r.message.employee;
+
+						// Update the name shown in the card without a full reload
+						me.$wrapper
+							.find(".current-operator-display[data-job-card='" + job_card + "'] .operator-name")
+							.text(display);
+
+						frappe.show_alert({
+							message: __("Operator changed to {0}", [display]),
+							indicator: "green",
+						}, 5);
+					},
+				});
+			},
+			__("Change Operator"),
+			__("Change")
+		);
+	};
+})();
