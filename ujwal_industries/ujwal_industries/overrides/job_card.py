@@ -364,6 +364,28 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
             """
         )
 
+def _set_tool_from_production_plan(doc: Document) -> None:
+    """On first save, auto-populate custom_tool_name from the linked Production Plan Sub Assembly Item."""
+    if not doc.is_new():
+        return
+    if doc.custom_tool_name:
+        return
+    if not doc.work_order:
+        return
+
+    sub_assembly_item = frappe.db.get_value(
+        "Work Order", doc.work_order, "production_plan_sub_assembly_item"
+    )
+    if not sub_assembly_item:
+        return
+
+    tool = frappe.db.get_value(
+        "Production Plan Sub Assembly Item", sub_assembly_item, "custom_tool"
+    )
+    if tool:
+        doc.custom_tool_name = tool
+
+
 def job_card_validate(doc: Document, method=None):
     message = _is_workstation_under_maintenance(doc.workstation)
     if message:
@@ -376,6 +398,7 @@ def job_card_validate(doc: Document, method=None):
     # card save/submit. One material transfer can cover multiple operation-wise
     # job cards under the same work order.
     # validate_job_card_qty_fg_based(doc, method)
+    _set_tool_from_production_plan(doc)
     build_tool_summary_html(doc)
     set_previous_tool(doc)
         
