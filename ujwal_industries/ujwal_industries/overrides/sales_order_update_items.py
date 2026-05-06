@@ -614,6 +614,10 @@ def _notify_approvers(doctype, docname, changed_rows, reason):
 		fields=["name", "email"],
 	)
 
+	has_outgoing_email = bool(frappe.db.get_value(
+		"Email Account", {"default_outgoing": 1, "enable_outgoing": 1}, "name"
+	))
+
 	for approver in approver_emails:
 		# Bell icon notification
 		frappe.get_doc(
@@ -628,8 +632,8 @@ def _notify_approvers(doctype, docname, changed_rows, reason):
 			}
 		).insert(ignore_permissions=True)
 
-		# Email notification
-		if approver.get("email"):
+		# Email notification (only if outgoing email account is configured)
+		if has_outgoing_email and approver.get("email"):
 			frappe.sendmail(
 				recipients=[approver["email"]],
 				subject=subject,
