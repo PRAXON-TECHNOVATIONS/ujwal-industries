@@ -113,7 +113,7 @@ function update_status_indicator(frm) {
 		this._inject_operator_ui();
 	};
 
-	// 4. Make the Operator field required when starting a job
+	// 4. Start the job properly via make_time_log (sets started_time, employee field, etc.)
 	WorkstationDashboard.prototype.start_job = function(job_card) {
 		let me = this;
 		frappe.prompt(
@@ -134,42 +134,20 @@ function update_status_indicator(frm) {
 				},
 			],
 			function(data) {
-				me.frm.call({
-					method: "start_job",
-					doc: me.frm.doc,
+				frappe.call({
+					method: "ujwal_industries.ujwal_industries.overrides.workstation.start_job_with_operator",
 					args: {
 						job_card: job_card,
-						from_time: data.start_time,
 						employee: data.employee,
+						from_time: data.start_time,
 					},
+					freeze: true,
+					freeze_message: __("Starting job..."),
 					callback: function(r) {
 						if (!r.message) return;
-
-						me.job_cards = [r.message];
-
-						// Also update the employee Table MultiSelect field on the Job Card
-						frappe.call({
-							method: "ujwal_industries.ujwal_industries.overrides.workstation.set_job_card_employee",
-							args: { job_card: job_card, employee: data.employee },
-						});
-
-						// Attach employee_name so _inject_operator_ui can display it
-						frappe.db.get_value("Employee", data.employee, "employee_name")
-							.then(function(res) {
-								let emp_name = (res.message && res.message.employee_name)
-									? res.message.employee_name
-									: data.employee;
-
-								(me.job_cards[0].time_logs || []).forEach(function(log) {
-									if (log.employee === data.employee && !log.to_time) {
-										log.employee_name = emp_name;
-									}
-								});
-
-								me.prepare_timer();
-								me.update_job_card_details();
-								me.frm.reload_doc();
-							});
+						// Re-fetch all job cards so status, timer, and operator UI refresh
+						me.prepapre_dashboard();
+						me.frm.reload_doc();
 					},
 				});
 			},
