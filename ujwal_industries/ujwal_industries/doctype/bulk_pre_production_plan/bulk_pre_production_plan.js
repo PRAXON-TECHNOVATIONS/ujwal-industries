@@ -1251,7 +1251,13 @@ function _render_sequential_grid(frm, so_data, container) {
 			cellStyle: { color: '#842029', fontWeight: '600' },
 			valueFormatter: p => _format_bpp_date(p.value)
 		},
-		{ headerName: 'Supplier', field: 'supplier', width: 150, editable: true },
+		{
+			headerName: 'Supplier', field: 'supplier', width: 150,
+			editable: p => p.data?.type_of_manufacturing !== 'In House',
+			cellRenderer: p => p.data?.type_of_manufacturing === 'In House'
+				? '<span style="color:#94a3b8;">—</span>'
+				: (p.value || '')
+		},
 		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
 		{
 			headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
@@ -1813,7 +1819,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type !== 'In House') return ''; 
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
@@ -2212,13 +2218,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
-			editable: p => !!p.data?._is_group,
+			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
 				values: p.data?.supplier_list || []
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
@@ -2728,7 +2735,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
+
 			editable: p => !!p.data?._is_group && p.data?.type === 'Subcontract',
+
 			cellEditor: SupplierPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -2736,7 +2745,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
+
 				if (p.data?.type !== 'Subcontract') return ''; // hide only, no style blocking
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
@@ -3203,7 +3214,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
+
 			editable: p => !!p.data?._is_group && p.data?.type === 'Subcontract',
+
 			cellEditor: SupplierPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -3211,7 +3224,9 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
+
 				if (p.data?.type !== 'Subcontract') return ''; // hide only, no style blocking
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
