@@ -55,4 +55,3 @@ def autoname(self, method):
     else:
         frappe.msgprint("Dynamic Customer Naming Series is Currently Disabled in Buying Settings. Please Enable it to Apply Automatic Numbering.")
         
-    self.custom_customer_names = self.customer_name
