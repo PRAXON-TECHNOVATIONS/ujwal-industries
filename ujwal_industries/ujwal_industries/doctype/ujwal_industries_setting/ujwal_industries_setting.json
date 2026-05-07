@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-06 21:10:14.050031",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "settings_section",
+  "machine_conflict_validation"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "description": "In Bulk Pre Production Plan",
+   "fieldname": "machine_conflict_validation",
+   "fieldtype": "Check",
+   "label": "Remove Machine Conflict Validation"
+  },
+  {
+   "fieldname": "settings_section",
+   "fieldtype": "Section Break",
+   "label": "Settings"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-05-06 21:16:35.134360",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Ujwal Industries Setting",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

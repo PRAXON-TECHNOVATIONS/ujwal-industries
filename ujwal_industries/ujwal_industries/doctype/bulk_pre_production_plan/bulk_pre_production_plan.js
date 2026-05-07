@@ -1497,6 +1497,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				target_warehouse: fg.target_warehouse || '',
 				supplier: fg_supplier,
 				supplier_list: fg.supplier_list || [],
+				supplier_name: fg.supplier_name,
 				total_batches: batches.length,
 				actual_qty: fg.actual_qty,
 				planned_qty_as_show: fg.planned_qty_as_show,
@@ -1815,12 +1816,24 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellEditorParams: p => ({
 				values: p.data?.supplier_list || []
 			}),
+
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
+
+		// {
+		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type !== 'Subcontract') return '';
+		// 		return p.value
+		// 			? `<span style="color:#374151;">${p.value}</span>`
+		// 			: '<span style="color:#94a3b8;">—</span>';
+		// 	}
+		// },
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bars(p, p.data?._is_group ? '0.85' : '0.45')
@@ -1895,6 +1908,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				target_warehouse: sfg.target_warehouse || '',
 				supplier: sfg.supplier,
 				supplier_list: sfg.supplier_list || [],
+				supplier_name: sfg.supplier_name,
 				total_batches: batches.length,
 				actual_qty: sfg.actual_qty,
 				qty_as_show: sfg.qty_as_show,
@@ -2215,6 +2229,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
+		// {
+		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type !== 'Subcontract') return '';
+		// 		return p.value
+		// 			? `<span style="color:#374151;">${p.value}</span>`
+		// 			: '<span style="color:#94a3b8;">—</span>';
+		// 	}
+		// },
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bar(p, p.data?._is_group ? '0.85' : '0.45')
@@ -2329,6 +2353,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				target_warehouse: fg.target_warehouse || '',
 				supplier: fg_supplier,
 				supplier_list: fg.supplier_list || [],
+				supplier_name: fg.supplier_name,
 				total_batches: batches.length,
 				actual_qty: fg.actual_qty,
 				planned_qty_as_show: fg.planned_qty_as_show,
@@ -2708,21 +2733,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 		
-		// {
-		// 	headerName: 'Supplier', field: 'supplier', width: 160,
-		// 	editable: p => !!p.data?._is_group,
-		// 	cellEditor: 'agSelectCellEditor',
-		// 	cellEditorParams: p => ({
-		// 		values: p.data?.supplier_list || []
-		// 	}),
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
-		// 	}
-		// },
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
-			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
+
+			editable: p => !!p.data?._is_group && p.data?.type === 'Subcontract',
+
 			cellEditor: SupplierPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -2730,10 +2745,24 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+
+				if (p.data?.type !== 'Subcontract') return ''; // hide only, no style blocking
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
+
+		// {
+		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type !== 'Subcontract') return '';
+		// 		return p.value
+		// 			? `<span style="color:#374151;">${p.value}</span>`
+		// 			: '<span style="color:#94a3b8;">—</span>';
+		// 	}
+		// },
+
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bars(p, p.data?._is_group ? '0.85' : '0.45')
@@ -3182,23 +3211,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
-		
-		// {
-		// 	headerName: 'Supplier', field: 'supplier', width: 160,
-		// 	editable: p => !!p.data?._is_group,
-		// 	cellEditor: 'agSelectCellEditor',
-		// 	cellEditorParams: p => ({
-		// 		values: p.data?.supplier_list || []
-		// 	}),
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
-		// 	}
-		// },
 
 		{
 			headerName: 'Supplier', field: 'supplier', width: 160,
-			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
+
+			editable: p => !!p.data?._is_group && p.data?.type === 'Subcontract',
+
 			cellEditor: SupplierPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -3206,10 +3224,24 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}),
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+
+				if (p.data?.type !== 'Subcontract') return ''; // hide only, no style blocking
+
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
+
+		// {
+		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+		// 	cellRenderer: p => {
+		// 		if (!p.data?._is_group) return '';
+		// 		if (p.data?.type !== 'Subcontract') return '';
+		// 		return p.value
+		// 			? `<span style="color:#374151;">${p.value}</span>`
+		// 			: '<span style="color:#94a3b8;">—</span>';
+		// 	}
+		// },
+		
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bar(p, p.data?._is_group ? '0.85' : '0.45')

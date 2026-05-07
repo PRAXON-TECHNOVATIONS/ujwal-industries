@@ -1022,6 +1022,10 @@ class BulkPreProductionPlan(Document):
 			)
   
 	def check_machine_available(self):
+		ui_setting = frappe.get_doc("Ujwal Industries Setting","Ujwal Industries Setting")
+		if ui_setting.machine_conflict_validation == 1:
+			return
+
 		for idx, row in enumerate(self.po_items or [], start=1):
 
 			if getattr(row, "manufacturing_type", "") == "Subcontract":
@@ -2266,13 +2270,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			)
 			selected_tool = tool_info.get("tool") or ""
    
-			# item_suppliers = frappe.get_all("Item Subcontracting Supplier",filters={"parent": item_code},fields=["supplier","per_day_qty"])
-			# supplier_list = []
-			# for d in item_suppliers:
-			# 	supplier_name = frappe.db.get_value("Supplier", d.supplier, "custom_supplier_names") or ""
-			# 	label = f"{d.supplier} - {supplier_name}" if supplier_name else d.supplier
-			# 	supplier_list.append(label)
-   
 			item_suppliers = frappe.get_all("Supplier",fields=["name","custom_supplier_names"])
 			supplier_list = []
 			for d in item_suppliers:
@@ -2671,9 +2668,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			item_suppliers = frappe.get_all("Supplier",fields=["name","custom_supplier_names"])
 			supplier_list = []
+			supplier_name_map = {} 
 			for d in item_suppliers:
 				label = f"{d.name} - {d.custom_supplier_names}"
 				supplier_list.append(label)
+				supplier_name_map[d.name] = d.custom_supplier_names or ""
 				
 			selected_tool = tool_info.get("tool") or ""
 			tool_load_qty = int(tool_info.get("tool_load_qty", 0))
@@ -2828,6 +2827,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"per_day_qty":             per_day_qty,
 				"manufacturing_type":      fg.manufacturing_type or "In House",
 				"supplier_list": supplier_list,
+				"supplier_name": supplier_name_map.get(getattr(fg, "supplier", "") or "", ""),
 				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
 				"custom_shift_types_csv": getattr(fg, "custom_shift_types_csv", "") or "",
 				"target_warehouse": (

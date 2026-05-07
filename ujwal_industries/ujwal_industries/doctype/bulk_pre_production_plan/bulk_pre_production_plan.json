@@ -15,6 +15,7 @@
   "to_delivery_date",
   "item_code",
   "customer",
+  "customer_name",
   "section_break_sales_orders",
   "get_sales_orders",
   "start_pre_production",
@@ -36,7 +37,16 @@
   "column_break_32",
   "status",
   "warehouses",
-  "amended_from"
+  "amended_from",
+  "from_date",
+  "column_break_filters_1",
+  "to_date",
+  "from_delivery_date",
+  "column_break_filters_2",
+  "column_break_filters_3",
+  "project",
+  "column_break_filters_4",
+  "sales_order_status"
  ],
  "fields": [
   {
@@ -292,6 +302,13 @@
    "options": "Bulk Pre Production Plan",
    "print_hide": 1,
    "read_only": 1
+  },
+  {
+   "fetch_from": "customer.custom_customer_names",
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "read_only": 1
   }
  ],
  "icon": "fa fa-calendar",
@@ -303,7 +320,7 @@
    "link_fieldname": "custom_bulk_pre_production_plan"
   }
  ],
- "modified": "2026-04-27 12:37:59.256685",
+ "modified": "2026-05-07 12:48:09.050590",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk Pre Production Plan",
