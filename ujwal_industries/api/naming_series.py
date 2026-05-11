@@ -9,7 +9,7 @@ def numeric_series(doc, method=None):
     if doc.doctype == "Asset":
         return
 
-    if doc.doctype in ["Document Series Settings", "Document Series Table"]:
+    if doc.doctype in ["Document Series Settings", "Document Series Table", "Purchase Order"]:
         return
 
     next_number = get_next_number(doc.doctype)

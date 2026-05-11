@@ -13,19 +13,19 @@ from frappe.model.document import Document
 
 
 class DocumentSeriesSettings(Document):
-
+    
     def validate(self):
         seen = set()
 
         for row in self.document_series:
-
-            if row.document_type in seen:
+            key = (row.document_type, row.type)
+            if key in seen:
                 frappe.throw(f"Duplicate Document Type not allowed: {row.document_type}")
 
             seen.add(row.document_type)
-
-            if int(row.start_number) >= int(row.end_number):
-                frappe.throw(f"Start Number must be less than End Number for {row.document_type}")
+            if row.start_number:
+                if int(row.start_number) >= int(row.end_number):
+                    frappe.throw(f"Start Number must be less than End Number for {row.document_type}")
                 
                 
 @frappe.whitelist()
@@ -34,7 +34,9 @@ def get_next_number(doctype):
     settings_doc = frappe.get_doc("Document Series Settings")
 
     for row in settings_doc.document_series:
-
+        if not row.type:
+            return
+        
         if row.document_type == doctype:
 
             start = int(row.start_number)

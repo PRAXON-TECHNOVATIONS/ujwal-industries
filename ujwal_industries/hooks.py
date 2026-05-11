@@ -251,6 +251,7 @@ doc_events = {
 	"Sales Invoice": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers",
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_invoice.before_insert",
+		"autoname":  "ujwal_industries.ujwal_industries.overrides.sales_invoice.autoname",
 	},
 	"Job Card": {
 		"onload": "ujwal_industries.ujwal_industries.overrides.job_card.onload_job_card",
@@ -302,6 +303,7 @@ doc_events = {
  
 	"Purchase Order":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
+		"autoname": "ujwal_industries.ujwal_industries.overrides.purchase_order.autoname",
 	},
 	"Quotation":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",
