@@ -243,6 +243,7 @@ doc_events = {
 		],
 		"before_update_after_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_qty_lock.prevent_qty_change_when_production_plan_exists",
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_order.before_insert",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_planning_supervisor_on_submit",
 	},
 	"Delivery Note": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers",
