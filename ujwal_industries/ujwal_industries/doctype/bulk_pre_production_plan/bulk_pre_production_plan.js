@@ -3750,32 +3750,26 @@ function _get_supplier_options(txt) {
 // 	return _get_link_options('Workstation', txt);
 // }
 
+
 function _get_workstation_options(txt) {
+	const search = (txt || '').toLowerCase().trim();
 	return frappe.call({
-		method: 'frappe.desk.search.search_link',
+		method: 'frappe.client.get_list',
 		args: {
 			doctype: 'Workstation',
-			txt: txt || '',
-			page_length: 50
+			fields: ['name', 'custom_asset'],
+			limit_page_length: 50
 		}
-	}).then(r => {
-		const names = (r.message || []).map(o => o.value || o.name || o);
-		if (!names.length) return [];
-
-		return frappe.call({
-			method: 'frappe.client.get_list',
-			args: {
-				doctype: 'Workstation',
-				filters: [['name', 'in', names]],
-				fields: ['name', 'custom_asset'],
-				limit_page_length: 500
-			}
-		}).then(res => {
-			const rows = res.message || [];
-			return rows.map(ws =>
-				ws.custom_asset ? `${ws.name}-${ws.custom_asset}` : ws.name
-			);
-		});
+	}).then(res => {
+		const rows = res.message || [];
+		const formatted = rows.map(ws =>
+			ws.custom_asset ? `${ws.name}-${ws.custom_asset}` : ws.name
+		);
+		if (!search) return formatted;
+		// Filter by both ID and asset name
+		return formatted.filter(label =>
+			label.toLowerCase().includes(search)
+		);
 	});
 }
 
