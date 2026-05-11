@@ -245,7 +245,8 @@ doc_events = {
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_order.before_insert",
 	},
 	"Delivery Note": {
-		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers"
+		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers",
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.delivery_note.before_insert",
 	},
 	"Sales Invoice": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers",
