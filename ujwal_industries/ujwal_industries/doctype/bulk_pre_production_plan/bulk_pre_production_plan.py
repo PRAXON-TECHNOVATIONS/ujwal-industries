@@ -264,17 +264,14 @@ def _get_row_spm_details(
 
 	selected_workstations = _parse_csv_list(getattr(row, "custom_workstations_csv", "") or None)
 	effective_workstations = selected_workstations or default_workstations
-	print("............effective_workstations...........",effective_workstations)
 	workstation_names = {}
 	if effective_workstations:
 		ws_records = frappe.get_all("Workstation",filters={"name": ["in", effective_workstations]}, fields=["name", "custom_asset"])
 		workstation_names = {r.name: r.custom_asset for r in ws_records}
-		print("........workstation_names.........<br>",workstation_names)
 	effective_workstations_display = [
 		f"{ws}-{workstation_names[ws]}" if workstation_names.get(ws) else ws
 		for ws in effective_workstations
 	]
-	# print("...........effective_workstations_display............",_join_csv_list(effective_workstations_display))
 	machine_count = len(effective_workstations)
 	if batchsize and machine_count <= 0:
 		machine_count = 1
@@ -2295,7 +2292,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				pm_days       = int(tool_info.get("pm_days", 0))
 			
 			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
-
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			machine_count  = cint(spm_details.get("machine_count") or 0)
 			row_spm        = cint(getattr(sfg, "spm", 0) or 0)
@@ -3308,7 +3304,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
     			"spm": display_spm,
     			"spm_1": display_spm,
 				"machine_count": machine_count,
-				"custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				# "custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				"custom_workstations_csv": spm_details.get("selected_workstations_display_csv") or spm_details.get("selected_workstations_csv") or "",
 				"custom_shift_types_csv": getattr(sfg, "custom_shift_types_csv", "") or "",
 				"per_shift_qty": per_shift_qty,
 				"per_day_qty": per_day_qty,

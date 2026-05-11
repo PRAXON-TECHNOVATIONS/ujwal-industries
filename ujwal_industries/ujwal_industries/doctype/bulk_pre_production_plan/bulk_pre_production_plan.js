@@ -3746,8 +3746,37 @@ function _get_supplier_options(txt) {
     return _get_link_options('Supplier', txt);
 }
 
+// function _get_workstation_options(txt) {
+// 	return _get_link_options('Workstation', txt);
+// }
+
 function _get_workstation_options(txt) {
-	return _get_link_options('Workstation', txt);
+	return frappe.call({
+		method: 'frappe.desk.search.search_link',
+		args: {
+			doctype: 'Workstation',
+			txt: txt || '',
+			page_length: 50
+		}
+	}).then(r => {
+		const names = (r.message || []).map(o => o.value || o.name || o);
+		if (!names.length) return [];
+
+		return frappe.call({
+			method: 'frappe.client.get_list',
+			args: {
+				doctype: 'Workstation',
+				filters: [['name', 'in', names]],
+				fields: ['name', 'custom_asset'],
+				limit_page_length: 500
+			}
+		}).then(res => {
+			const rows = res.message || [];
+			return rows.map(ws =>
+				ws.custom_asset ? `${ws.name}-${ws.custom_asset}` : ws.name
+			);
+		});
+	});
 }
 
 function _create_inline_supplier_editor(initial_value, supplier_list, onchange) {
