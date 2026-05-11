@@ -6,7 +6,8 @@
  "engine": "InnoDB",
  "field_order": [
   "settings_section",
-  "machine_conflict_validation"
+  "machine_conflict_validation",
+  "create_work_order_and_material_request_on_submit"
  ],
  "fields": [
   {
@@ -20,13 +21,20 @@
    "fieldname": "settings_section",
    "fieldtype": "Section Break",
    "label": "Settings"
+  },
+  {
+   "default": "0",
+   "description": "In Production Plan",
+   "fieldname": "create_work_order_and_material_request_on_submit",
+   "fieldtype": "Check",
+   "label": "By Pass Create Work Order and Material Request on submit"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-06 21:16:35.134360",
+ "modified": "2026-05-11 17:41:25.246958",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",

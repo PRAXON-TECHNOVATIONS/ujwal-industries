@@ -15,6 +15,19 @@ from erpnext.manufacturing.doctype.production_plan.production_plan import (
 
 
 class CustomProductionPlan(ProductionPlan):
+    
+    def on_submit(self):
+        self.update_bin_qty()
+        self.update_sales_order()
+        
+        ui_setting = frappe.get_doc("Ujwal Industries Setting","Ujwal Industries Setting")
+        if ui_setting.create_work_order_and_material_request_on_submit == 1:
+            return
+        else:
+            self.make_work_order()
+            self.make_material_request()
+    
+    
     """
     Extended Production Plan class that handles FG subcontracting.
 
