@@ -2752,16 +2752,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 
-		// {
-		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		if (p.data?.type !== 'Subcontract') return '';
-		// 		return p.value
-		// 			? `<span style="color:#374151;">${p.value}</span>`
-		// 			: '<span style="color:#94a3b8;">—</span>';
-		// 	}
-		// },
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type !== 'Subcontract') return '';
+				return p.value
+					? `<span style="color:#374151;">${p.value}</span>`
+					: '<span style="color:#94a3b8;">—</span>';
+			}
+		},
 
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
@@ -3231,16 +3231,16 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 
-		// {
-		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		if (p.data?.type !== 'Subcontract') return '';
-		// 		return p.value
-		// 			? `<span style="color:#374151;">${p.value}</span>`
-		// 			: '<span style="color:#94a3b8;">—</span>';
-		// 	}
-		// },
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type !== 'Subcontract') return '';
+				return p.value
+					? `<span style="color:#374151;">${p.value}</span>`
+					: '<span style="color:#94a3b8;">—</span>';
+			}
+		},
 		
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
@@ -3746,8 +3746,37 @@ function _get_supplier_options(txt) {
     return _get_link_options('Supplier', txt);
 }
 
+// function _get_workstation_options(txt) {
+// 	return _get_link_options('Workstation', txt);
+// }
+
 function _get_workstation_options(txt) {
-	return _get_link_options('Workstation', txt);
+	return frappe.call({
+		method: 'frappe.desk.search.search_link',
+		args: {
+			doctype: 'Workstation',
+			txt: txt || '',
+			page_length: 50
+		}
+	}).then(r => {
+		const names = (r.message || []).map(o => o.value || o.name || o);
+		if (!names.length) return [];
+
+		return frappe.call({
+			method: 'frappe.client.get_list',
+			args: {
+				doctype: 'Workstation',
+				filters: [['name', 'in', names]],
+				fields: ['name', 'custom_asset'],
+				limit_page_length: 500
+			}
+		}).then(res => {
+			const rows = res.message || [];
+			return rows.map(ws =>
+				ws.custom_asset ? `${ws.name}-${ws.custom_asset}` : ws.name
+			);
+		});
+	});
 }
 
 function _create_inline_supplier_editor(initial_value, supplier_list, onchange) {
@@ -4683,7 +4712,8 @@ function _on_par_bom_changed(frm, params, par_data) {
 
 	if (fieldname === 'supplier') {
         const db_field = row_table === 'fg' ? 'custom_supplier' : 'supplier';
-        frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue).then(() => {
+        // frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue).then(() => {
+			frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue.split('-')[0].trim()).then(() => {
             _sync_parallel_schedule_override(frm, target_row.name, row_table, {
                 supplier: params.newValue,
                 custom_supplier: params.newValue

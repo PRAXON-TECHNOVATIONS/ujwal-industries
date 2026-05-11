@@ -264,6 +264,14 @@ def _get_row_spm_details(
 
 	selected_workstations = _parse_csv_list(getattr(row, "custom_workstations_csv", "") or None)
 	effective_workstations = selected_workstations or default_workstations
+	workstation_names = {}
+	if effective_workstations:
+		ws_records = frappe.get_all("Workstation",filters={"name": ["in", effective_workstations]}, fields=["name", "custom_asset"])
+		workstation_names = {r.name: r.custom_asset for r in ws_records}
+	effective_workstations_display = [
+		f"{ws}-{workstation_names[ws]}" if workstation_names.get(ws) else ws
+		for ws in effective_workstations
+	]
 	machine_count = len(effective_workstations)
 	if batchsize and machine_count <= 0:
 		machine_count = 1
@@ -309,6 +317,7 @@ def _get_row_spm_details(
 		"workstations_csv": _join_csv_list(default_workstations),
 		"workstations": default_workstations,
 		"selected_workstations_csv": _join_csv_list(effective_workstations),
+		"selected_workstations_display_csv": _join_csv_list(effective_workstations_display),
 		"machine_count": machine_count,
 		"spm": spm,
 		"subcontract_per_shift_qty" :per_shift_qty
@@ -2283,7 +2292,6 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				pm_days       = int(tool_info.get("pm_days", 0))
 			
 			spm_details  = _get_row_spm_details(sfg, bom_no, bom_ops_map)
-
 			base_batchsize = cint(spm_details.get("batchsize") or 0)
 			machine_count  = cint(spm_details.get("machine_count") or 0)
 			row_spm        = cint(getattr(sfg, "spm", 0) or 0)
@@ -2395,6 +2403,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 			# Next deadline = this SFG's batch[0].start_date
 			deadline_dt = b0_start
+			sfg_supplier_name = None
+			if sfg.supplier:
+				if len(sfg.supplier.split("-")) > 1:
+					sfg_supplier_name = sfg.supplier.split("-")[-1]
+				else:
+					sfg_supplier_name = frappe.get_value("Supplier", sfg.supplier.split("-")[-1], "custom_supplier_names" )
+                    
 			sfg_chain_bwd.append({
 				"item_code": item_code,
 				"item_name": sfg.item_name,
@@ -2408,15 +2423,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
     			"spm": display_spm,
     			"spm_1": display_spm,
 				"machine_count": machine_count,
-				"custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				"custom_workstations_csv": spm_details.get("selected_workstations_display_csv") or spm_details.get("selected_workstations_csv") or "",
 				"custom_shift_types_csv": getattr(sfg, "custom_shift_types_csv", "") or "",
 				"per_shift_qty": per_shift_qty,
 				"per_day_qty": per_day_qty,
 				"tool_load_qty": tool_load_qty, "pm_days": pm_days,
 				"type_of_manufacturing": sfg.type_of_manufacturing or "In House",
 				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
-				"supplier": sfg.supplier or "",
-    			"supplier_name": sfg.supplier_name,
+				"supplier": sfg.supplier.split("-")[0] if sfg.supplier else "",
+                "supplier_name": sfg_supplier_name,
     			"supplier_list": supplier_list,
     			"row_name": sfg.name, "batches": batch_rows,
 			})
@@ -2808,6 +2823,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			if batch_rows:
 				prev_fg_row0_end = batch_rows[0]["end_date"]
 
+			fg_supplier_name = ""
+			if fg.custom_supplier:
+				fg_supplier_name = frappe.get_value("Supplier", fg.custom_supplier, "custom_supplier_names")
+                
 			fg_rows_out.append({
 				"item_code":               fg.item_code,
 				"item_name":               fg.item_name,
@@ -2827,7 +2846,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"per_day_qty":             per_day_qty,
 				"manufacturing_type":      fg.manufacturing_type or "In House",
 				"supplier_list": supplier_list,
-				"supplier_name": supplier_name_map.get(getattr(fg, "supplier", "") or "", ""),
+				"supplier": fg.custom_supplier or "",
+                "supplier_name": fg_supplier_name,
 				"custom_workstations_csv": getattr(fg, "custom_workstations_csv", "") or "",
 				"custom_shift_types_csv": getattr(fg, "custom_shift_types_csv", "") or "",
 				"target_warehouse": (
@@ -3284,7 +3304,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
     			"spm": display_spm,
     			"spm_1": display_spm,
 				"machine_count": machine_count,
-				"custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				# "custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
+				"custom_workstations_csv": spm_details.get("selected_workstations_display_csv") or spm_details.get("selected_workstations_csv") or "",
 				"custom_shift_types_csv": getattr(sfg, "custom_shift_types_csv", "") or "",
 				"per_shift_qty": per_shift_qty,
 				"per_day_qty": per_day_qty,
