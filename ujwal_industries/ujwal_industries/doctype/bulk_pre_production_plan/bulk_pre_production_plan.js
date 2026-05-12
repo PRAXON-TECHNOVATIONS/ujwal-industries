@@ -5069,15 +5069,115 @@ function _section_header(title, color, bg, icon) {
 
 
 function _append_mr_section(container, mr_items, frm, so_name, prefix) {
-	if (!mr_items || !mr_items.length) return;
+	const has_items = mr_items && mr_items.length;
 
+	// ── Section header ─────────────────────────────────────────────────────────
 	const label = document.createElement('div');
 	label.setAttribute('data-bpp-section', 'mr');
-	label.innerHTML = _section_header(
-		`Raw Material Items <span style="font-size:11px;font-weight:400;opacity:.7;">(${mr_items.length})</span>`,
-		'#065F46', '#ECFDF5', 'fa-flask');
+	const count_label = has_items
+		? `Raw Material Items <span style="font-size:11px;font-weight:400;opacity:.7;">(${mr_items.length})</span>`
+		: 'Raw Material Items';
+	label.innerHTML = _section_header(count_label, '#065F46', '#ECFDF5', 'fa-flask');
 	container.appendChild(label);
 
+	// ── RM Received Date override bar ──────────────────────────────────────────
+	const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_name);
+	const current_override = so_row?.custom_rm_received_date || '';
+
+	const override_bar = document.createElement('div');
+	override_bar.style.cssText = [
+		'display:flex', 'align-items:center', 'gap:8px',
+		'padding:6px 10px', 'background:#f0fdf4',
+		'border:1px solid #bbf7d0', 'border-radius:6px', 'margin-bottom:8px',
+	].join(';');
+
+	const chk = document.createElement('input');
+	chk.type = 'checkbox';
+	chk.id = `rm_override_chk_${so_name}`;
+	chk.checked = !!current_override;
+	chk.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:#16a34a;flex-shrink:0;';
+
+	const chk_label = document.createElement('label');
+	chk_label.htmlFor = chk.id;
+	chk_label.textContent = 'Override RM Received Date';
+	chk_label.style.cssText = 'font-size:12px;font-weight:600;color:#15803d;cursor:pointer;margin:0;white-space:nowrap;';
+
+	const date_input = document.createElement('input');
+	date_input.type = 'date';
+	date_input.value = current_override ? current_override.split(' ')[0] : '';
+	date_input.style.cssText = [
+		`display:${current_override ? 'inline-block' : 'none'}`,
+		'font-size:12px', 'padding:2px 6px',
+		'border:1px solid #86efac', 'border-radius:4px',
+		'color:#15803d', 'font-weight:600',
+	].join(';');
+
+	const spinner = document.createElement('span');
+	spinner.style.cssText = 'display:none;font-size:11px;color:#64748b;';
+	spinner.textContent = 'Saving…';
+
+	override_bar.appendChild(chk);
+	override_bar.appendChild(chk_label);
+	override_bar.appendChild(date_input);
+	override_bar.appendChild(spinner);
+	container.appendChild(override_bar);
+
+	// Checkbox change: show/hide date input; unchecking clears the override
+	chk.addEventListener('change', () => {
+		if (chk.checked) {
+			date_input.style.display = 'inline-block';
+			date_input.focus();
+		} else {
+			date_input.style.display = 'none';
+			date_input.value = '';
+			spinner.style.display = 'inline';
+			chk.disabled = true;
+			frappe.call({
+				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.clear_rm_received_date',
+				args: { docname: frm.doc.name, so_name },
+				callback: () => {
+					spinner.style.display = 'none';
+					chk.disabled = false;
+					frm.reload_doc();
+				},
+				error: () => {
+					spinner.style.display = 'none';
+					chk.disabled = false;
+					frappe.msgprint({ title: 'Error', message: 'Could not clear RM Received Date.', indicator: 'red' });
+				},
+			});
+		}
+	});
+
+	// Date change: save override and recalculate via atomic server call
+	date_input.addEventListener('change', () => {
+		const date_val = date_input.value;
+		if (!date_val) return;
+		spinner.style.display = 'inline';
+		date_input.disabled = true;
+		chk.disabled = true;
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.set_rm_received_date',
+			args: { docname: frm.doc.name, so_name, rm_received_date: date_val },
+			callback: () => {
+				spinner.style.display = 'none';
+				date_input.disabled = false;
+				chk.disabled = false;
+				frm.reload_doc();
+			},
+			error: () => {
+				spinner.style.display = 'none';
+				date_input.disabled = false;
+				chk.disabled = false;
+				frappe.msgprint({ title: 'Error', message: 'Could not set RM Received Date.', indicator: 'red' });
+			},
+		});
+	});
+
+	// If no MR items, the override bar is enough — skip the grid
+	if (!has_items) return;
+
+	// ── AG Grid ────────────────────────────────────────────────────────────────
 	const mr_el = document.createElement('div');
 	mr_el.className = 'ag-theme-alpine';
 	mr_el.style.cssText = 'height:' + Math.max(160, mr_items.length * 40 + 56) + 'px; width:100%;';
@@ -5093,12 +5193,10 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			headerName: 'Item Name', field: 'item_name', width: 160,
 			cellRenderer: p => `<span style="color:#64748b;font-size:11px;">${p.data ? (p.data.item_name || p.data.description || '') : ''}</span>`
 		},
-
 		{
 			headerName: 'Qty As Per BOM', field: 'required_bom_qty', width: 130, type: 'numericColumn',
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
-
 		{
 			headerName: 'Planned Qty', field: _par ? 'qty' : 'quantity', width: 100, type: 'numericColumn',
 			valueFormatter: p => p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '',
@@ -5134,7 +5232,6 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				});
 			}
 		},
-
 		{ headerName: 'UOM', field: 'uom', width: 65 },
 		...(_par ? [
 			{ headerName: 'GRN Days', field: 'grn_days', width: 80, type: 'numericColumn' },
@@ -5152,20 +5249,6 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			cellStyle: { color: '#842029', fontWeight: '600' },
 			valueFormatter: p => _format_bpp_date(p.value, '')
 		},
-
-		// {
-		// 	headerName: 'Supplier',
-		// 	field: _par ? 'supplier' : 'custom_supplier',
-		// 	width: 190,
-		// 	editable: true,
-		// 	cellEditor: 'agSelectCellEditor',
-		// 	cellEditorParams: p => ({
-		// 		values: p.data?.supplier_list || []
-		// 	}),
-		// 	cellRenderer: p => {
-		// 		return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
-		// 	}
-		// },
 		{
 			headerName: 'Supplier',
 			field: _par ? 'supplier' : 'custom_supplier',
@@ -5180,55 +5263,45 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
-		
 	];
 
-	// agGrid.createGrid(mr_el, {
-	// 	columnDefs: mr_cols,
-	// 	rowData: mr_items,
-	// 	defaultColDef: { resizable: true, sortable: true, filter: true },
-	// 	rowHeight: 36,
-	// 	headerHeight: 40,
-	// });
-
 	agGrid.createGrid(mr_el, {
-    columnDefs: mr_cols,
-    rowData: mr_items,
-    defaultColDef: { resizable: true, sortable: true, filter: true },
-    rowHeight: 36,
-    headerHeight: 40,
-    onCellValueChanged: p => {
-    if (!p.data || p.oldValue === p.newValue) return;
-    const fieldname = p.colDef.field;
-    if (!fieldname) return;
+		columnDefs: mr_cols,
+		rowData: mr_items,
+		defaultColDef: { resizable: true, sortable: true, filter: true },
+		rowHeight: 36,
+		headerHeight: 40,
+		onCellValueChanged: p => {
+			if (!p.data || p.oldValue === p.newValue) return;
+			const fieldname = p.colDef.field;
+			if (!fieldname) return;
 
-    const mr_row = (frm.doc.mr_items || []).find(r =>
-        r.item_code === p.data.item_code &&
-        r.sales_order === p.data.sales_order
-    );
+			const mr_row = (frm.doc.mr_items || []).find(r =>
+				r.item_code === p.data.item_code &&
+				r.sales_order === p.data.sales_order
+			);
 
-    if (!mr_row) {
-        _mark_form_dirty(frm);
-        return;
-    }
+			if (!mr_row) {
+				_mark_form_dirty(frm);
+				return;
+			}
 
-    const db_field = _par ? 'supplier' : 'custom_supplier';
+			const db_field = _par ? 'supplier' : 'custom_supplier';
 
-    if (fieldname === 'supplier' || fieldname === 'custom_supplier') {
-        frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
-            _mark_form_dirty(frm);
-        });
-        return;
-    }
+			if (fieldname === 'supplier' || fieldname === 'custom_supplier') {
+				frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
+					_mark_form_dirty(frm);
+				});
+				return;
+			}
 
-    // Handle date fields
-    if (['start_date', 'custom_start_date', 'end_date', 'schedule_date'].includes(fieldname)) {
-        frappe.model.set_value(mr_row.doctype, mr_row.name, fieldname, p.newValue).then(() => {
-            _mark_form_dirty(frm);
-        });
-    }
-}
-});
+			if (['start_date', 'custom_start_date', 'end_date', 'schedule_date'].includes(fieldname)) {
+				frappe.model.set_value(mr_row.doctype, mr_row.name, fieldname, p.newValue).then(() => {
+					_mark_form_dirty(frm);
+				});
+			}
+		}
+	});
 }
 
 

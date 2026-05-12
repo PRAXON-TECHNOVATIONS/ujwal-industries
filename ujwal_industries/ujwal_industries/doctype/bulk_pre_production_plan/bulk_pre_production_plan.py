@@ -2569,6 +2569,22 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"row_name":   mr.name,
 			})
 
+
+		# ── SO-level RM received date override ────────────────────────────────────────
+		_so_row_obj = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
+		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
+		if _so_rm_override:
+			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
+			for _mr_r in mr_rows_out:
+				if flt(_mr_r.get("qty", 0)) > 0:
+					_gd = int(_mr_r.get("grn_days", 0))
+					_ld = int(_mr_r.get("lead_days", 0))
+					_mr_r["end_date"] = str(_override_dt)
+					_mr_r["start_date"] = str(_snap_start(
+						_working_day_subtract(_override_dt, _gd + _ld, default_holidays),
+						default_shift_config,
+					))
+			max_mr_end_dt = _override_dt
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
 		# SFG must always start exactly when MR arrives (material available).
@@ -3444,6 +3460,22 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"row_name":   mr.name,
 			})
 
+
+		# ── SO-level RM received date override ────────────────────────────────────────
+		_so_row_obj = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
+		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
+		if _so_rm_override:
+			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
+			for _mr_r in mr_rows_out:
+				if flt(_mr_r.get("qty", 0)) > 0:
+					_gd = int(_mr_r.get("grn_days", 0))
+					_ld = int(_mr_r.get("lead_days", 0))
+					_mr_r["end_date"] = str(_override_dt)
+					_mr_r["start_date"] = str(_snap_start(
+						_working_day_subtract(_override_dt, _gd + _ld, default_holidays),
+						default_shift_config,
+					))
+			max_mr_end_dt = _override_dt
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
 		# SFG must always start exactly when MR arrives (material available).
@@ -5445,3 +5477,56 @@ def get_bin_data(item_code=None, warehouse=None):
 
 	p_qty = query.run(as_dict=True)
 	return p_qty
+
+
+# ---------------------------------------------------------------------------
+# RM Received Date Override — atomic server functions
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def set_rm_received_date(docname: str, so_name: str, rm_received_date: str) -> dict:
+	"""
+	Atomically save the RM received date override for an SO, recalculate the
+	consolidated batch schedule forward from that date, and persist everything.
+	"""
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Sales Order`
+		   SET custom_rm_received_date = %s
+		   WHERE parent = %s AND sales_order = %s""",
+		(rm_received_date or None, docname, so_name),
+	)
+	frappe.db.commit()
+
+	schedule = calculate_consolidated_batch_schedule(docname)
+
+	frappe.db.set_value(
+		"Bulk Pre Production Plan", docname,
+		"custom_batch_schedule", frappe.as_json(schedule),
+		update_modified=False,
+	)
+	frappe.db.commit()
+	return schedule
+
+
+@frappe.whitelist()
+def clear_rm_received_date(docname: str, so_name: str) -> dict:
+	"""
+	Clear the RM received date override for an SO and revert to backward-scheduled dates.
+	"""
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Sales Order`
+		   SET custom_rm_received_date = NULL
+		   WHERE parent = %s AND sales_order = %s""",
+		(docname, so_name),
+	)
+	frappe.db.commit()
+
+	schedule = calculate_consolidated_batch_schedule(docname)
+
+	frappe.db.set_value(
+		"Bulk Pre Production Plan", docname,
+		"custom_batch_schedule", frappe.as_json(schedule),
+		update_modified=False,
+	)
+	frappe.db.commit()
+	return schedule
