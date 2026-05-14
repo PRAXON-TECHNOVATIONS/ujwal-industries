@@ -167,9 +167,12 @@ function update_status_indicator(frm) {
 			if (data.status !== "Work In Progress") return;
 
 			// Find the active time log (no to_time = job is currently running)
+			// Fall back to the most recent log if the job is paused between partial completions
 			let active_log = null;
+			let last_log = null;
 			(data.time_logs || []).forEach(function(log) {
 				if (!log.to_time) active_log = log;
+				last_log = log;
 			});
 
 			let $card = me.$wrapper.find("[data-name='" + data.name + "']");
@@ -185,8 +188,9 @@ function update_status_indicator(frm) {
 			);
 
 			// Current operator label below the buttons
-			let emp_display = active_log
-				? (active_log.employee_name || active_log.employee || __("Not assigned"))
+			let display_log = active_log || last_log;
+			let emp_display = display_log
+				? (display_log.employee_name || display_log.employee || __("Not assigned"))
 				: __("Not assigned");
 
 			$btn_col.append(
