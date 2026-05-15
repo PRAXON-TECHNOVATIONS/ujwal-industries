@@ -152,7 +152,7 @@ frappe.ui.form.on("BOM Operation", {
 function add_change_log(frm, fieldname) {
 
     const IGNORE_FIELDS = [
-            "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "raw_material_cost", "base_raw_material_cost", "total_cost", "base_total_cost"];
+            "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "raw_material_cost", "base_raw_material_cost", "total_cost", "base_total_cost","base_scrap_material_cost","scrap_material_cost"];
 
     if (IGNORE_FIELDS.includes(fieldname)) return;
 
@@ -170,18 +170,27 @@ function add_change_log(frm, fieldname) {
     frm.refresh_field("change_log");
 }
 
-
 function add_child_change_log(frm, cdt, cdn, fieldname) {
-
-    const IGNORE_FIELDS = ["name", "owner", "creation", "modified",  "modified_by", "idx", "docstatus", "amount","base_amount" ,"qty_consumed_per_unit" ,"rate"];
+    const IGNORE_FIELDS = ["name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "amount", "base_amount", "qty_consumed_per_unit", "rate"];
     if (IGNORE_FIELDS.includes(fieldname)) return;
+
     let df = frappe.meta.get_docfield(cdt, fieldname);
     if (!df) return;
+
     let label = df.label || fieldname;
     let row = locals[cdt][cdn];
-    let full_label = `Items → Row ${row.idx} → ${label}`;
+
+    const TABLE_LABEL_MAP = {
+        "BOM Item": "Items",
+        "BOM Scrap Item": "Scrap Items"
+    };
+
+    let tableLabel = TABLE_LABEL_MAP[cdt] || cdt;
+    let full_label = `${tableLabel} → Row ${row.idx} → ${label}`;
+
     let exists = (frm.doc.change_log || [])
         .some(r => r.filed_name === full_label);
+    if (exists) return;
 
     let log = frm.add_child("change_log");
     log.filed_name = full_label;
