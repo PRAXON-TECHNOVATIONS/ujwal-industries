@@ -20,6 +20,7 @@
   "items_generated",
   "merged",
   "custom_pp_created",
+  "custom_rm_received_date",
   "order_type",
   "items_details"
  ],
@@ -124,6 +125,11 @@
    "fieldtype": "Check",
    "label": "Production Plan Created",
    "read_only": 1
+  },
+  {
+   "fieldname": "custom_rm_received_date",
+   "fieldtype": "Date",
+   "label": "RM Received Date"
   },
   {
    "default": "0",
