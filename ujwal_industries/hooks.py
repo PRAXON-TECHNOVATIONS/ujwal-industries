@@ -234,6 +234,8 @@ doc_events = {
 	},
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field",
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_material_request_create",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_sales_purchase_head_on_material_request_submit",
 	},
  
 	"Sales Order": {
@@ -280,7 +282,12 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
 	},
 	"Work Order":{
-		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert"
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_production_supervisor_on_work_order_create",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+	},
+	"Subcontracting Order": {
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_outsource_store_manager_on_subcontract_create",
 	},
  	"Quality Inspection": {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
@@ -305,6 +312,7 @@ doc_events = {
 	"Purchase Order":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.purchase_order.autoname",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_purchase_order_submit",
 	},
 	"Quotation":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",
