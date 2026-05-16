@@ -651,6 +651,7 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
 
     job_card_id = args.get("job_card_id")
     pause_reason = args.get("pause_reason")
+    completed_qty = flt(args.get("completed_qty") or 0)
 
     if not job_card_id:
         frappe.throw("Job Card ID is required")
@@ -674,13 +675,12 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
 
     # Find the most recent time log entry (the one just created)
     if job_card.time_logs and len(job_card.time_logs) > 0:
-        # The latest time log will be the last one
         latest_time_log = job_card.time_logs[-1]
-
-        # Set the pause reason in the time log
         latest_time_log.custom_pause_reason = pause_reason
+        if completed_qty > 0:
+            latest_time_log.completed_qty = completed_qty
 
-    # Save the job card to persist the pause reason in time log
+    # Save the job card to persist the pause reason and completed qty in time log
     job_card.save(ignore_permissions=True)
     # AVI
     _create_job_card_downtime(job_card, pause_reason)
