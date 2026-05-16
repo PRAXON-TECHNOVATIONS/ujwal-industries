@@ -3757,23 +3757,25 @@ function _get_supplier_options(txt) {
 
 
 function _get_workstation_options(txt) {
-	const search = (txt || '').toLowerCase().trim();
+	const search = (txt || '').trim();
+	const args = {
+		doctype: 'Workstation',
+		fields: ['name', 'custom_asset'],
+		limit_page_length: 0
+	};
+	if (search) {
+		args.or_filters = [
+			['name', 'like', `%${search}%`],
+			['custom_asset', 'like', `%${search}%`]
+		];
+	}
 	return frappe.call({
 		method: 'frappe.client.get_list',
-		args: {
-			doctype: 'Workstation',
-			fields: ['name', 'custom_asset'],
-			limit_page_length: 50
-		}
+		args
 	}).then(res => {
 		const rows = res.message || [];
-		const formatted = rows.map(ws =>
+		return rows.map(ws =>
 			ws.custom_asset ? `${ws.name}-${ws.custom_asset}` : ws.name
-		);
-		if (!search) return formatted;
-		// Filter by both ID and asset name
-		return formatted.filter(label =>
-			label.toLowerCase().includes(search)
 		);
 	});
 }
