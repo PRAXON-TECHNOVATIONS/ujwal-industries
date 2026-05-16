@@ -535,86 +535,8 @@ def _is_within_tolerance(
 
 
 def validate_sequence_id_with_tolerance(self) -> None:
-    """
-    Override of standard validate_sequence_id that applies tolerance-based validation.
-
-    The standard ERPNext validation requires that completed quantity of current operation
-    cannot exceed completed quantity of previous operations. This override allows a small
-    tolerance (defined in Item master's custom_tolerance_ field) to account for minor
-    measurement variations in manufacturing.
-
-    For example, if previous operation has 1,600,000 completed and tolerance is 0.5%:
-    - Tolerance amount = 1,600,000 * 0.5 / 100 = 8,000
-    - Max acceptable for current operation = 1,608,000
-    """
-    from frappe import _
-    from frappe.utils import get_link_to_form
-    from frappe import bold
-
-    if self.is_corrective_job_card:
-        return
-
-    if not (self.work_order and self.sequence_id):
-        return
-
-    if getattr(self, "_action", None) == "submit" and _get_cascade_flag(self.bom_no, self.operation):
-        return
-
-    precision = self.precision("total_completed_qty")
-
-    current_operation_qty = 0.0
-    data = self.get_current_operation_data()
-    if data and len(data) > 0:
-        current_operation_qty = flt(data[0].completed_qty)
-
-    current_operation_qty += flt(self.total_completed_qty)
-
-    # Get tolerance from Item master
-    tolerance_percentage = _get_item_tolerance(self.production_item)
-
-    data = frappe.get_all(
-        "Work Order Operation",
-        fields=["operation", "status", "completed_qty", "sequence_id"],
-        filters={"docstatus": 1, "parent": self.work_order, "sequence_id": ("<", self.sequence_id)},
-        order_by="sequence_id, idx",
-    )
-
-    message = "Job Card {}: As per the sequence of the operations in the work order {}".format(
-        bold(self.name), bold(get_link_to_form("Work Order", self.work_order))
-    )
-
-    for row in data:
-        previous_qty = flt(row.completed_qty, precision)
-        current_qty = flt(current_operation_qty, precision)
-
-        # Check if current qty exceeds previous qty beyond tolerance
-        if not _is_within_tolerance(current_qty, previous_qty, tolerance_percentage, precision):
-            if row.status != "Completed":
-                frappe.throw(
-                    _("{0}, complete the operation {1} before the operation {2}.").format(
-                        message, bold(row.operation), bold(self.operation)
-                    ),
-                )
-            else:
-                # Calculate acceptable range for error message
-                tolerance_amount = flt((previous_qty * tolerance_percentage) / 100, precision)
-                max_acceptable = flt(previous_qty + tolerance_amount, precision)
-
-                frappe.throw(
-                    _(
-                        "The completed quantity {0} of operation {1} exceeds the acceptable range.<br>"
-                        "Previous operation {2} completed: {3}<br>"
-                        "Tolerance: +{4}%<br>"
-                        "Maximum acceptable: {5}"
-                    ).format(
-                        bold(current_qty),
-                        bold(self.operation),
-                        bold(row.operation),
-                        bold(previous_qty),
-                        bold(tolerance_percentage),
-                        bold(max_acceptable),
-                    )
-                )
+    # Sequence order validation disabled — operations can be completed in any order.
+    return
 
 
 def _apply_job_card_patches() -> None:
