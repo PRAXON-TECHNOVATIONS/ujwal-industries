@@ -418,7 +418,20 @@ class CustomProductionPlan(ProductionPlan):
             row_data = frappe.get_doc("Production Plan Sub Assembly Item", item.get('production_plan_sub_assembly_item'))
 
         if row_data.custom_workstation:
-            workstation_list = [ws.strip() for ws in row_data.custom_workstation.split(',') if ws.strip()]
+            raw_workstations = [ws.strip() for ws in row_data.custom_workstation.split(',') if ws.strip()]
+            # custom_workstation may store display format "ID-Name" (e.g. "UI/MC/91-Spot Welding").
+            # Resolve each entry to a valid Workstation name.
+            existing_names = set(frappe.get_all("Workstation", filters={"name": ["in", raw_workstations]}, pluck="name"))
+            workstation_list = []
+            for ws in raw_workstations:
+                if ws in existing_names:
+                    workstation_list.append(ws)
+                elif '-' in ws:
+                    # Strip the display suffix: "UI/MC/91-Spot Welding" -> "UI/MC/91"
+                    candidate = ws.split('-', 1)[0].strip()
+                    workstation_list.append(candidate if frappe.db.exists("Workstation", candidate) else ws)
+                else:
+                    workstation_list.append(ws)
 
             if workstation_list:
                 final_operation = []
