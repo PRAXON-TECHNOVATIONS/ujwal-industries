@@ -251,6 +251,7 @@ function show_pause_reason_dialog(frm) {
 				label: __("Start Counter"),
 				fieldname: "start_counter",
 				reqd: 1,
+				default: flt(frm.doc.total_completed_qty || 0),
 				description: __("Counter reading at job start")
 			},
 			{
