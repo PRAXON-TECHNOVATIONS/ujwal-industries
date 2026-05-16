@@ -229,39 +229,86 @@ function hide_job_card_timer(frm) {
 }
 
 /**
- * Show dialog to capture pause reason
+ * Show dialog to capture pause reason and counter readings
  */
 function show_pause_reason_dialog(frm) {
-	const fields = [
-		{
-			fieldtype: "Link",
-			label: __("Pause Reason"),
-			options: "Job Card Pause Reason",
-			fieldname: "pause_reason",
-			reqd: 1
+	const d = new frappe.ui.Dialog({
+		title: __("Pause Job"),
+		fields: [
+			{
+				fieldtype: "Link",
+				label: __("Pause Reason"),
+				options: "Job Card Pause Reason",
+				fieldname: "pause_reason",
+				reqd: 1
+			},
+			{
+				fieldtype: "Section Break",
+				label: __("Machine Counter")
+			},
+			{
+				fieldtype: "Float",
+				label: __("Start Counter"),
+				fieldname: "start_counter",
+				reqd: 1,
+				description: __("Counter reading at job start")
+			},
+			{
+				fieldtype: "Column Break"
+			},
+			{
+				fieldtype: "Float",
+				label: __("End Counter"),
+				fieldname: "end_counter",
+				reqd: 1,
+				description: __("Current counter reading")
+			},
+			{
+				fieldtype: "Section Break"
+			},
+			{
+				fieldtype: "Float",
+				label: __("Completed Qty"),
+				fieldname: "completed_qty",
+				read_only: 1,
+				description: __("Auto-calculated: End Counter − Start Counter")
+			}
+		],
+		primary_action_label: __("Pause Job"),
+		primary_action(values) {
+			const completed_qty = flt(values.end_counter) - flt(values.start_counter);
+			if (completed_qty < 0) {
+				frappe.msgprint(__("End Counter cannot be less than Start Counter"));
+				return;
+			}
+			d.hide();
+			pause_job_with_reason(frm, values.pause_reason, completed_qty);
 		}
-	];
+	});
 
-	frappe.prompt(
-		fields,
-		(values) => {
-			// Pause the job and save the reason
-			pause_job_with_reason(frm, values.pause_reason);
-		},
-		__("Select Pause Reason"),
-		__("Pause Job")
-	);
+	// Auto-calculate completed qty whenever start or end counter changes
+	function recalculate() {
+		const start = flt(d.get_value("start_counter") || 0);
+		const end = flt(d.get_value("end_counter") || 0);
+		d.set_value("completed_qty", Math.max(0, end - start));
+	}
+
+	d.fields_dict.start_counter.$input.on("change", recalculate);
+	d.fields_dict.end_counter.$input.on("change", recalculate);
+
+	d.show();
 }
 
 /**
- * Pause job and save the pause reason
+ * Pause job and save the pause reason with completed qty
  */
-function pause_job_with_reason(frm, pause_reason) {
+function pause_job_with_reason(frm, pause_reason, completed_qty) {
 	const args = {
 		job_card_id: frm.doc.name,
 		complete_time: frappe.datetime.now_datetime(),
 		status: "On Hold",
-		pause_reason: pause_reason
+		pause_reason: pause_reason,
+		completed_qty: flt(completed_qty || 0)
 	};
 
 	// Call custom method to handle pause with reason
