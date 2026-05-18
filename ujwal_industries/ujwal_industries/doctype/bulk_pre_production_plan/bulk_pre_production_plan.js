@@ -1216,7 +1216,7 @@ function _render_sequential_grid(frm, so_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'production_item', width: 160, pinned: 'left',
+			headerName: 'Item Code', field: 'production_item', width: 120, pinned: 'left',
 			cellRenderer: p => `<strong>${p.value || ''}</strong>`
 		},
 		{
@@ -1238,7 +1238,7 @@ function _render_sequential_grid(frm, so_data, container) {
 			cellRenderer: p => p.value || '—'
 		},
 		{
-			headerName: 'Qty', field: 'qty', width: 90, type: 'numericColumn',
+			headerName: 'Qty', field: 'qty', width: 120, type: 'numericColumn',
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
 		{
@@ -1252,14 +1252,14 @@ function _render_sequential_grid(frm, so_data, container) {
 			valueFormatter: p => _format_bpp_date(p.value)
 		},
 		{
-			headerName: 'Supplier', field: 'supplier', width: 150,
+			headerName: 'Supplier', field: 'supplier', width: 140,
 			editable: p => p.data?.type_of_manufacturing !== 'In House',
 			cellRenderer: p => p.data?.type_of_manufacturing === 'In House'
 				? '<span style="color:#94a3b8;">—</span>'
 				: (p.value || '')
 		},
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => {
 				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
 				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
@@ -1284,7 +1284,7 @@ function _render_sequential_grid(frm, so_data, container) {
 			cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
 		},
 		{
-			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false, filter: false,
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false, filter: false,
 			editable: true,
 			autoHeight: true,
 			cellStyle: {
@@ -1308,7 +1308,7 @@ function _render_sequential_grid(frm, so_data, container) {
 			)
 		},
 		{
-			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false, filter: false,
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false, filter: false,
 			editable: true,
 			autoHeight: true,
 			cellStyle: {
@@ -1593,7 +1593,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -1628,7 +1628,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 			autoHeight: true,
 			cellStyle: p => {
@@ -1668,7 +1668,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false,
 			editable: p => !!p.data?._is_group,
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
@@ -1690,7 +1690,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'Qty',
-			width: 95,
+			width: 120,
 			type: 'numericColumn',
 
 			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
@@ -1856,7 +1856,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 180,
+			headerName: 'Supplier', field: 'supplier', width: 140,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -1871,7 +1871,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
@@ -2017,7 +2017,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2053,7 +2053,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Machines', field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 
@@ -2097,7 +2097,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false,
 			editable: p => !!p.data?._is_group,
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
@@ -2123,7 +2123,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		// },
 
 		{
-			headerName: 'Qty',width: 95,type: 'numericColumn',
+			headerName: 'Qty',width: 120,type: 'numericColumn',
 			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
 			cellStyle: p => {
@@ -2280,7 +2280,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 180,
+			headerName: 'Supplier', field: 'supplier', width: 140,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -2293,7 +2293,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
@@ -2485,7 +2485,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2493,7 +2493,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Item Name', field: 'item_name', width: 160, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 220, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `${p.value}` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2526,7 +2526,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		// },
 
 		{
-			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines',field: 'custom_workstations_csv', width: 270, sortable: false,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 			autoHeight: true,
 			cellStyle: p => {
@@ -2566,7 +2566,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false,
 			editable: p => !!p.data?._is_group,
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
@@ -2588,7 +2588,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
             headerName: 'Qty As Per BOM',
-            width: 95,
+            width: 120,
             type: 'numericColumn',
 
 			valueGetter: p => p.data?._is_group ? p.data.planned_qty_as_show : null,
@@ -2622,7 +2622,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
         },
         {
             headerName: 'Planned Qty',
-            width: 95,
+            width: 120,
             type: 'numericColumn',
 
 			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
@@ -2810,7 +2810,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 		
 		{
-			headerName: 'Supplier', field: 'supplier', width: 180,
+			headerName: 'Supplier', field: 'supplier', width: 140,
 
 			editable: p =>!!p.data?._is_group && ['Subcontract', 'In House - Vendor'].includes(p.data?.type),
 
@@ -2831,7 +2831,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
@@ -2984,14 +2984,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
 		{
-			headerName: 'Item Name', field: 'item_name', width: 160, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 220, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `${p.value}` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -3023,7 +3023,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		// },
 
 		{
-			headerName: 'Machines',field: 'custom_workstations_csv', width: 340, sortable: false,
+			headerName: 'Machines',field: 'custom_workstations_csv', width: 270, sortable: false,
 
 			editable: p => !!p.data?._is_group && p.data?.type !== 'Subcontract',
 			autoHeight: true,
@@ -3065,7 +3065,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 240, sortable: false,
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false,
 			editable: p => !!p.data?._is_group,
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
@@ -3087,7 +3087,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		
 		{
             headerName: 'Qty As Per BOM',
-            width: 95,
+            width: 120,
             type: 'numericColumn',
 
 			valueGetter: p => p.data?._is_group ? p.data.qty_as_show : null,
@@ -3121,7 +3121,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
             
         },
         {
-            headerName: 'Planned Qty',width: 95,type: 'numericColumn',
+            headerName: 'Planned Qty',width: 120,type: 'numericColumn',
 
 			valueGetter: p => p.data?._is_group ? p.data.total_qty : p.data?.qty,
 
@@ -3306,7 +3306,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 180,
+			headerName: 'Supplier', field: 'supplier', width: 140,
 
 			editable: p => !!p.data?._is_group && ['Subcontract', 'In House - Vendor'].includes(p.data?.type),
 
@@ -3328,7 +3328,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
 				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
@@ -5295,11 +5295,11 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	const _par = prefix === 'par';
 	const mr_cols = [
 		{
-			headerName: 'Item Code', field: 'item_code', width: 130,
+			headerName: 'Item Code', field: 'item_code', width: 120,
 			cellRenderer: p => `<strong>${p.value || ''}</strong>`
 		},
 		{
-			headerName: 'Item Name', field: 'item_name', width: 160,
+			headerName: 'Item Name', field: 'item_name', width: 220,
 			cellRenderer: p => `<span style="color:#64748b;font-size:11px;">${p.data ? (p.data.item_name || p.data.description || '') : ''}</span>`
 		},
 		{
@@ -5318,7 +5318,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			}
 		},
 		{
-			headerName: 'Planned Qty', field: _par ? 'qty' : 'quantity', width: 100, type: 'numericColumn',
+			headerName: 'Planned Qty', field: _par ? 'qty' : 'quantity', width: 120, type: 'numericColumn',
 			valueFormatter: p => p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '',
 			cellStyle: p => {
 				const bom_qty = Number(p.data?.required_bom_qty) || 0;
@@ -5372,7 +5372,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		{
 			headerName: 'Supplier',
 			field: _par ? 'supplier' : 'custom_supplier',
-			width: 190,
+			width: 140,
 			editable: true,
 			cellEditor: SupplierPopupEditor,
 			cellEditorPopup: true,
@@ -5384,7 +5384,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			}
 		},
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
 			cellRenderer: p => p.value
 				? `<span style="color:#374151;">${p.value}</span>`
 				: '<span style="color:#94a3b8;">—</span>'
