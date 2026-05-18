@@ -50,6 +50,9 @@ def adjust_mr_items_and_propagate(doc: Document, method: str | None = None) -> N
         return
     # AVI
 
+    if doc.get("custom_bulk_pre_production_plan"):
+        return
+
     if _get_allow_backdated_setting():
         return
 

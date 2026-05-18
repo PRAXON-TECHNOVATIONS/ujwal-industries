@@ -2575,15 +2575,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
 		if _so_rm_override:
 			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
+			_override_start_dt = _snap_start(get_datetime(_so_rm_override), default_shift_config)
 			for _mr_r in mr_rows_out:
 				if flt(_mr_r.get("qty", 0)) > 0:
-					_gd = int(_mr_r.get("grn_days", 0))
-					_ld = int(_mr_r.get("lead_days", 0))
 					_mr_r["end_date"] = str(_override_dt)
-					_mr_r["start_date"] = str(_snap_start(
-						_working_day_subtract(_override_dt, _gd + _ld, default_holidays),
-						default_shift_config,
-					))
+					_mr_r["start_date"] = str(_override_start_dt)
 			max_mr_end_dt = _override_dt
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
@@ -3466,15 +3462,11 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
 		if _so_rm_override:
 			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
+			_override_start_dt = _snap_start(get_datetime(_so_rm_override), default_shift_config)
 			for _mr_r in mr_rows_out:
 				if flt(_mr_r.get("qty", 0)) > 0:
-					_gd = int(_mr_r.get("grn_days", 0))
-					_ld = int(_mr_r.get("lead_days", 0))
 					_mr_r["end_date"] = str(_override_dt)
-					_mr_r["start_date"] = str(_snap_start(
-						_working_day_subtract(_override_dt, _gd + _ld, default_holidays),
-						default_shift_config,
-					))
+					_mr_r["start_date"] = str(_override_start_dt)
 			max_mr_end_dt = _override_dt
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
@@ -5504,6 +5496,18 @@ def set_rm_received_date(docname: str, so_name: str, rm_received_date: str) -> d
 		"custom_batch_schedule", frappe.as_json(schedule),
 		update_modified=False,
 	)
+
+	# Also update the actual child rows so PP creation picks up the correct dates
+	for so_data in (schedule or {}).values():
+		for mr_data in so_data.get("mr") or []:
+			row_name = mr_data.get("row_name")
+			if not row_name:
+				continue
+			frappe.db.set_value("Bulk PP Material Request Item", row_name, {
+				"custom_start_date": mr_data.get("start_date") or None,
+				"schedule_date":     mr_data.get("end_date") or None,
+			})
+
 	frappe.db.commit()
 	return schedule
 
