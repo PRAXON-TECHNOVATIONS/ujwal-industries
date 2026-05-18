@@ -73,6 +73,10 @@ frappe.ui.form.on('Production Plan', {
 
 	},
 
+	after_save: function (frm) {
+		frm.reload_doc();
+	},
+
 	before_submit: function (frm) {
 		if (frm.ignore_tool_confirm) {
 			return;

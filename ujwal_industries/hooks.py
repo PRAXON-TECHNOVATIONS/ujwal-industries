@@ -62,7 +62,7 @@ app_include_js = [
 
 # include js in doctype views
 doctype_js = {
-	"Production Plan": "public/js/production_plan_subcontracting.js",
+	"Production Plan": "public/js/production_plan_subcontracting.js?V=0.1.31",
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
@@ -168,11 +168,12 @@ after_uninstall = "ujwal_industries.ujwal_industries.uninstall.after_uninstall"
 permission_query_conditions = {
 	"Workstation": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_workstation",
 	"Job Card": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_job_card",
+	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_query_work_order",
 }
 #
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+has_permission = {
+	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_work_order",
+}
 
 # DocType Class
 # ---------------

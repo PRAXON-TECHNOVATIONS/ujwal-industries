@@ -1529,6 +1529,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				actual_qty: fg.actual_qty,
 				planned_qty_as_show: fg.planned_qty_as_show,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
+				mfg_days_total: batches.reduce((s, b) => s + (b.mfg_days || 0), 0),
+				grn_days_total: batches.reduce((s, b) => s + (b.grn_days || 0), 0),
+				pm_days_total: batches.reduce((s, b) => s + (b.pm_days || 0), 0),
+				holiday_count_total: batches.reduce((s, b) => s + (b.holiday_count || 0), 0),
 				per_shift_qty: fg.per_shift_qty || 0,
 				batchsize: fg.batchsize || 0,
 				// spm: fg.spm || 0,
@@ -1738,30 +1742,45 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.mfg_days_total : p.data?.mfg_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.grn_days_total : p.data?.grn_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.pm_days_total : p.data?.pm_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+			valueGetter: p => p.data?._is_group ? p.data?.holiday_count_total : p.data?.holiday_count,
 
 			cellStyle: p => (p.value > 0)
 				? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }
 				: {},
 
 			cellRenderer: p => {
-				if (p.data?._is_group) return '';
+				if (p.data?._is_group) {
+					const total = p.data?.holiday_count_total || 0;
+					return total ? `<strong style="color:#dc2626;">${total}</strong>` : '';
+				}
 
 				const count = p.data?.holiday_count || 0;
 				if (!count) return '';
@@ -1938,6 +1957,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				actual_qty: sfg.actual_qty,
 				qty_as_show: sfg.qty_as_show,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
+				mfg_days_total: batches.reduce((s, b) => s + (b.mfg_days || 0), 0),
+				grn_days_total: batches.reduce((s, b) => s + (b.grn_days || 0), 0),
+				pm_days_total: batches.reduce((s, b) => s + (b.pm_days || 0), 0),
+				holiday_count_total: batches.reduce((s, b) => s + (b.holiday_count || 0), 0),
 				per_shift_qty: sfg.per_shift_qty || 0,
 				batchsize: sfg.batchsize || 0,
 				// spm: sfg.spm || 0,
@@ -2147,23 +2170,35 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.mfg_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.mfg_days_total : p.data?.mfg_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.grn_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.grn_days_total : p.data?.grn_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.pm_days,
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			valueGetter: p => p.data?._is_group ? p.data?.pm_days_total : p.data?.pm_days,
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
 			valueGetter: p => {
-				if (p.data?._is_group) return null;
+				if (p.data?._is_group) return p.data?.holiday_count_total;
 				if (p.data?.type === 'Subcontract') return 0;
 				return p.data?.holiday_count || 0;
 			},
@@ -2173,7 +2208,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				: {},
 
 			cellRenderer: p => {
-				if (p.data?._is_group) return '';
+				if (p.data?._is_group) {
+					const total = p.data?.holiday_count_total || 0;
+					return total ? `<strong style="color:#dc2626;">${total}</strong>` : '';
+				}
 
 				const count = p.data?.holiday_count || 0;
 				if (!count) return '';
@@ -2381,10 +2419,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				actual_qty: fg.actual_qty,
 				planned_qty_as_show: fg.planned_qty_as_show,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
+				mfg_days_total: batches.reduce((s, b) => s + (b.mfg_days || 0), 0),
+				grn_days_total: batches.reduce((s, b) => s + (b.grn_days || 0), 0),
+				pm_days_total: batches.reduce((s, b) => s + (b.pm_days || 0), 0),
+				holiday_count_total: batches.reduce((s, b) => s + (b.holiday_count || 0), 0),
 				per_shift_qty: fg.per_shift_qty || 0,
 				batchsize: fg.batchsize || 0,
 				// spm: fg.spm || 0,
-				spm: fg.spm_1 || 0,	
+				spm: fg.spm_1 || 0,
 				start_date: batches[0]?.start_date || '',
 				end_date: batches[batches.length - 1]?.end_date || '',
 			});
@@ -2641,47 +2683,58 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.mfg_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
 			},
-			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.grn_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.grn_days) || 0);
 			},
-			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.pm_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.pm_days) || 0);
 			},
-			
-			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
-			valueGetter: p => p.data?._is_group ? null : p.data?.holiday_count,
+			valueGetter: p => p.data?._is_group ? p.data?.holiday_count_total : p.data?.holiday_count,
 
 			cellStyle: p => (p.value > 0)
 				? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }
 				: {},
 
 			cellRenderer: p => {
-				if (p.data?._is_group) return '';
+				if (p.data?._is_group) {
+					const total = p.data?.holiday_count_total || 0;
+					return total ? `<strong style="color:#dc2626;">${total}</strong>` : '';
+				}
 
 				const count = p.data?.holiday_count || 0;
 				if (!count) return '';
@@ -2869,6 +2922,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				actual_qty: sfg.actual_qty,
 				qty_as_show: sfg.qty_as_show,
 				total_qty: batches.reduce((s, b) => s + (b.qty || 0), 0),
+				mfg_days_total: batches.reduce((s, b) => s + (b.mfg_days || 0), 0),
+				grn_days_total: batches.reduce((s, b) => s + (b.grn_days || 0), 0),
+				pm_days_total: batches.reduce((s, b) => s + (b.pm_days || 0), 0),
+				holiday_count_total: batches.reduce((s, b) => s + (b.holiday_count || 0), 0),
 				per_shift_qty: sfg.per_shift_qty || 0,
 				batchsize: sfg.batchsize || 0,
 				// spm: sfg.spm || 0,
@@ -3125,41 +3182,49 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.mfg_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.mfg_days) || 0);
 			},
-			cellRenderer: p => p.value != null ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.grn_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.grn_days) || 0);
 			},
-
-			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
 			valueGetter: p => {
+				if (p.data?._is_group) return p.data?.pm_days_total;
 				const total = Math.max(0, Number(p.data?.total_qty) || 0);
-				if (p.data?._is_group) {return null;}
-
 				return total === 0 ? 0 : (Number(p.data?.pm_days) || 0);
 			},
-			cellRenderer: p => p.value !== null && p.value !== undefined ? String(p.value) : ''
+			cellRenderer: p => {
+				if (p.value == null) return '';
+				if (p.data?._is_group) return `<strong>${p.value}</strong>`;
+				return String(p.value);
+			}
 		},
 
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
 			valueGetter: p => {
-				if (p.data?._is_group) return null;
+				if (p.data?._is_group) return p.data?.holiday_count_total;
 				if (p.data?.type === 'Subcontract') return 0;
 				return p.data?.holiday_count || 0;
 			},
@@ -3169,7 +3234,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				: {},
 
 			cellRenderer: p => {
-				if (p.data?._is_group) return '';
+				if (p.data?._is_group) {
+					const total = p.data?.holiday_count_total || 0;
+					return total ? `<strong style="color:#dc2626;">${total}</strong>` : '';
+				}
 
 				const count = p.data?.holiday_count || 0;
 				if (!count) return '';
