@@ -1,5 +1,37 @@
 import frappe
 
+STORE_INCHARGE_VISIBLE_STATUSES = ("In Process", "Not Started")
+
+
+def _is_store_incharge_limited(user: str) -> bool:
+    if user == "Administrator":
+        return False
+
+    roles = frappe.get_roles(user)
+    if "System Manager" in roles:
+        return False
+
+    return "Store Incharge" in roles
+
+
+def has_permission_query_work_order(user: str) -> str | None:
+    if not _is_store_incharge_limited(user):
+        return None
+
+    statuses = ", ".join(frappe.db.escape(status) for status in STORE_INCHARGE_VISIBLE_STATUSES)
+    return f"`tabWork Order`.`status` IN ({statuses})"
+
+
+def has_permission_work_order(doc, ptype: str, user: str, debug: bool = False) -> bool | None:
+    if not _is_store_incharge_limited(user):
+        return None
+
+    if ptype == "create":
+        return None
+
+    return doc.get("status") in STORE_INCHARGE_VISIBLE_STATUSES
+
+
 @frappe.whitelist()
 def set_wip_from_production_item(production_item): 
     """ 
