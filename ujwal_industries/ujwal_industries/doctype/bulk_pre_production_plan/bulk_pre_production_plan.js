@@ -1216,11 +1216,11 @@ function _render_sequential_grid(frm, so_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'production_item', width: 140, pinned: 'left',
+			headerName: 'Item Code', field: 'production_item', width: 160, pinned: 'left',
 			cellRenderer: p => `<strong>${p.value || ''}</strong>`
 		},
 		{
-			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 110,
+			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 120, pinned: 'left',
 			editable: true,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
@@ -1257,6 +1257,13 @@ function _render_sequential_grid(frm, so_data, container) {
 			cellRenderer: p => p.data?.type_of_manufacturing === 'In House'
 				? '<span style="color:#94a3b8;">—</span>'
 				: (p.value || '')
+		},
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			cellRenderer: p => {
+				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
 		},
 		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
 		{
@@ -1350,6 +1357,15 @@ function _render_sequential_grid(frm, so_data, container) {
 }
 
 
+// Resolves supplier display name from a cell value ("CODE - Name") or via API lookup
+function _resolve_supplier_name(cell_value) {
+	if (!cell_value) return Promise.resolve('');
+	const parts = String(cell_value).split(' - ');
+	if (parts.length > 1) return Promise.resolve(parts.slice(1).join(' - '));
+	return frappe.db.get_value('Supplier', cell_value.trim(), 'custom_supplier_names')
+		.then(r => r.message?.custom_supplier_names || '');
+}
+
 function _on_seq_cell_changed(frm, params) {
 	// Write edit back to frm.doc child table row
 	const row = params.data;
@@ -1386,6 +1402,11 @@ function _on_seq_cell_changed(frm, params) {
 		}).catch(() => {
 			_handle_workstation_change(frm, doc_row.name, 'sfg', params.newValue, { params });
 		});
+	} else if (fieldname === 'supplier' && changed) {
+		_resolve_supplier_name(params.newValue).then(name => {
+			params.data.supplier_name = name;
+			params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+		});
 	} else if (fieldname === 'type_of_manufacturing' && changed) {
 		update_promise.then(() => {
 			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
@@ -1399,6 +1420,10 @@ function _on_seq_cell_changed(frm, params) {
 						if (r.message && r.message !== doc_row.supplier) {
 							frappe.model.set_value(doc_row.doctype, doc_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);
+								_resolve_supplier_name(r.message).then(name => {
+									params.data.supplier_name = name;
+									params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+								});
 							});
 						}
 					}
@@ -1406,6 +1431,8 @@ function _on_seq_cell_changed(frm, params) {
 			} else if (params.newValue === 'In House') {
 				frappe.model.set_value(doc_row.doctype, doc_row.name, 'supplier', '').then(() => {
 					params.node.setDataValue('supplier', '');
+					params.data.supplier_name = '';
+					params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
 				});
 			}
 		});
@@ -1562,14 +1589,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
 		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+			headerName: 'BOM', field: 'bom_no', width: 190, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
 				values: _get_bom_options(p.data?.item_code, p.value)
@@ -1785,7 +1812,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Type', field: 'type', width: 108,
+			headerName: 'Type', field: 'type', width: 120, pinned: 'left',
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
@@ -1805,12 +1832,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 160,
+			headerName: 'Supplier', field: 'supplier', width: 180,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -1824,16 +1851,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 
-		// {
-		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		if (p.data?.type !== 'Subcontract') return '';
-		// 		return p.value
-		// 			? `<span style="color:#374151;">${p.value}</span>`
-		// 			: '<span style="color:#94a3b8;">—</span>';
-		// 	}
-		// },
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
+		},
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bars(p, p.data?._is_group ? '0.85' : '0.45')
@@ -1969,14 +1994,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
 		{
-			headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+			headerName: 'BOM', field: 'bom_no', width: 190, pinned: 'left', editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
 				values: _get_bom_options(p.data?.item_code, p.value)
@@ -2193,7 +2218,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
 		{
-			headerName: 'Type', field: 'type', width: 108,
+			headerName: 'Type', field: 'type', width: 120, pinned: 'left',
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
@@ -2212,12 +2237,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 160,
+			headerName: 'Supplier', field: 'supplier', width: 180,
 			editable: p => !!p.data?._is_group && p.data?.type !== 'In House',
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: p => ({
@@ -2229,16 +2254,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
-		// {
-		// 	headerName: 'Supplier Name', field: 'supplier_name', width: 160,
-		// 	cellRenderer: p => {
-		// 		if (!p.data?._is_group) return '';
-		// 		if (p.data?.type !== 'Subcontract') return '';
-		// 		return p.value
-		// 			? `<span style="color:#374151;">${p.value}</span>`
-		// 			: '<span style="color:#94a3b8;">—</span>';
-		// 	}
-		// },
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			cellRenderer: p => {
+				if (!p.data?._is_group) return '';
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
+		},
 		{
 			headerName: 'Timeline', flex: 1, minWidth: 200, sortable: false,
 			cellRenderer: p => _tl_bar(p, p.data?._is_group ? '0.85' : '0.45')
@@ -2420,7 +2443,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2428,7 +2451,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `${p.value}` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2437,7 +2460,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 		// BOM column commented out
 		// {
-		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	headerName: 'BOM', field: 'bom_no', width: 190, pinned: 'left', editable: p => !!p.data?._is_group,
 		// 	cellEditor: 'agSelectCellEditor',
 		// 	cellEditorParams: p => ({
 		// 		values: _get_bom_options(p.data?.item_code, p.value)
@@ -2709,7 +2732,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Type', field: 'type', width: 108,
+			headerName: 'Type', field: 'type', width: 120, pinned: 'left',
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
@@ -2729,12 +2752,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 		
 		{
-			headerName: 'Supplier', field: 'supplier', width: 160,
+			headerName: 'Supplier', field: 'supplier', width: 180,
 
 			editable: p =>!!p.data?._is_group && ['Subcontract', 'In House - Vendor'].includes(p.data?.type),
 
@@ -2755,10 +2778,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type !== 'Subcontract') return '';
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
 				return p.value
 					? `<span style="color:#374151;">${p.value}</span>`
 					: '<span style="color:#94a3b8;">—</span>';
@@ -2904,14 +2927,14 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Item Code', field: 'item_code', width: 130, pinned: 'left',
+			headerName: 'Item Code', field: 'item_code', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `<strong>${p.value}</strong>` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
 			}
 		},
 		{
-			headerName: 'Item Name', field: 'item_name', width: 130, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 160, pinned: 'left',
 			cellRenderer: p => {
 				if (p.data?._is_group) return p.value ? `${p.value}` : '';
 				return `<span style="color:#94a3b8;padding-left:10px;">↳ ${p.data?.batch_label || ''}</span>`;
@@ -2919,7 +2942,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 		// BOM column commented out
 		// {
-		// 	headerName: 'BOM', field: 'bom_no', width: 170, pinned: 'left', editable: p => !!p.data?._is_group,
+		// 	headerName: 'BOM', field: 'bom_no', width: 190, pinned: 'left', editable: p => !!p.data?._is_group,
 		// 	cellEditor: 'agSelectCellEditor',
 		// 	cellEditorParams: p => ({
 		// 		values: _get_bom_options(p.data?.item_code, p.value)
@@ -3191,7 +3214,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			cellStyle: p => p.data?._is_group ? { color: '#dc2626', fontWeight: '600' } : { color: '#dc2626' }
 		},
 		{
-			headerName: 'Type', field: 'type', width: 108,
+			headerName: 'Type', field: 'type', width: 120, pinned: 'left',
 			editable: p => !!p.data?._is_group,
 			cellEditor: 'agSelectCellEditor',
 			cellEditorParams: {
@@ -3210,12 +3233,12 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 		},
 		{
-			headerName: 'Target Warehouse', field: 'target_warehouse', width: 150,
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
 			cellRenderer: p => p.data?._is_group ? (p.value || '—') : ''
 		},
 
 		{
-			headerName: 'Supplier', field: 'supplier', width: 160,
+			headerName: 'Supplier', field: 'supplier', width: 180,
 
 			editable: p => !!p.data?._is_group && ['Subcontract', 'In House - Vendor'].includes(p.data?.type),
 
@@ -3237,10 +3260,10 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 		},
 
 		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 160,
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
 			cellRenderer: p => {
 				if (!p.data?._is_group) return '';
-				if (p.data?.type !== 'Subcontract') return '';
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
 				return p.value
 					? `<span style="color:#374151;">${p.value}</span>`
 					: '<span style="color:#94a3b8;">—</span>';
@@ -4669,6 +4692,10 @@ function _on_par_bom_changed(frm, params, par_data) {
 								frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', r.message).then(() => {
 									params.node.setDataValue('supplier', r.message);
 									_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: r.message });
+									_resolve_supplier_name(r.message).then(name => {
+										params.data.supplier_name = name;
+										params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+									});
 								});
 							}
 						}
@@ -4676,6 +4703,8 @@ function _on_par_bom_changed(frm, params, par_data) {
 				} else if (params.newValue === 'In House') {
 					frappe.model.set_value(target_row.doctype, target_row.name, 'custom_supplier', '').then(() => {
 						params.node.setDataValue('supplier', '');
+						params.data.supplier_name = '';
+						params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
 						_sync_parallel_schedule_override(frm, target_row.name, 'fg', { custom_supplier: '' });
 					});
 				}
@@ -4698,6 +4727,10 @@ function _on_par_bom_changed(frm, params, par_data) {
 							frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', r.message).then(() => {
 								params.node.setDataValue('supplier', r.message);
 								_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: r.message });
+								_resolve_supplier_name(r.message).then(name => {
+									params.data.supplier_name = name;
+									params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+								});
 							});
 						}
 					}
@@ -4705,6 +4738,8 @@ function _on_par_bom_changed(frm, params, par_data) {
 			} else if (params.newValue === 'In House') {
 				frappe.model.set_value(target_row.doctype, target_row.name, 'supplier', '').then(() => {
 					params.node.setDataValue('supplier', '');
+					params.data.supplier_name = '';
+					params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
 					_sync_parallel_schedule_override(frm, target_row.name, 'sfg', { supplier: '' });
 				});
 			}
@@ -4713,14 +4748,18 @@ function _on_par_bom_changed(frm, params, par_data) {
 
 	if (fieldname === 'supplier') {
         const db_field = row_table === 'fg' ? 'custom_supplier' : 'supplier';
-        // frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue).then(() => {
-			frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue.split('-')[0].trim()).then(() => {
+		frappe.model.set_value(target_row.doctype, target_row.name, db_field, params.newValue.split('-')[0].trim()).then(() => {
             _sync_parallel_schedule_override(frm, target_row.name, row_table, {
                 supplier: params.newValue,
                 custom_supplier: params.newValue
             });
             _mark_form_dirty(frm);
         });
+		// Update Supplier Name cell immediately
+		_resolve_supplier_name(params.newValue).then(name => {
+			params.data.supplier_name = name;
+			params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+		});
         return;
     }
 }
@@ -5200,6 +5239,17 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
 		},
 		{
+			headerName: 'Available Qty', field: 'actual_qty', width: 120, type: 'numericColumn',
+			valueFormatter: p => p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '',
+			cellStyle: p => {
+				const available = Number(p.data?.actual_qty) || 0;
+				const bom_qty = Number(p.data?.required_bom_qty) || 0;
+				if (available <= 0) return { color: '#dc2626', fontWeight: 'bold' };
+				if (available >= bom_qty) return { color: '#16a34a', fontWeight: 'bold' };
+				return { color: '#d97706', fontWeight: 'bold' };
+			}
+		},
+		{
 			headerName: 'Planned Qty', field: _par ? 'qty' : 'quantity', width: 100, type: 'numericColumn',
 			valueFormatter: p => p.value !== null && p.value !== undefined ? Number(p.value).toLocaleString('en-IN') : '',
 			cellStyle: p => {
@@ -5265,9 +5315,15 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
 			}
 		},
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 200,
+			cellRenderer: p => p.value
+				? `<span style="color:#374151;">${p.value}</span>`
+				: '<span style="color:#94a3b8;">—</span>'
+		},
 	];
 
-	agGrid.createGrid(mr_el, {
+	const mr_grid_api = agGrid.createGrid(mr_el, {
 		columnDefs: mr_cols,
 		rowData: mr_items,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
@@ -5294,6 +5350,16 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
 					_mark_form_dirty(frm);
 				});
+				// Fetch and update supplier name in the grid cell
+				if (p.newValue) {
+					frappe.db.get_value('Supplier', p.newValue, 'custom_supplier_names').then(r => {
+						p.data.supplier_name = r.message?.custom_supplier_names || p.newValue;
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
+					});
+				} else {
+					p.data.supplier_name = '';
+					p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
+				}
 				return;
 			}
 
@@ -5304,6 +5370,31 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			}
 		}
 	});
+
+	// Pre-populate supplier names for rows that already have a supplier set
+	const supplier_codes = [...new Set(
+		mr_items.map(r => (_par ? r.supplier : r.custom_supplier)).filter(Boolean)
+	)];
+	if (supplier_codes.length) {
+		frappe.call({
+			method: 'frappe.client.get_list',
+			args: {
+				doctype: 'Supplier',
+				filters: [['name', 'in', supplier_codes]],
+				fields: ['name', 'custom_supplier_names'],
+				limit: supplier_codes.length,
+			},
+			callback: r => {
+				const name_map = {};
+				(r.message || []).forEach(s => { name_map[s.name] = s.custom_supplier_names; });
+				mr_items.forEach(row => {
+					const code = _par ? row.supplier : row.custom_supplier;
+					if (code) row.supplier_name = name_map[code] || code;
+				});
+				mr_grid_api.setGridOption('rowData', mr_items);
+			}
+		});
+	}
 }
 
 
