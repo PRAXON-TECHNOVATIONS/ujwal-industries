@@ -62,7 +62,7 @@ app_include_js = [
 
 # include js in doctype views
 doctype_js = {
-	"Production Plan": "public/js/production_plan_subcontracting.js?V=0.1.31",
+	"Production Plan": "public/js/production_plan_subcontracting.js",
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",

@@ -19,13 +19,13 @@ function mark_programmatic_update() {
 
 frappe.ui.form.on('Production Plan', {
 	refresh: function (frm) {
-		// Only draft and po_items is available can edit the dates
-		if (frm.doc.docstatus === 0 && frm.doc.po_items) {
+		// Show Manage Dates in Actions for all Draft documents
+		if (frm.doc.docstatus === 0 && !frm.is_new()) {
 			frm.add_custom_button(__("Manage Dates"), () => {
 
 				if (frm.doc.custom_parallel_planning === 1) {
 					open_parallel_manage_dates_dialog(frm);
-					
+
 				} else {
 					open_manage_dates_dialog(frm);
 				}
@@ -71,10 +71,6 @@ frappe.ui.form.on('Production Plan', {
 			};
 		});
 
-	},
-
-	after_save: function (frm) {
-		frm.reload_doc();
 	},
 
 	before_submit: function (frm) {
