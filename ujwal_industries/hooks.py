@@ -43,6 +43,7 @@ app_include_js = [
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
 	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.2",
+	"/assets/ujwal_industries/js/rate_visibility.js?V=0.1.2",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
