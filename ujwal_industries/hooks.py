@@ -423,7 +423,9 @@ override_doctype_dashboards = {
 # Standard Queries
 # ----------------
 standard_queries = {
-	"Supplier": "ujwal_industries.api.approved_supplier_only.supplier_query"
+	"Supplier": "ujwal_industries.api.approved_supplier_only.supplier_query",
+	"Item": "ujwal_industries.api.link_queries.item_query",
+	"Customer": "ujwal_industries.api.link_queries.customer_query",
 }
 
 # Fixtures
