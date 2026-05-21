@@ -54,10 +54,10 @@ def customer_query(doctype, txt, searchfield, start, page_len, filters):
 	sql = f"""
 		SELECT
 			`tabCustomer`.`name`,
-			`tabCustomer`.`customer_name`
+			`tabCustomer`.`custom_customer_names`
 		FROM `tabCustomer`
 		WHERE `tabCustomer`.`disabled` = 0
-		  AND (`tabCustomer`.`name` LIKE %s OR `tabCustomer`.`customer_name` LIKE %s)
+		  AND (`tabCustomer`.`name` LIKE %s OR `tabCustomer`.`custom_customer_names` LIKE %s)
 		  {extra_where}
 		ORDER BY
 			CASE WHEN `tabCustomer`.`name` LIKE %s THEN 0 ELSE 1 END,
