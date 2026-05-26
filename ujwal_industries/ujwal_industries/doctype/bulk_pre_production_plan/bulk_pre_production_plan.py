@@ -4462,8 +4462,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			fg_dates[fg_row.item_code] = fg_row.planned_start_date
 
 	sfg_rows = [row for row in doc.sub_assembly_items if row.sales_order == so_name]
-	if not sfg_rows:
-		return
+	# No early return when sfg_rows is empty — MR dates still need to be computed (STEP 3)
 
 	sfg_bom_nos = list(set(row.bom_no for row in sfg_rows if row.bom_no))
 	sfg_bom_cache = _fetch_bom_operations_cache(sfg_bom_nos)
@@ -4696,13 +4695,16 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			lt_result = get_supplier_lead_time(mr_row.item_code, mr_row.custom_supplier, doc.company)
 			lead_time_days = lt_result.get("lead_time_days", 0)
 		grn_days_mr = mr_grn_days_map.get(mr_row.item_code, 0)
-		# RM needs to arrive by parent SFG schedule_date
+		mr_row.custom_lead_days = lead_time_days
+		mr_row.custom_grn_days = grn_days_mr
+		# RM needs to arrive by parent SFG start / FG start date
 		# custom_start_date = when to order = schedule - lead_time - grn_days
+		order_date = add_days(getdate(earliest_sfg_schedule), -(lead_time_days + grn_days_mr))
 		mr_row.schedule_date = earliest_sfg_schedule
-		mr_row.custom_start_date = add_days(getdate(earliest_sfg_schedule), -(lead_time_days + grn_days_mr))
+		mr_row.custom_start_date = _to_datetime(order_date)
 
-		# Backdating: if custom_start_date < today, shift forward
-		if not allow_backdated and getdate(mr_row.custom_start_date) < today:
+		# Backdating: if order date <= today, shift to today
+		if not allow_backdated and getdate(mr_row.custom_start_date) <= today:
 			mr_row.custom_start_date = today_dt
 			receive_date = add_days(today, lead_time_days)
 			mr_row.schedule_date = _to_datetime(get_holiday_adjusted_date(receive_date, grn_days_mr, holiday_list))

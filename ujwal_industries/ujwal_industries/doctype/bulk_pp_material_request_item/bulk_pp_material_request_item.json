@@ -16,6 +16,8 @@
   "column_break_1",
   "custom_start_date",
   "schedule_date",
+  "custom_lead_days",
+  "custom_grn_days",
   "uom",
   "conversion_factor",
   "item_details",
@@ -112,6 +114,18 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Required By"
+  },
+  {
+   "fieldname": "custom_lead_days",
+   "fieldtype": "Int",
+   "label": "Lead Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_grn_days",
+   "fieldtype": "Int",
+   "label": "GRN Days",
+   "read_only": 1
   },
   {
    "fieldname": "uom",
@@ -229,7 +243,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-04 18:45:00.000000",
+ "modified": "2026-05-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk PP Material Request Item",
