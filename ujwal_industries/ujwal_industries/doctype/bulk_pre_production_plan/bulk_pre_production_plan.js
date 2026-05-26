@@ -1183,8 +1183,8 @@ function _render_sequential_grid(frm, so_data, container) {
 		container.style.pointerEvents = 'none';
 	}
 
-	// ── MR section ──────────────────────────────────────────────────────────
-	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+	// ── FG AG Grid (top, matches Parallel order) ────────────────────────────
+	_render_sequential_fg_grid(frm, so_data, container);
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -1344,16 +1344,316 @@ function _render_sequential_grid(frm, so_data, container) {
 	});
 	_grids['seq_sfg_' + so_data.so_name] = sfg_grid;
 
-	// ── FG section ──────────────────────────────────────────────────────────
-	const fg_div = document.createElement('div');
-	fg_div.innerHTML = _fg_section_html(so_data.fg, so_data.so_name);
-	container.appendChild(fg_div);
-	_bind_fg_bom_selects(frm, fg_div);
-	_bind_fg_tool_selects(frm, fg_div);
-	_bind_fg_machine_selects(frm, fg_div);
-	_bind_fg_shift_selects(frm, fg_div);
-	_bind_fg_mfg_type_selects(frm, fg_div);
-	_bind_fg_supplier_inputs(frm, fg_div);
+	// ── MR section (bottom, matches Parallel order) ──────────────────────────
+	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+}
+
+
+// ---------------------------------------------------------------------------
+// Sequential FG Grid — same columns as Parallel FG but no batch rows
+// ---------------------------------------------------------------------------
+
+function _render_sequential_fg_grid(frm, so_data, container) {
+	const fg_items = so_data.fg || [];
+	if (!fg_items.length) return;
+
+	const fg_label = document.createElement('div');
+	fg_label.innerHTML = _section_header(
+		`Finished Goods <span style="font-size:11px;font-weight:400;opacity:.7;">(${fg_items.length} item${fg_items.length !== 1 ? 's' : ''})</span>`,
+		'#1E40AF', '#EFF6FF', 'fa-cube'
+	);
+	container.appendChild(fg_label);
+
+	const rows = fg_items.map(item => ({
+		_row_name:              item.name,
+		item_code:              item.item_code || '',
+		item_name:              item.item_name || '',
+		planned_qty:            Number(item.planned_qty || item.qty || 0),
+		stock_uom:              item.stock_uom || '',
+		bom_no:                 item.bom_no || '',
+		tool:                   item.tool || '',
+		tools:                  item.tools || [],
+		custom_workstations_csv: item.custom_workstations_csv || '',
+		custom_shift_types_csv:  item.custom_shift_types_csv || '',
+		batchsize:              Number(item.batchsize || 0),
+		machine_count:          Number(item.machine_count || _parse_csv_list(item.custom_workstations_csv).length || 0),
+		spm:                    Number(item.spm || 0),
+		type:                   item.custom_manufacturing_type || item.manufacturing_type || 'In House',
+		supplier:               item.custom_supplier || '',
+		supplier_list:          item.supplier_list || [],
+		supplier_name:          item.supplier_name || '',
+		target_warehouse:       item.fg_warehouse || item.target_warehouse || '',
+		actual_qty:             Number(item.actual_qty || 0),
+		planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
+		start_date:             item.planned_start_date || '',
+		end_date:               item.custom_planned_end_date || '',
+		mfg_days:               Number(item.custom_mfg_days || 0),
+		grn_days:               Number(item.custom_grn_days || 0),
+		pm_days:                Number(item.custom_pm_days || 0),
+	}));
+
+	const cols = [
+		{
+			headerName: 'Item Code', field: 'item_code', width: 140, pinned: 'left',
+			cellRenderer: p => `<strong>${p.value || ''}</strong>`
+		},
+		{
+			headerName: 'Item Name', field: 'item_name', width: 220, pinned: 'left',
+			cellRenderer: p => p.value ? `${p.value}` : ''
+		},
+		{
+			headerName: 'Type', field: 'type', width: 120, pinned: 'left', editable: true,
+			cellEditor: 'agSelectCellEditor',
+			cellEditorParams: { values: ['In House', 'Subcontract', 'In House - Vendor'] },
+			cellRenderer: p => {
+				if (p.value === 'Subcontract') return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				if (p.value === 'In House - Vendor') return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
+				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
+			}
+		},
+		{
+			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false,
+			editable: p => p.data?.type !== 'Subcontract',
+			autoHeight: true,
+			cellStyle: p => p.data?.type === 'Subcontract'
+				? { opacity: 0.4, pointerEvents: 'none' }
+				: { whiteSpace: 'normal', lineHeight: '1.35', paddingTop: '6px', paddingBottom: '6px' },
+			cellEditor: WorkstationPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({
+				base_batchsize: p.data?.batchsize || 0,
+				frm,
+				row_type: 'fg',
+				row_name: p.data?._row_name || ''
+			}),
+			cellRenderer: p => p.data?.type === 'Subcontract' ? '' :
+				_machine_display_html(p.value, p.data?.batchsize || 0, _bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || '')
+		},
+		{
+			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false,
+			editable: true,
+			cellEditor: ShiftPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({ frm, row_type: 'fg', row_name: p.data?._row_name || '' }),
+			cellRenderer: p => _shift_display_html(p.value)
+		},
+		{
+			headerName: 'SPM', field: 'spm', width: 80, type: 'numericColumn',
+			valueGetter: p => p.data?.spm || _effective_spm_value(p.data || {}),
+			cellRenderer: p => p.value != null ? String(p.value) : ''
+		},
+		{
+			headerName: 'Qty As Per BOM', width: 120, type: 'numericColumn',
+			valueGetter: p => p.data?.planned_qty_as_show,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+			cellStyle: p => p.data?.actual_qty > 0 ? { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => {
+				const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
+				return p.data?.actual_qty > 0 ? `<span class="qty-click">${qty}</span>` : qty;
+			},
+			onCellClicked: p => {
+				const actual = p.data?.actual_qty || 0;
+				const total  = p.data?.planned_qty_as_show || p.data?.planned_qty || 0;
+				if (!actual && !total) return;
+				frappe.msgprint({
+					title: __('Stock Details'),
+					message: `Qty As Per BOM: <b>${Number(total).toLocaleString('en-IN')}</b><br>Available Qty in Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>`,
+					indicator: 'blue'
+				});
+			}
+		},
+		{
+			headerName: 'Planned Qty', width: 120, type: 'numericColumn',
+			valueGetter: p => p.data?.planned_qty,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : '',
+			cellStyle: p => p.data?.actual_qty > 0 ? { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => {
+				const qty = p.value ? Number(p.value).toLocaleString('en-IN') : '';
+				return p.data?.actual_qty > 0 ? `<span class="qty-click">${qty}</span>` : qty;
+			},
+			onCellClicked: p => {
+				const actual = p.data?.actual_qty || 0;
+				const total  = p.data?.planned_qty_as_show || p.data?.planned_qty || 0;
+				if (!actual && !total) return;
+				frappe.msgprint({
+					title: __('Stock Details'),
+					message: `Qty As Per BOM: <b>${Number(total).toLocaleString('en-IN')}</b><br>Available Qty in Warehouse: <b>${Number(actual).toLocaleString('en-IN')}</b>`,
+					indicator: 'blue'
+				});
+			}
+		},
+		{
+			headerName: 'Mfg Days', field: 'mfg_days', width: 82, type: 'numericColumn',
+			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+		},
+		{
+			headerName: 'GRN Days', field: 'grn_days', width: 82, type: 'numericColumn',
+			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'PM Days', field: 'pm_days', width: 78, type: 'numericColumn',
+			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'Start Date', field: 'start_date', width: 165, editable: true,
+			cellStyle: { color: '#059669', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value, '—', true)
+		},
+		{
+			headerName: 'End Date', field: 'end_date', width: 165, editable: true,
+			cellStyle: { color: '#dc2626', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value, '—', true)
+		},
+		{
+			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
+			cellRenderer: p => p.value || '—'
+		},
+		{
+			headerName: 'Supplier', field: 'supplier', width: 160,
+			editable: p => ['Subcontract', 'In House - Vendor'].includes(p.data?.type),
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({ supplier_list: p.data?.supplier_list || [] }),
+			cellRenderer: p => {
+				if (!['Subcontract', 'In House - Vendor'].includes(p.data?.type)) return '';
+				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+			}
+		},
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 220,
+			cellRenderer: p => {
+				if (p.data?.type === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
+		},
+	];
+
+	const fg_el = document.createElement('div');
+	fg_el.className = 'ag-theme-alpine';
+	fg_el.style.cssText = 'width:100%;';
+	container.appendChild(fg_el);
+
+	const seq_fg_grid = agGrid.createGrid(fg_el, {
+		columnDefs:        cols,
+		rowData:           rows,
+		defaultColDef:     { resizable: true, sortable: false },
+		rowHeight:         40,
+		headerHeight:      40,
+		domLayout:         'autoHeight',
+		getRowStyle:       () => ({ background: '#F8FAFC', borderBottom: '1px solid #e2e8f0' }),
+		onCellValueChanged: p => _on_seq_fg_cell_changed(frm, p),
+	});
+	_grids['seq_fg_' + so_data.so_name] = seq_fg_grid;
+
+	// Pre-populate supplier_name for rows that already have a supplier
+	const supplier_codes = [...new Set(rows.map(r => r.supplier).filter(Boolean))];
+	if (supplier_codes.length) {
+		frappe.call({
+			method: 'frappe.client.get_list',
+			args: { doctype: 'Supplier', filters: [['name', 'in', supplier_codes]], fields: ['name', 'custom_supplier_names'], limit: supplier_codes.length },
+			callback: r => {
+				const name_map = {};
+				(r.message || []).forEach(s => { name_map[s.name] = s.custom_supplier_names; });
+				rows.forEach(row => {
+					if (row.supplier) row.supplier_name = name_map[row.supplier] || row.supplier;
+				});
+				seq_fg_grid.refreshCells({ columns: ['supplier_name'], force: true });
+			}
+		});
+	}
+}
+
+
+function _on_seq_fg_cell_changed(frm, params) {
+	const data      = params.data || {};
+	const row_name  = data._row_name;
+	const fieldname = params.colDef.field;
+	if (!row_name || !fieldname || params.oldValue === params.newValue) return;
+
+	const doc_row = _find_bpp_row(frm, row_name, 'fg');
+	if (!doc_row) return;
+
+	if (fieldname === 'bom_no') {
+		_mark_bom_form_dirty(frm);
+		doc_row.bom_no = params.newValue;
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'bom_no', params.newValue).then(() => {
+			_handle_bom_change(frm, doc_row.name, params.newValue, 'fg', { params });
+		});
+		return;
+	}
+
+	if (fieldname === 'tool') {
+		doc_row.tool = params.newValue;
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'tool', params.newValue).then(() => {
+			_handle_tool_change(frm, doc_row.name, 'fg', params.newValue, { params });
+		});
+		return;
+	}
+
+	if (fieldname === 'custom_workstations_csv') {
+		doc_row.custom_workstations_csv = params.newValue;
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_workstations_csv', params.newValue).then(() => {
+			_handle_workstation_change(frm, doc_row.name, 'fg', params.newValue, { params });
+		});
+		return;
+	}
+
+	if (fieldname === 'type') {
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_manufacturing_type', params.newValue).then(() => {
+			doc_row.custom_manufacturing_type = params.newValue;
+			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
+				frappe.call({
+					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
+					args: { item_code: doc_row.item_code, company: frm.doc.company },
+					callback: r => {
+						if (r.message) {
+							frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_supplier', r.message).then(() => {
+								doc_row.custom_supplier = r.message;
+								params.node.setDataValue('supplier', r.message);
+								_resolve_supplier_name(r.message).then(name => {
+									params.data.supplier_name = name;
+									params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+								});
+							});
+						}
+					}
+				});
+			} else {
+				frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_supplier', '').then(() => {
+					doc_row.custom_supplier = '';
+					params.node.setDataValue('supplier', '');
+					params.data.supplier_name = '';
+					params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+				});
+			}
+		});
+		return;
+	}
+
+	if (fieldname === 'supplier') {
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_supplier', params.newValue).then(() => {
+			doc_row.custom_supplier = params.newValue;
+			_resolve_supplier_name(params.newValue).then(name => {
+				params.data.supplier_name = name;
+				params.api?.refreshCells({ rowNodes: [params.node], columns: ['supplier_name'], force: true });
+			});
+		});
+		return;
+	}
+
+	if (fieldname === 'start_date') {
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'planned_start_date', params.newValue).then(() => {
+			doc_row.planned_start_date = params.newValue;
+		});
+		return;
+	}
+
+	if (fieldname === 'end_date') {
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_planned_end_date', params.newValue).then(() => {
+			doc_row.custom_planned_end_date = params.newValue;
+		});
+		return;
+	}
 }
 
 
@@ -3838,8 +4138,26 @@ function _shift_display_html(csv_value) {
 	</div>`;
 }
 
-function _get_supplier_options(txt) {
-    return _get_link_options('Supplier', txt);
+function _get_supplier_options(txt, allowed_codes) {
+    const args = {
+        doctype: 'Supplier',
+        fields: ['name', 'custom_supplier_names'],
+        limit_page_length: 20,
+    };
+    if (txt) {
+        args.or_filters = [
+            ['name', 'like', `%${txt}%`],
+            ['custom_supplier_names', 'like', `%${txt}%`]
+        ];
+    }
+    if (allowed_codes && allowed_codes.length) {
+        args.filters = [['name', 'in', allowed_codes]];
+    }
+    return frappe.call({ method: 'frappe.client.get_list', args })
+        .then(res => (res.message || []).map(s => ({
+            code: s.name,
+            label: s.custom_supplier_names ? `${s.name} — ${s.custom_supplier_names}` : s.name
+        })));
 }
 
 // function _get_workstation_options(txt) {
@@ -3877,7 +4195,7 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = 'Search supplier…';
+    input.placeholder = 'Search by code or name…';
     input.value = initial_value || '';
     input.style.cssText = _TAG_INPUT_STYLE;
     input.setAttribute('autocomplete', 'off');
@@ -3888,33 +4206,34 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     dropdown.style.display = 'none';
     wrapper.appendChild(dropdown);
 
-    let _options = supplier_list && supplier_list.length ? [...supplier_list] : [];
+    const _allowed = supplier_list && supplier_list.length ? [...supplier_list] : null;
     let highlightIdx = -1;
     let _searchTimeout = null;
     let _destroyed = false;
     let _currentValue = initial_value || '';
 
-    function _renderDropdown(list) {
-        if (!list.length || _destroyed) {
+    function _renderDropdown(items) {
+        // items: [{code, label}]
+        if (!items.length || _destroyed) {
             dropdown.style.display = 'none';
             dropdown.innerHTML = '';
             return;
         }
-        highlightIdx = Math.min(Math.max(highlightIdx, -1), list.length - 1);
-        dropdown.innerHTML = list.map((o, i) => {
+        highlightIdx = Math.min(Math.max(highlightIdx, -1), items.length - 1);
+        dropdown.innerHTML = items.map((o, i) => {
             const hl = i === highlightIdx ? _DROPDOWN_ITEM_HOVER : '';
-            return `<div class="bpp-sup-dd-item" data-value="${frappe.utils.escape_html(o)}"
-                style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o)}</div>`;
+            return `<div class="bpp-sup-dd-item" data-code="${frappe.utils.escape_html(o.code)}"
+                style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o.label)}</div>`;
         }).join('');
         dropdown.style.display = 'block';
         dropdown.querySelectorAll('.bpp-sup-dd-item').forEach(item => {
             item.addEventListener('mousedown', e => {
                 e.preventDefault();
-                const val = item.getAttribute('data-value');
-                input.value = val;
-                _currentValue = val;
+                const code = item.getAttribute('data-code');
+                input.value = item.textContent;
+                _currentValue = code;
                 dropdown.style.display = 'none';
-                if (onchange) onchange(val);
+                if (onchange) onchange(code);
             });
             item.addEventListener('mouseenter', () => { item.style.background = '#EFF6FF'; item.style.color = '#1E40AF'; });
             item.addEventListener('mouseleave', () => { item.style.background = ''; item.style.color = '#334155'; });
@@ -3922,15 +4241,10 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     }
 
     function _search(txt) {
-        const lower = (txt || '').toLowerCase();
-        if (_options.length) {
-            _renderDropdown(_options.filter(o => o.toLowerCase().includes(lower)));
-        } else {
-            _get_supplier_options(txt).then(results => {
-                if (_destroyed) return;
-                _renderDropdown(results || []);
-            });
-        }
+        _get_supplier_options(txt, _allowed).then(results => {
+            if (_destroyed) return;
+            _renderDropdown(results || []);
+        });
     }
 
     input.addEventListener('input', () => {
@@ -3944,14 +4258,21 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     });
     input.addEventListener('keydown', e => {
         const items = [...dropdown.querySelectorAll('.bpp-sup-dd-item')];
-        if (e.key === 'ArrowDown') { e.preventDefault(); highlightIdx = Math.min(highlightIdx + 1, items.length - 1); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); highlightIdx = Math.max(highlightIdx - 1, 0); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
-        else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < items.length) {
+        if (e.key === 'ArrowDown') {
             e.preventDefault();
-            const val = items[highlightIdx].getAttribute('data-value');
-            input.value = val; _currentValue = val;
+            highlightIdx = Math.min(highlightIdx + 1, items.length - 1);
+            _renderDropdown(items.map(i => ({ code: i.getAttribute('data-code'), label: i.textContent })));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            highlightIdx = Math.max(highlightIdx - 1, 0);
+            _renderDropdown(items.map(i => ({ code: i.getAttribute('data-code'), label: i.textContent })));
+        } else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < items.length) {
+            e.preventDefault();
+            const code = items[highlightIdx].getAttribute('data-code');
+            input.value = items[highlightIdx].textContent;
+            _currentValue = code;
             dropdown.style.display = 'none';
-            if (onchange) onchange(val);
+            if (onchange) onchange(code);
         } else if (e.key === 'Escape') { dropdown.style.display = 'none'; }
     });
 
@@ -5353,10 +5674,8 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			}
 		},
 		{ headerName: 'UOM', field: 'uom', width: 65 },
-		...(_par ? [
-			{ headerName: 'GRN Days', field: 'grn_days', width: 80, type: 'numericColumn' },
-			{ headerName: 'Lead Days', field: 'lead_days', width: 85, type: 'numericColumn' },
-		] : []),
+		{ headerName: 'GRN Days', field: _par ? 'grn_days' : 'custom_grn_days', width: 80, type: 'numericColumn' },
+		{ headerName: 'Lead Days', field: _par ? 'lead_days' : 'custom_lead_days', width: 85, type: 'numericColumn' },
 		{
 			headerName: 'Order By', field: _par ? 'start_date' : 'custom_start_date',
 			width: 110, editable: true,
