@@ -1495,14 +1495,14 @@ function _render_sequential_fg_grid(frm, so_data, container) {
 			cellRenderer: p => p.value ? String(p.value) : ''
 		},
 		{
-			headerName: 'Start Date', field: 'start_date', width: 130, editable: true,
+			headerName: 'Start Date', field: 'start_date', width: 165, editable: true,
 			cellStyle: { color: '#059669', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
+			valueFormatter: p => _format_bpp_date(p.value, '—', true)
 		},
 		{
-			headerName: 'End Date', field: 'end_date', width: 130, editable: true,
+			headerName: 'End Date', field: 'end_date', width: 165, editable: true,
 			cellStyle: { color: '#dc2626', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
+			valueFormatter: p => _format_bpp_date(p.value, '—', true)
 		},
 		{
 			headerName: 'Target Warehouse', field: 'target_warehouse', width: 170,
@@ -4138,8 +4138,26 @@ function _shift_display_html(csv_value) {
 	</div>`;
 }
 
-function _get_supplier_options(txt) {
-    return _get_link_options('Supplier', txt);
+function _get_supplier_options(txt, allowed_codes) {
+    const args = {
+        doctype: 'Supplier',
+        fields: ['name', 'custom_supplier_names'],
+        limit_page_length: 20,
+    };
+    if (txt) {
+        args.or_filters = [
+            ['name', 'like', `%${txt}%`],
+            ['custom_supplier_names', 'like', `%${txt}%`]
+        ];
+    }
+    if (allowed_codes && allowed_codes.length) {
+        args.filters = [['name', 'in', allowed_codes]];
+    }
+    return frappe.call({ method: 'frappe.client.get_list', args })
+        .then(res => (res.message || []).map(s => ({
+            code: s.name,
+            label: s.custom_supplier_names ? `${s.name} — ${s.custom_supplier_names}` : s.name
+        })));
 }
 
 // function _get_workstation_options(txt) {
@@ -4177,7 +4195,7 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = 'Search supplier…';
+    input.placeholder = 'Search by code or name…';
     input.value = initial_value || '';
     input.style.cssText = _TAG_INPUT_STYLE;
     input.setAttribute('autocomplete', 'off');
@@ -4188,33 +4206,34 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     dropdown.style.display = 'none';
     wrapper.appendChild(dropdown);
 
-    let _options = supplier_list && supplier_list.length ? [...supplier_list] : [];
+    const _allowed = supplier_list && supplier_list.length ? [...supplier_list] : null;
     let highlightIdx = -1;
     let _searchTimeout = null;
     let _destroyed = false;
     let _currentValue = initial_value || '';
 
-    function _renderDropdown(list) {
-        if (!list.length || _destroyed) {
+    function _renderDropdown(items) {
+        // items: [{code, label}]
+        if (!items.length || _destroyed) {
             dropdown.style.display = 'none';
             dropdown.innerHTML = '';
             return;
         }
-        highlightIdx = Math.min(Math.max(highlightIdx, -1), list.length - 1);
-        dropdown.innerHTML = list.map((o, i) => {
+        highlightIdx = Math.min(Math.max(highlightIdx, -1), items.length - 1);
+        dropdown.innerHTML = items.map((o, i) => {
             const hl = i === highlightIdx ? _DROPDOWN_ITEM_HOVER : '';
-            return `<div class="bpp-sup-dd-item" data-value="${frappe.utils.escape_html(o)}"
-                style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o)}</div>`;
+            return `<div class="bpp-sup-dd-item" data-code="${frappe.utils.escape_html(o.code)}"
+                style="${_DROPDOWN_ITEM_STYLE}${hl}">${frappe.utils.escape_html(o.label)}</div>`;
         }).join('');
         dropdown.style.display = 'block';
         dropdown.querySelectorAll('.bpp-sup-dd-item').forEach(item => {
             item.addEventListener('mousedown', e => {
                 e.preventDefault();
-                const val = item.getAttribute('data-value');
-                input.value = val;
-                _currentValue = val;
+                const code = item.getAttribute('data-code');
+                input.value = item.textContent;
+                _currentValue = code;
                 dropdown.style.display = 'none';
-                if (onchange) onchange(val);
+                if (onchange) onchange(code);
             });
             item.addEventListener('mouseenter', () => { item.style.background = '#EFF6FF'; item.style.color = '#1E40AF'; });
             item.addEventListener('mouseleave', () => { item.style.background = ''; item.style.color = '#334155'; });
@@ -4222,15 +4241,10 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     }
 
     function _search(txt) {
-        const lower = (txt || '').toLowerCase();
-        if (_options.length) {
-            _renderDropdown(_options.filter(o => o.toLowerCase().includes(lower)));
-        } else {
-            _get_supplier_options(txt).then(results => {
-                if (_destroyed) return;
-                _renderDropdown(results || []);
-            });
-        }
+        _get_supplier_options(txt, _allowed).then(results => {
+            if (_destroyed) return;
+            _renderDropdown(results || []);
+        });
     }
 
     input.addEventListener('input', () => {
@@ -4244,14 +4258,21 @@ function _create_inline_supplier_editor(initial_value, supplier_list, onchange) 
     });
     input.addEventListener('keydown', e => {
         const items = [...dropdown.querySelectorAll('.bpp-sup-dd-item')];
-        if (e.key === 'ArrowDown') { e.preventDefault(); highlightIdx = Math.min(highlightIdx + 1, items.length - 1); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); highlightIdx = Math.max(highlightIdx - 1, 0); _renderDropdown(items.map(i => i.getAttribute('data-value'))); }
-        else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < items.length) {
+        if (e.key === 'ArrowDown') {
             e.preventDefault();
-            const val = items[highlightIdx].getAttribute('data-value');
-            input.value = val; _currentValue = val;
+            highlightIdx = Math.min(highlightIdx + 1, items.length - 1);
+            _renderDropdown(items.map(i => ({ code: i.getAttribute('data-code'), label: i.textContent })));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            highlightIdx = Math.max(highlightIdx - 1, 0);
+            _renderDropdown(items.map(i => ({ code: i.getAttribute('data-code'), label: i.textContent })));
+        } else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < items.length) {
+            e.preventDefault();
+            const code = items[highlightIdx].getAttribute('data-code');
+            input.value = items[highlightIdx].textContent;
+            _currentValue = code;
             dropdown.style.display = 'none';
-            if (onchange) onchange(val);
+            if (onchange) onchange(code);
         } else if (e.key === 'Escape') { dropdown.style.display = 'none'; }
     });
 
