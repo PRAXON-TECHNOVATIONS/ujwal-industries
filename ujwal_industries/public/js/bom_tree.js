@@ -9,17 +9,17 @@ const DEFAULT_EXPORT_LABELS = new Set([
 	"Level", "Parent Item", "Parent BOM",
 	// BOM Header
 	"BOM: ID", "BOM: Item", "BOM: Item UOM", "BOM: Quantity", "BOM: Item Name",
-	// BOM Operation
-	"Operations: ID", "Operations: Row #", "Operations: Sequence ID",
-	"Operations: Operation", "Operations: Fixed Lot Capacity",
-	"Operations: Machine", "Operations: Operation Time", "Operations: BatchSize",
-	// Tool Details
-	"Tool Details: ID", "Tool Details: Row #", "Tool Details: Operation",
-	"Tool Details: Tool", "Tool Details: Tool Load Quantity", "Tool Details: Is Default",
-	// Scrap Items
-	"Scrap Items: ID", "Scrap Items: Row #", "Scrap Items: Item Code",
-	"Scrap Items: Item Name", "Scrap Items: Qty",
-	"Scrap Items: Tolerance (%)", "Scrap Items: Rate",
+	// BOM Operation (doctype name prefix)
+	"BOM Operation: ID", "BOM Operation: Row #", "BOM Operation: Sequence ID",
+	"BOM Operation: Operation", "BOM Operation: Fixed Lot Capacity",
+	"BOM Operation: Machine", "BOM Operation: Operation Time", "BOM Operation: BatchSize",
+	// Tool Child Table (doctype name prefix)
+	"Tool Child Table: ID", "Tool Child Table: Row #", "Tool Child Table: Operation",
+	"Tool Child Table: Tool", "Tool Child Table: Tool Load Quantity", "Tool Child Table: Is Default",
+	// BOM Scrap Item (doctype name prefix)
+	"BOM Scrap Item: ID", "BOM Scrap Item: Row #", "BOM Scrap Item: Item Code",
+	"BOM Scrap Item: Item Name", "BOM Scrap Item: Qty",
+	"BOM Scrap Item: Tolerance (%)", "BOM Scrap Item: Rate",
 ]);
 
 function get_bom_child_nodes(node) {
