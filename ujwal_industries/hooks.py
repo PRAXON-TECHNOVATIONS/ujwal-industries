@@ -84,6 +84,7 @@ doctype_js = {
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
+	"BOM": "public/js/bom_tree.js",
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
