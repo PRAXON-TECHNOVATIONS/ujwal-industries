@@ -1,17 +1,31 @@
 // Copyright (c) 2026, Ujwal Industries
 // Custom overrides for Job Card
 
+function update_balance_qty(frm) {
+	frm.set_value("custom_balance_qty", flt(frm.doc.for_quantity) - flt(frm.doc.total_completed_qty));
+}
+
 frappe.ui.form.on("Job Card", {
 	onload(frm) {
 		if (!frm.is_new()) {
 			render_tool_summary(frm);
+			update_balance_qty(frm);
 		}
 	},
 
 	refresh(frm) {
 		if (!frm.is_new()) {
 			render_tool_summary(frm);
+			update_balance_qty(frm);
 		}
+	},
+
+	for_quantity(frm) {
+		update_balance_qty(frm);
+	},
+
+	total_completed_qty(frm) {
+		update_balance_qty(frm);
 	},
 
 	setup: function (frm) {
@@ -27,8 +41,8 @@ frappe.ui.form.on("Job Card", {
 	},
 
 	custom_tool_name: function (frm) {
-		//  1. Check if Tool Is on Maintanance Period 
-		//  2. Pop Option to Add Reson for changes Tool 
+		//  1. Check if Tool Is on Maintanance Period
+		//  2. Pop Option to Add Reson for changes Tool
 		if (frm.doc.custom_tool_name) {
 
 			frappe.call({
@@ -232,6 +246,8 @@ function hide_job_card_timer(frm) {
  * Show dialog to capture pause reason and counter readings
  */
 function show_pause_reason_dialog(frm) {
+	let tool_cavities = 1;
+
 	const d = new frappe.ui.Dialog({
 		title: __("Pause Job"),
 		fields: [
@@ -268,48 +284,84 @@ function show_pause_reason_dialog(frm) {
 				fieldtype: "Section Break"
 			},
 			{
+				fieldtype: "Int",
+				label: __("No of Cavities"),
+				fieldname: "no_of_cavities",
+				read_only: 1,
+				description: __("Fetched from tool")
+			},
+			{
+				fieldtype: "Column Break"
+			},
+			{
+				fieldtype: "Float",
+				label: __("Counter Qty"),
+				fieldname: "counter_qty",
+				read_only: 1,
+				description: __("End Counter − Start Counter")
+			},
+			{
+				fieldtype: "Column Break"
+			},
+			{
 				fieldtype: "Float",
 				label: __("Completed Qty"),
 				fieldname: "completed_qty",
 				read_only: 1,
-				description: __("Auto-calculated: End Counter − Start Counter")
+				description: __("Counter Qty × No of Cavities")
 			}
 		],
 		primary_action_label: __("Pause Job"),
 		primary_action(values) {
-			const completed_qty = flt(values.end_counter) - flt(values.start_counter);
-			if (completed_qty < 0) {
+			const counter_qty = flt(values.end_counter) - flt(values.start_counter);
+			if (counter_qty < 0) {
 				frappe.msgprint(__("End Counter cannot be less than Start Counter"));
 				return;
 			}
+			const completed_qty = counter_qty * tool_cavities;
 			d.hide();
-			pause_job_with_reason(frm, values.pause_reason, completed_qty);
+			pause_job_with_reason(frm, values.pause_reason, completed_qty, values.start_counter, values.end_counter);
 		}
 	});
 
-	// Auto-calculate completed qty whenever start or end counter changes
+	// Auto-calculate counter qty and completed qty
 	function recalculate() {
 		const start = flt(d.get_value("start_counter") || 0);
 		const end = flt(d.get_value("end_counter") || 0);
-		d.set_value("completed_qty", Math.max(0, end - start));
+		const counter_qty = Math.max(0, end - start);
+		d.set_value("counter_qty", counter_qty);
+		d.set_value("completed_qty", counter_qty * tool_cavities);
 	}
 
 	d.fields_dict.start_counter.$input.on("change", recalculate);
 	d.fields_dict.end_counter.$input.on("change", recalculate);
 
 	d.show();
+
+	// Fetch cavity count from the current tool and set it
+	if (frm.doc.custom_tool_name) {
+		frappe.db.get_value("Asset", frm.doc.custom_tool_name, "custom_no_of_cavities", (r) => {
+			tool_cavities = Math.max(1, flt(r.custom_no_of_cavities) || 1);
+			d.set_value("no_of_cavities", tool_cavities);
+			recalculate();
+		});
+	} else {
+		d.set_value("no_of_cavities", 1);
+	}
 }
 
 /**
- * Pause job and save the pause reason with completed qty
+ * Pause job and save the pause reason with completed qty and counter readings
  */
-function pause_job_with_reason(frm, pause_reason, completed_qty) {
+function pause_job_with_reason(frm, pause_reason, completed_qty, start_counter, end_counter) {
 	const args = {
 		job_card_id: frm.doc.name,
 		complete_time: frappe.datetime.now_datetime(),
 		status: "On Hold",
 		pause_reason: pause_reason,
-		completed_qty: flt(completed_qty || 0)
+		completed_qty: flt(completed_qty || 0),
+		start_counter: flt(start_counter || 0),
+		end_counter: flt(end_counter || 0)
 	};
 
 	// Call custom method to handle pause with reason
@@ -561,6 +613,34 @@ function show_workstation_problem_alert(frm, workstation) {
 		indicator: "red"
 	}, 10);
 }
+
+// Recalculate completed_qty in a time log row from its counter readings × tool cavities
+function recalc_time_log_qty(frm, cdt, cdn) {
+	const row = locals[cdt][cdn];
+	const counter_qty = Math.max(0, flt(row.custom_end_counter) - flt(row.custom_start_counter));
+	const tool = row.custom_tool;
+
+	if (tool) {
+		frappe.db.get_value("Asset", tool, "custom_no_of_cavities", (r) => {
+			const cavities = Math.max(1, flt(r.custom_no_of_cavities) || 1);
+			frappe.model.set_value(cdt, cdn, "completed_qty", counter_qty * cavities);
+		});
+	} else {
+		frappe.model.set_value(cdt, cdn, "completed_qty", counter_qty);
+	}
+}
+
+frappe.ui.form.on("Job Card Time Log", {
+	custom_start_counter(frm, cdt, cdn) {
+		recalc_time_log_qty(frm, cdt, cdn);
+	},
+	custom_end_counter(frm, cdt, cdn) {
+		recalc_time_log_qty(frm, cdt, cdn);
+	},
+	custom_tool(frm, cdt, cdn) {
+		recalc_time_log_qty(frm, cdt, cdn);
+	}
+});
 
 function get_filtered_tools(frm) {
 	frm.set_query("custom_tool_name", function (doc) {
