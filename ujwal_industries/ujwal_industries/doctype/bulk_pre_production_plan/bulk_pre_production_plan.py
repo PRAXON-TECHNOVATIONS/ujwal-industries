@@ -3958,6 +3958,14 @@ def generate_production_plan_items(docname: str, planning_mode: str | None = Non
 	# Do NOT apply to child rows here — sequential dates must stay in SFG/FG row fields.
 	# Parallel dates are written to rows only when the user explicitly runs Parallel mode.
 	schedule = calculate_parallel_batch_schedule(docname)
+
+	# Embed sequential display data (mfg_days, grn_days, pm_days, holidays) so the
+	# sequential grid can show these columns without requiring extra doc fields.
+	seq_display = {}
+	for _so_name in selected_sos:
+		seq_display[_so_name] = _compute_sequential_schedule_data(doc, _so_name)
+	schedule["_seq"] = seq_display
+
 	frappe.db.set_value("Bulk Pre Production Plan", docname, {
 		"custom_batch_schedule": json.dumps(schedule),
 	})
@@ -4392,6 +4400,95 @@ def _fetch_bom_operations_cache(bom_nos: list[str]) -> dict[str, list[dict[str, 
 	for op in operations_data:
 		cache.setdefault(op.bom_no, []).append(op)
 	return cache
+
+
+def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, Any]:
+	"""Build per-row days/holiday data for the sequential grid display.
+
+	Called after calculate_dates_for_sales_order has set planned dates on the rows.
+	Returns {"fg": [...], "sfg": [...]} keyed by row_name so the JS grid can look
+	them up without requiring extra database columns on the child doctypes.
+	"""
+	shift_config  = _get_effective_shift_config()
+	holiday_list  = shift_config.get("holiday_list")
+	holidays      = _get_holiday_set(holiday_list)
+	shift_minutes = _get_shift_working_minutes(shift_config)
+
+	# Collect all item codes for one-shot GRN lookup
+	fg_items_for_so  = [r for r in doc.po_items if r.sales_order == so_name]
+	sfg_items_for_so = [r for r in doc.sub_assembly_items if r.sales_order == so_name]
+
+	all_item_codes = list(set(
+		[r.item_code for r in fg_items_for_so if r.item_code] +
+		[r.production_item for r in sfg_items_for_so if r.production_item]
+	))
+	grn_map = _fetch_grn_days_map(all_item_codes)
+
+	# BOM caches for production-minutes calculation
+	fg_bom_nos  = list(set(r.bom_no for r in fg_items_for_so  if r.bom_no))
+	sfg_bom_nos = list(set(r.bom_no for r in sfg_items_for_so if r.bom_no))
+	fg_bom_cache  = _fetch_bom_operations_cache(fg_bom_nos)  if fg_bom_nos  else {}
+	sfg_bom_cache = _fetch_bom_operations_cache(sfg_bom_nos) if sfg_bom_nos else {}
+
+	# Lead-time map for Subcontract SFG items
+	sc_items = [r.production_item for r in sfg_items_for_so
+	            if r.type_of_manufacturing == 'Subcontract' and r.production_item]
+	lead_time_map = _fetch_default_lead_time_map(sc_items, doc.company) if sc_items else {}
+
+	def _holiday_info(start_val, end_val):
+		if not start_val:
+			return 0, []
+		s = getdate(start_val)
+		e = getdate(end_val) if end_val else s
+		hd = sorted(h for h in holidays if s <= h <= e)
+		return len(hd), [h.strftime('%d-%m-%Y') for h in hd]
+
+	fg_data = []
+	for row in fg_items_for_so:
+		prod_mins = (
+			_calculate_row_production_minutes(row, flt(row.planned_qty), fg_bom_cache)
+			if row.bom_no else 0.0
+		)
+		mfg_days  = round(prod_mins / shift_minutes, 2) if shift_minutes > 0 and prod_mins > 0 else 0
+		grn_days  = cint(grn_map.get(row.item_code, 0))
+		pm_days   = cint(getattr(row, 'pm_days', 0) or 0)
+		hcount, hdates = _holiday_info(row.planned_start_date, row.custom_planned_end_date)
+		fg_data.append({
+			"row_name":     row.name,
+			"item_code":    row.item_code,
+			"mfg_days":     mfg_days,
+			"grn_days":     grn_days,
+			"pm_days":      pm_days,
+			"holiday_count": hcount,
+			"holiday_dates": hdates,
+		})
+
+	sfg_data = []
+	for row in sfg_items_for_so:
+		mfg_type = row.type_of_manufacturing or 'In House'
+		if mfg_type == 'Subcontract':
+			mfg_days = cint(lead_time_map.get(row.production_item, 0))
+			grn_days = cint(grn_map.get(row.production_item, 0))
+		else:
+			prod_mins = (
+				_calculate_row_production_minutes(row, flt(row.qty), sfg_bom_cache)
+				if row.bom_no else 0.0
+			)
+			mfg_days = round(prod_mins / shift_minutes, 2) if shift_minutes > 0 and prod_mins > 0 else 0
+			grn_days = 0
+		pm_days = cint(getattr(row, 'pm_days', 0) or 0)
+		hcount, hdates = _holiday_info(row.schedule_date, row.custom_schedule_end_date)
+		sfg_data.append({
+			"row_name":      row.name,
+			"item_code":     row.production_item,
+			"mfg_days":      mfg_days,
+			"grn_days":      grn_days,
+			"pm_days":       pm_days,
+			"holiday_count": hcount,
+			"holiday_dates": hdates,
+		})
+
+	return {"fg": fg_data, "sfg": sfg_data}
 
 
 def calculate_dates_for_sales_order(doc: Document, so_name: str):

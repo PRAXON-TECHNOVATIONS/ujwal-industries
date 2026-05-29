@@ -1036,12 +1036,22 @@ function _render_all_grids(frm, so_map, mode, $wrapper, parallel_data) {
 				return;
 			}
 
+			// Parse sequential days data once, keyed by SO name
+			let seq_data_all = {};
+			if (mode === 'Sequential') {
+				try {
+					const _sched = JSON.parse(frm.doc.custom_batch_schedule || '{}');
+					seq_data_all = _sched._seq || {};
+				} catch(e) {}
+			}
+
 			Object.values(so_map).forEach(so_data => {
 				const $grid_wrap = $wrapper.find(`.bpp-grid-wrap[data-so="${so_data.so_name}"]`);
 				if (!$grid_wrap.length) return;
 
 				if (mode === 'Sequential') {
-					_render_sequential_grid(frm, so_data, $grid_wrap[0]);
+					const so_seq = seq_data_all[so_data.so_name] || null;
+					_render_sequential_grid(frm, so_data, $grid_wrap[0], so_seq);
 				}
 				else if(mode == 'Parallel') {
 					const so_par = par_data ? par_data[so_data.so_name] : null;
@@ -1165,7 +1175,7 @@ function _update_delivery_disclaimer(frm, so_map, mode, par_data, $wrapper) {
 // Sequential Grid — 1 row per SFG (existing data from sub_assembly_items)
 // ---------------------------------------------------------------------------
 
-function _render_sequential_grid(frm, so_data, container) {
+function _render_sequential_grid(frm, so_data, container, seq_data) {
 	container.innerHTML = '';
 
 	// ── FG section ──────────────────────────────────────────────────────────
@@ -1184,7 +1194,7 @@ function _render_sequential_grid(frm, so_data, container) {
 	}
 
 	// ── FG AG Grid (top, matches Parallel order) ────────────────────────────
-	_render_sequential_fg_grid(frm, so_data, container);
+	_render_sequential_fg_grid(frm, so_data, container, seq_data);
 
 	// ── SFG AG Grid ─────────────────────────────────────────────────────────
 	const sfg_label = document.createElement('div');
@@ -1197,6 +1207,11 @@ function _render_sequential_grid(frm, so_data, container) {
 	const _level_colors = ['#D1FAE5', '#FEF9C3', '#EDE9FE', '#FFE4E6', '#E0F2FE', '#FFF7ED'];
 	const _level_border = ['#059669', '#CA8A04', '#7C3AED', '#E11D48', '#0284C7', '#EA580C'];
 	const _bom_levels = [...new Set((so_data.sfg || []).map(r => r.bom_level))].sort((a, b) => a - b);
+
+	// Build lookup map for sequential days data keyed by SFG row name
+	const sfg_seq_map = Object.fromEntries(
+		((seq_data && seq_data.sfg) || []).map(r => [r.row_name, r])
+	);
 
 	const sfg_el = document.createElement('div');
 	sfg_el.className = 'ag-theme-alpine';
@@ -1240,6 +1255,37 @@ function _render_sequential_grid(frm, so_data, container) {
 		{
 			headerName: 'Qty', field: 'qty', width: 120, type: 'numericColumn',
 			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
+			valueGetter: p => (sfg_seq_map[p.data?.name]?.mfg_days) || 0,
+			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+		},
+		{
+			headerName: 'GRN Days', width: 82, type: 'numericColumn',
+			valueGetter: p => (sfg_seq_map[p.data?.name]?.grn_days) || 0,
+			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'PM Days', width: 78, type: 'numericColumn',
+			valueGetter: p => (sfg_seq_map[p.data?.name]?.pm_days) || 0,
+			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'Holi.', width: 58, type: 'numericColumn',
+			valueGetter: p => (sfg_seq_map[p.data?.name]?.holiday_count) || 0,
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => {
+				const count = p.value || 0;
+				if (!count) return '';
+				return `<span class="holi-click">${count}</span>`;
+			},
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Holi.') return;
+				const dates = (sfg_seq_map[p.data?.name]?.holiday_dates) || [];
+				if (!dates.length) return;
+				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
+			}
 		},
 		{
 			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
@@ -1353,7 +1399,7 @@ function _render_sequential_grid(frm, so_data, container) {
 // Sequential FG Grid — same columns as Parallel FG but no batch rows
 // ---------------------------------------------------------------------------
 
-function _render_sequential_fg_grid(frm, so_data, container) {
+function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 	const fg_items = so_data.fg || [];
 	if (!fg_items.length) return;
 
@@ -1364,33 +1410,43 @@ function _render_sequential_fg_grid(frm, so_data, container) {
 	);
 	container.appendChild(fg_label);
 
-	const rows = fg_items.map(item => ({
-		_row_name:              item.name,
-		item_code:              item.item_code || '',
-		item_name:              item.item_name || '',
-		planned_qty:            Number(item.planned_qty || item.qty || 0),
-		stock_uom:              item.stock_uom || '',
-		bom_no:                 item.bom_no || '',
-		tool:                   item.tool || '',
-		tools:                  item.tools || [],
-		custom_workstations_csv: item.custom_workstations_csv || '',
-		custom_shift_types_csv:  item.custom_shift_types_csv || '',
-		batchsize:              Number(item.batchsize || 0),
-		machine_count:          Number(item.machine_count || _parse_csv_list(item.custom_workstations_csv).length || 0),
-		spm:                    Number(item.spm || 0),
-		type:                   item.custom_manufacturing_type || item.manufacturing_type || 'In House',
-		supplier:               item.custom_supplier || '',
-		supplier_list:          item.supplier_list || [],
-		supplier_name:          item.supplier_name || '',
-		target_warehouse:       item.fg_warehouse || item.target_warehouse || '',
-		actual_qty:             Number(item.actual_qty || 0),
-		planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
-		start_date:             item.planned_start_date || '',
-		end_date:               item.custom_planned_end_date || '',
-		mfg_days:               Number(item.custom_mfg_days || 0),
-		grn_days:               Number(item.custom_grn_days || 0),
-		pm_days:                Number(item.custom_pm_days || 0),
-	}));
+	// Build lookup map for sequential days data keyed by FG row name
+	const fg_seq_map = Object.fromEntries(
+		((seq_data && seq_data.fg) || []).map(r => [r.row_name, r])
+	);
+
+	const rows = fg_items.map(item => {
+		const _seq = fg_seq_map[item.name] || {};
+		return {
+			_row_name:              item.name,
+			item_code:              item.item_code || '',
+			item_name:              item.item_name || '',
+			planned_qty:            Number(item.planned_qty || item.qty || 0),
+			stock_uom:              item.stock_uom || '',
+			bom_no:                 item.bom_no || '',
+			tool:                   item.tool || '',
+			tools:                  item.tools || [],
+			custom_workstations_csv: item.custom_workstations_csv || '',
+			custom_shift_types_csv:  item.custom_shift_types_csv || '',
+			batchsize:              Number(item.batchsize || 0),
+			machine_count:          Number(item.machine_count || _parse_csv_list(item.custom_workstations_csv).length || 0),
+			spm:                    Number(item.spm || 0),
+			type:                   item.custom_manufacturing_type || item.manufacturing_type || 'In House',
+			supplier:               item.custom_supplier || '',
+			supplier_list:          item.supplier_list || [],
+			supplier_name:          item.supplier_name || '',
+			target_warehouse:       item.fg_warehouse || item.target_warehouse || '',
+			actual_qty:             Number(item.actual_qty || 0),
+			planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
+			start_date:             item.planned_start_date || '',
+			end_date:               item.custom_planned_end_date || '',
+			mfg_days:               Number(_seq.mfg_days || 0),
+			grn_days:               Number(_seq.grn_days || 0),
+			pm_days:                Number(_seq.pm_days || item.pm_days || 0),
+			holiday_count:          Number(_seq.holiday_count || 0),
+			holiday_dates:          _seq.holiday_dates || [],
+		};
+	});
 
 	const cols = [
 		{
@@ -1493,6 +1549,21 @@ function _render_sequential_fg_grid(frm, so_data, container) {
 		{
 			headerName: 'PM Days', field: 'pm_days', width: 78, type: 'numericColumn',
 			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'Holi.', field: 'holiday_count', width: 58, type: 'numericColumn',
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => {
+				const count = p.value || 0;
+				if (!count) return '';
+				return `<span class="holi-click">${count}</span>`;
+			},
+			onCellClicked: p => {
+				if (p.colDef.headerName !== 'Holi.') return;
+				const dates = p.data?.holiday_dates || [];
+				if (!dates.length) return;
+				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
+			}
 		},
 		{
 			headerName: 'Start Date', field: 'start_date', width: 165, editable: true,
