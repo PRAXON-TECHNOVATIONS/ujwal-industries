@@ -22,7 +22,7 @@ from ujwal_industries.api.owner_dashboard import (
 #  INTERNAL IMPLEMENTATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_so_list():
+def _compute_so_list(from_date=None, to_date=None):
     """
     Core SO list with per-SO delay prediction and 5-stage pipeline.
 
@@ -35,7 +35,16 @@ def _compute_so_list():
     today_date = getdate(nowdate())
 
     # ── 1. Active SOs ────────────────────────────────────────────────────
-    sales_orders = frappe.db.sql("""
+    date_cond = ""
+    params = {}
+    if from_date:
+        date_cond += " AND so.delivery_date >= %(from_date)s"
+        params["from_date"] = from_date
+    if to_date:
+        date_cond += " AND so.delivery_date <= %(to_date)s"
+        params["to_date"] = to_date
+
+    sales_orders = frappe.db.sql(f"""
         SELECT
             so.name, so.customer, so.customer_name,
             so.delivery_date, so.grand_total, so.status,
@@ -45,9 +54,10 @@ def _compute_so_list():
           AND so.status NOT IN ('Completed', 'Cancelled', 'Closed')
           AND so.per_delivered < 100
           AND so.delivery_date IS NOT NULL
+          {date_cond}
         ORDER BY so.delivery_date ASC
         LIMIT 200
-    """, as_dict=1)
+    """, params, as_dict=1)
 
     if not sales_orders:
         return []
@@ -264,13 +274,13 @@ def _compute_so_list():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def get_so_list():
+def get_so_list(from_date=None, to_date=None):
     """List of active SOs with delay prediction and priority classification."""
-    return _compute_so_list()
+    return _compute_so_list(from_date=from_date, to_date=to_date)
 
 
 @frappe.whitelist()
-def get_so_overview():
+def get_so_overview(from_date=None, to_date=None):
     """
     Summary data for the overview screen:
       - total active SO count + completed count
@@ -278,13 +288,17 @@ def get_so_overview():
       - production status breakdown by priority
       - top 5 most overdue SOs
     """
-    data = _compute_so_list()
+    data = _compute_so_list(from_date=from_date, to_date=to_date)
 
-    # Completed SO count (separate — not in active list)
-    completed_count = frappe.db.count(
-        "Sales Order",
-        filters={"docstatus": 1, "status": ["in", ["Completed", "Closed"]]},
-    )
+    # Completed SO count filtered by the same delivery date range
+    completed_filters = {"docstatus": 1, "status": ["in", ["Completed", "Closed"]]}
+    if from_date and to_date:
+        completed_filters["delivery_date"] = ["between", [from_date, to_date]]
+    elif from_date:
+        completed_filters["delivery_date"] = [">=", from_date]
+    elif to_date:
+        completed_filters["delivery_date"] = ["<=", to_date]
+    completed_count = frappe.db.count("Sales Order", filters=completed_filters)
 
     planning    = {"planned": 0, "not_planned": 0}
     production  = {"OVERDUE": 0, "DELIVERY RISK": 0, "ON HOLD": 0, "ON TRACK": 0}
