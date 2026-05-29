@@ -45,11 +45,11 @@ class DeliveryRiskDashboard {
 
 // ─── Production Status ────────────────────────────────────────────────────────
 const P = {
-	'OVERDUE':       { label:'OVERDUE',       color:'#dc2626', bg:'#fee2e2', border:'#dc2626', cardBg:'#fff5f5', icon:'🚨' },
-	'DELIVERY RISK': { label:'DELIVERY RISK', color:'#b45309', bg:'#fef3c7', border:'#f59e0b', cardBg:'#fffbeb', icon:'⚠️' },
-	'ON HOLD':       { label:'ON HOLD',       color:'#7c3aed', bg:'#ede9fe', border:'#8b5cf6', cardBg:'#faf5ff', icon:'⏸️' },
-	'ON TRACK':      { label:'ON TRACK',      color:'#065f46', bg:'#d1fae5', border:'#10b981', cardBg:'#f0fdf4', icon:'✅' },
-	'COMPLETED':     { label:'COMPLETED',     color:'#1e40af', bg:'#dbeafe', border:'#3b82f6', cardBg:'#eff6ff', icon:'🏁' },
+	'OVERDUE':       { label:'OVERDUE',       color:'#b91c1c', bg:'#fee2e2', border:'#f87171', cardBg:'#fff5f5', icon:'🚨' },
+	'DELIVERY RISK': { label:'DELIVERY RISK', color:'#92400e', bg:'#fef3c7', border:'#fbbf24', cardBg:'#fffbeb', icon:'⚠️' },
+	'ON HOLD':       { label:'ON HOLD',       color:'#6d28d9', bg:'#ede9fe', border:'#a78bfa', cardBg:'#faf5ff', icon:'⏸️' },
+	'ON TRACK':      { label:'ON TRACK',      color:'#065f46', bg:'#d1fae5', border:'#34d399', cardBg:'#f0fdf4', icon:'✅' },
+	'COMPLETED':     { label:'COMPLETED',     color:'#0e7490', bg:'#cffafe', border:'#22d3ee', cardBg:'#ecfeff', icon:'🏁' },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -253,19 +253,19 @@ function OverviewScreen({onNavigate}) {
 	const grandTotal = (data.total_active||0) + (data.completed||0);
 
 	const prodPieData = [
-		{label:'Overdue',       value:prod['OVERDUE']||0,       color:'#dc2626', key:'OVERDUE'},
-		{label:'Delivery Risk', value:prod['DELIVERY RISK']||0, color:'#f59e0b', key:'DELIVERY RISK'},
-		{label:'On Hold',       value:prod['ON HOLD']||0,       color:'#8b5cf6', key:'ON HOLD'},
-		{label:'On Track',      value:prod['ON TRACK']||0,      color:'#10b981', key:'ON TRACK'},
-		{label:'Completed',     value:data.completed||0,        color:'#3b82f6', key:'COMPLETED'},
+		{label:'Overdue',       value:prod['OVERDUE']||0,       color:'#f87171', key:'OVERDUE'},
+		{label:'Delivery Risk', value:prod['DELIVERY RISK']||0, color:'#fbbf24', key:'DELIVERY RISK'},
+		{label:'On Hold',       value:prod['ON HOLD']||0,       color:'#a78bfa', key:'ON HOLD'},
+		{label:'On Track',      value:prod['ON TRACK']||0,      color:'#34d399', key:'ON TRACK'},
+		{label:'Completed',     value:data.completed||0,        color:'#22d3ee', key:'COMPLETED'},
 	].filter(d=>d.value>0);
 
 	// not_planned = active - planned; adding completed keeps planning total = grandTotal
 	const planNotPlanned = Math.max(0,(data.total_active||0)-(plan.planned||0));
 	const planPieData = [
-		{label:'Planned',     value:plan.planned||0,   color:'#3b82f6', key:'planned'},
+		{label:'Planned',     value:plan.planned||0,   color:'#60a5fa', key:'planned'},
 		{label:'Not Planned', value:planNotPlanned,     color:'#94a3b8', key:'not_planned'},
-		{label:'Completed',   value:data.completed||0, color:'#10b981', key:'completed'},
+		{label:'Completed',   value:data.completed||0, color:'#22d3ee', key:'completed'},
 	].filter(d=>d.value>0);
 
 	const mkCard = (key,icon,label,val,sub,bg,onClick)=>React.createElement('div',{
@@ -316,26 +316,26 @@ function OverviewScreen({onNavigate}) {
 		]),
 
 		// ── Production Section ──
-		React.createElement('div',{key:'prod-sec',style:{background:'rgba(255,255,255,.06)',borderRadius:'16px',border:'1px solid rgba(220,38,38,.22)',padding:'20px 24px',marginBottom:'18px'}},[
-			sectionHdr('🏭','Production Status','Active SOs by delivery risk level','rgba(220,38,38,.2)'),
+		React.createElement('div',{key:'prod-sec',style:{background:'rgba(248,113,113,.04)',borderRadius:'16px',border:'1px solid rgba(248,113,113,.18)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('🏭','Production Status','Active SOs by delivery risk level','rgba(248,113,113,.15)'),
 			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
-				mkCard('ta','📋','Total',grandTotal,'Active + Completed','rgba(255,255,255,.1)',()=>onNavigate(null)),
-				mkCard('ov','🚨','Overdue',prod['OVERDUE']||0,'Need attention','rgba(220,38,38,.3)',()=>onNavigate('OVERDUE')),
-				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(245,158,11,.25)',()=>onNavigate('DELIVERY RISK')),
-				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','rgba(139,92,246,.3)',()=>onNavigate('ON HOLD')),
-				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','rgba(16,185,129,.25)',()=>onNavigate('ON TRACK')),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(59,130,246,.2)',()=>onNavigate('COMPLETED')),
+				mkCard('ta','📋','Total',grandTotal,'Active + Completed','rgba(255,255,255,.07)',()=>onNavigate(null)),
+				mkCard('ov','🚨','Overdue',prod['OVERDUE']||0,'Need attention','rgba(248,113,113,.18)',()=>onNavigate('OVERDUE')),
+				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(251,191,36,.15)',()=>onNavigate('DELIVERY RISK')),
+				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','rgba(167,139,250,.18)',()=>onNavigate('ON HOLD')),
+				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','rgba(52,211,153,.18)',()=>onNavigate('ON TRACK')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
 			]),
 			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:prodPieData,total:grandTotal,onSlice:onNavigate,embedded:true})
 		]),
 
 		// ── Planning Section ──
-		React.createElement('div',{key:'plan-sec',style:{background:'rgba(255,255,255,.06)',borderRadius:'16px',border:'1px solid rgba(59,130,246,.22)',padding:'20px 24px',marginBottom:'18px'}},[
-			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(59,130,246,.2)'),
+		React.createElement('div',{key:'plan-sec',style:{background:'rgba(96,165,250,.04)',borderRadius:'16px',border:'1px solid rgba(96,165,250,.18)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(96,165,250,.15)'),
 			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
-				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(59,130,246,.25)',()=>onNavigate(null,'planned')),
-				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.2)',()=>onNavigate(null,'not_planned')),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(16,185,129,.25)',()=>onNavigate('COMPLETED')),
+				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(96,165,250,.18)',()=>onNavigate(null,'planned')),
+				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.14)',()=>onNavigate(null,'not_planned')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
 			]),
 			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:planPieData,total:grandTotal,onSlice:null,embedded:true})
 		]),
@@ -388,7 +388,7 @@ function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 					onClick:()=>onSlice&&onSlice(s.key)
 				})),
 				// Donut hole — dark circle ensures center text is always readable
-				React.createElement('circle',{key:'hole',cx:cx,cy:cy,r:Math.round(r*0.52),fill:'rgba(10,20,40,.92)'})
+				React.createElement('circle',{key:'hole',cx:cx,cy:cy,r:Math.round(r*0.52),fill:'rgba(12,18,36,.96)'})
 			]),
 			React.createElement('div',{key:'ct',style:{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',pointerEvents:'none'}},[
 				React.createElement('div',{key:'v',style:{fontSize:'20px',fontWeight:'900',color:'white',lineHeight:1}},
@@ -399,17 +399,17 @@ function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 				)
 			])
 		]),
-		React.createElement('div',{key:'leg',style:{flex:1,minWidth:'120px'}},
+		React.createElement('div',{key:'leg',style:{display:'flex',flexDirection:'column',gap:'2px'}},
 			data.map((d,i)=>React.createElement('div',{
 				key:d.label,
-				style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.6,transition:'opacity .2s'},
+				style:{display:'flex',alignItems:'center',gap:'10px',padding:'5px 10px',borderRadius:'8px',background:hovered===i?'rgba(255,255,255,.07)':'transparent',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.4,transition:'opacity .2s,background .15s'},
 				onMouseEnter:()=>setHovered(i),
 				onMouseLeave:()=>setHovered(null),
 				onClick:()=>onSlice&&onSlice(d.key)
 			},[
-				React.createElement('div',{key:'dot',style:{width:'10px',height:'10px',borderRadius:'50%',background:d.color,flexShrink:0}}),
-				React.createElement('span',{key:'l',style:{fontSize:'12px',color:'rgba(255,255,255,.8)',flex:1}},d.label),
-				React.createElement('span',{key:'v',style:{fontSize:'13px',fontWeight:'800',color:'white'}},d.value)
+				React.createElement('div',{key:'dot',style:{width:'9px',height:'9px',borderRadius:'50%',background:d.color,flexShrink:0,boxShadow:`0 0 5px ${d.color}`}}),
+				React.createElement('span',{key:'l',style:{fontSize:'12px',color:'rgba(255,255,255,.75)',minWidth:'90px'}},d.label),
+				React.createElement('span',{key:'v',style:{fontSize:'14px',fontWeight:'900',color:d.color,minWidth:'24px',textAlign:'right'}},d.value)
 			]))
 		)
 	]);
