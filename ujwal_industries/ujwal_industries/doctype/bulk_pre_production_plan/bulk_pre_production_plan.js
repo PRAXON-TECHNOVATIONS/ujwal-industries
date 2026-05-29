@@ -294,30 +294,32 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 			return;
 		}
 
-		const _do_generate = () => {
-			frappe.show_alert({ message: __('Generating production plan…'), indicator: 'blue' });
-			frappe.call({
-				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.generate_production_plan_items',
-				args: { docname: frm.doc.name },
-				callback(r) {
-					if (r.message) {
-						frm.reload_doc();
-						frappe.show_alert({
-							message: __('Pre Production Plan generated successfully!'),
-							indicator: 'green'
-						});
-					}
-				}
-			});
-		};
-
-		if (frm.is_new()) {
-			frm.save().then(_do_generate);
-		} else {
-			_do_generate();
-		}
+		// Always save first so selected_items (from the Select Items dialog) is
+		// persisted to DB before the Python function reads it server-side.
+		frm.save().then(() => _run_generate_production_plan(frm));
 	}
 });
+
+// Shared helper — saves the doc then calls generate_production_plan_items.
+// Extracted so both the "Start Pre Production Planning" button and the
+// "Select Items" dialog confirm can trigger regeneration without duplication.
+function _run_generate_production_plan(frm) {
+	frappe.show_alert({ message: __('Generating production plan…'), indicator: 'blue' });
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.generate_production_plan_items',
+		args: { docname: frm.doc.name },
+		callback(r) {
+			if (r.message) {
+				frm.reload_doc();
+				frappe.show_alert({
+					message: __('Pre Production Plan generated successfully!'),
+					indicator: 'green'
+				});
+			}
+		}
+	});
+}
+
 
 // Child table events for Sales Orders
 frappe.ui.form.on('Bulk PP Sales Order', {
@@ -353,16 +355,11 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
 				} catch (_) { already_selected = []; }
 
-				// Determine if an item is selectable based on the SO's order_type
-				// Sales SO: only planning_type 1 items are selectable (level 2 items are read-only)
-				// Forecast SO: only planning_type 2 items are selectable (other items are read-only)
-				// Use so_order_type from the API response (reliable for all SOs regardless of child table state)
-				const so_order_type = (r.message[0] && r.message[0].so_order_type) || row.order_type || '';
-				const is_selectable = (item) => {
-					if (so_order_type === 'Sales') return item.custom_planning_type === '1';
-					if (so_order_type === 'Forecast') return item.custom_planning_type === '2';
-					return true;
-				};
+				// All items are selectable regardless of SO order type or planning_type.
+				// Previously this restricted Sales SOs to planning_type=1 and Forecast SOs
+				// to planning_type=2, which caused all items to appear disabled when the
+				// items didn't match those types. Removed so the user can freely pick any FG.
+				const is_selectable = (_item) => true;
 
 				// Build dialog fields — one Check per unique item_code
 				const fields = items.map(item => {
@@ -395,7 +392,19 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 							? __('Select Items')
 							: __('Items: {0}/{1}', [selected.length, selectable_items.length]));
 
+						// Refresh BOM Selections immediately so the table only shows selected items
+						load_bom_selections(frm);
+
 						d.hide();
+
+						// If planning items already exist, ask the user to regenerate now
+						// so the grid reflects the new selection without an extra manual step.
+						if ((frm.doc.po_items || []).length > 0) {
+							frappe.confirm(
+								__('Planning items already exist. Regenerate now with only the selected {0} item(s)?', [selected.length]),
+								() => frm.save().then(() => _run_generate_production_plan(frm))
+							);
+						}
 					}
 				});
 
