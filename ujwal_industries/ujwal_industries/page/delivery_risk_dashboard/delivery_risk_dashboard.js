@@ -96,7 +96,7 @@ function DRDApp() {
 	const [selectedSO,setSelectedSO]   = useState(null);
 	const [openWOs,setOpenWOs]         = useState([]);
 
-	const EMPTY = {so:'',customer:'',from_date:'',to_date:'',priority:''};
+	const EMPTY = {so:'',customer:'',from_date:'',to_date:'',priority:'',planning:''};
 	const [filterInputs,setFilterInputs] = useState(EMPTY);
 	const [activeFilters,setActiveFilters] = useState({});
 
@@ -110,14 +110,19 @@ function DRDApp() {
 		if (f.from_date) { d=d.filter(o=>o.expected_date>=f.from_date); }
 		if (f.to_date)   { d=d.filter(o=>o.expected_date<=f.to_date); }
 		if (f.priority)  { d=d.filter(o=>o.priority===f.priority); }
+		if (f.planning==='planned')     { d=d.filter(o=>o.has_pp); }
+		if (f.planning==='not_planned') { d=d.filter(o=>!o.has_pp); }
 		return d;
 	};
 
 	useEffect(() => {
 		if (screen !== 'list') return;
 		setOrders([]); setOffset(0); setHasMore(false); setLoading(true);
+		// Fetch completed SOs from backend only when navigating to Completed filter
+		const needsCompleted = activeFilters.priority === 'COMPLETED';
 		frappe.call({
 			method:'ujwal_industries.api.sales_order_tracker.get_so_list',
+			args:{include_completed: needsCompleted ? 1 : 0},
 			callback:(r)=>{
 				if (r.message) {
 					const filtered = applyFilters(r.message, activeFilters);
@@ -155,10 +160,12 @@ function DRDApp() {
 	const openSet  = new Set(openWOs);
 
 	// Navigate from overview to list with a pre-set filter
-	const goToList = useCallback((priorityFilter)=>{
-		const f = priorityFilter ? {...EMPTY, priority: priorityFilter} : EMPTY;
-		setFilterInputs(f);
-		setActiveFilters(priorityFilter ? {priority: priorityFilter} : {});
+	const goToList = useCallback((priorityFilter, planningFilter)=>{
+		const filters = {};
+		if (priorityFilter) filters.priority  = priorityFilter;
+		if (planningFilter) filters.planning   = planningFilter;
+		setFilterInputs({...EMPTY, ...filters});
+		setActiveFilters(filters);
 		setSelectedSO(null); setOpenWOs([]);
 		setScreen('list');
 	},[]);
@@ -177,6 +184,9 @@ function DRDApp() {
 			React.createElement('button',{key:'back',onClick:()=>setScreen('overview'),style:{background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',color:'white',borderRadius:'8px',padding:'6px 14px',fontSize:'13px',fontWeight:'700',cursor:'pointer'}},'← Overview'),
 			activeFilters.priority && React.createElement('span',{key:'badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:(P[activeFilters.priority]||{}).bg||'#e5e7eb',color:(P[activeFilters.priority]||{}).color||'#374151'}},
 				`${(P[activeFilters.priority]||{}).icon||''} ${activeFilters.priority}`
+			),
+			activeFilters.planning && React.createElement('span',{key:'plan-badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:'rgba(59,130,246,.2)',color:'#60a5fa'}},
+				activeFilters.planning==='planned' ? '📅 PLANNED' : '📝 NOT PLANNED'
 			)
 		]),
 		React.createElement(Filters,{key:'f',filterInputs,setFilterInputs,onApply:()=>setActiveFilters({...filterInputs}),onClear:()=>{setFilterInputs(EMPTY);setActiveFilters({});}}),
@@ -314,7 +324,7 @@ function OverviewScreen({onNavigate}) {
 				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(245,158,11,.25)',()=>onNavigate('DELIVERY RISK')),
 				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','rgba(139,92,246,.3)',()=>onNavigate('ON HOLD')),
 				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','rgba(16,185,129,.25)',()=>onNavigate('ON TRACK')),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(59,130,246,.2)',()=>onNavigate(null)),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(59,130,246,.2)',()=>onNavigate('COMPLETED')),
 			]),
 			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:prodPieData,total:grandTotal,onSlice:onNavigate,embedded:true})
 		]),
@@ -323,9 +333,9 @@ function OverviewScreen({onNavigate}) {
 		React.createElement('div',{key:'plan-sec',style:{background:'rgba(255,255,255,.06)',borderRadius:'16px',border:'1px solid rgba(59,130,246,.22)',padding:'20px 24px',marginBottom:'18px'}},[
 			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(59,130,246,.2)'),
 			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
-				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(59,130,246,.25)',null),
-				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.2)',null),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(16,185,129,.25)',()=>onNavigate(null)),
+				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(59,130,246,.25)',()=>onNavigate(null,'planned')),
+				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.2)',()=>onNavigate(null,'not_planned')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(16,185,129,.25)',()=>onNavigate('COMPLETED')),
 			]),
 			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:planPieData,total:grandTotal,onSlice:null,embedded:true})
 		]),
@@ -431,7 +441,13 @@ function Filters({filterInputs,setFilterInputs,onApply,onClear}) {
 			React.createElement('div',{key:'pr'},[
 				React.createElement('label',{key:'l',style:lbl},'Production Status'),
 				React.createElement('select',{key:'s',className:'drd-filter-input',value:filterInputs.priority,onChange:e=>upd('priority',e.target.value),style:{...inp,cursor:'pointer'}},[
-					['','All'],['OVERDUE','🚨 OVERDUE'],['DELIVERY RISK','⚠️ DELIVERY RISK'],['ON HOLD','⏸️ ON HOLD'],['ON TRACK','✅ ON TRACK']
+					['','All'],['OVERDUE','🚨 OVERDUE'],['DELIVERY RISK','⚠️ DELIVERY RISK'],['ON HOLD','⏸️ ON HOLD'],['ON TRACK','✅ ON TRACK'],['COMPLETED','🏁 COMPLETED']
+				].map(([v,t])=>React.createElement('option',{key:v,value:v},t)))
+			]),
+			React.createElement('div',{key:'pl'},[
+				React.createElement('label',{key:'l',style:lbl},'Planning Status'),
+				React.createElement('select',{key:'s',className:'drd-filter-input',value:filterInputs.planning,onChange:e=>upd('planning',e.target.value),style:{...inp,cursor:'pointer'}},[
+					['','All'],['planned','📅 Planned'],['not_planned','📝 Not Planned']
 				].map(([v,t])=>React.createElement('option',{key:v,value:v},t)))
 			]),
 			React.createElement('div',{key:'bt',style:{display:'flex',gap:'8px'}}, [
