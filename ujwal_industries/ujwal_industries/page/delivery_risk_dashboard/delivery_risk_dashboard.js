@@ -170,7 +170,7 @@ function DRDApp() {
 		setScreen('list');
 	},[]);
 
-	const wrapStyle = {minHeight:'100vh',background:'linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#0f3460 100%)',padding:'20px',margin:'-15px',width:'calc(100% + 30px)'};
+	const wrapStyle = {minHeight:'100vh',background:'#F2F4F6',padding:'20px',margin:'-15px',width:'calc(100% + 30px)'};
 
 	if (screen === 'overview') {
 		return React.createElement('div',{style:wrapStyle},
@@ -181,11 +181,11 @@ function DRDApp() {
 	return React.createElement('div',{style:wrapStyle},[
 		// Back to overview button
 		React.createElement('div',{key:'nav',style:{marginBottom:'12px',display:'flex',alignItems:'center',gap:'10px'}}, [
-			React.createElement('button',{key:'back',onClick:()=>setScreen('overview'),style:{background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',color:'white',borderRadius:'8px',padding:'6px 14px',fontSize:'13px',fontWeight:'700',cursor:'pointer'}},'← Overview'),
+			React.createElement('button',{key:'back',onClick:()=>setScreen('overview'),style:{background:'white',border:'1px solid #e2e8f0',color:'#374151',borderRadius:'8px',padding:'6px 14px',fontSize:'13px',fontWeight:'700',cursor:'pointer',boxShadow:'0 1px 3px rgba(0,0,0,.06)'}},'← Dashboard'),
 			activeFilters.priority && React.createElement('span',{key:'badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:(P[activeFilters.priority]||{}).bg||'#e5e7eb',color:(P[activeFilters.priority]||{}).color||'#374151'}},
 				`${(P[activeFilters.priority]||{}).icon||''} ${activeFilters.priority}`
 			),
-			activeFilters.planning && React.createElement('span',{key:'plan-badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:'rgba(59,130,246,.2)',color:'#60a5fa'}},
+			activeFilters.planning && React.createElement('span',{key:'plan-badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:'#D3EADA',color:'#2d6b4a'}},
 				activeFilters.planning==='planned' ? '📅 PLANNED' : '📝 NOT PLANNED'
 			)
 		]),
@@ -209,8 +209,8 @@ function DRDApp() {
 			),
 			!loading && React.createElement('div',{key:'pg'},[
 				React.createElement('div',{key:'s',ref:sentinelRef,style:{height:'8px'}}),
-				loadingMore && React.createElement('div',{key:'lm',style:{textAlign:'center',padding:'16px',color:'rgba(255,255,255,.5)',fontSize:'14px'}}, 'Loading more...'),
-				!hasMore&&orders.length>0 && React.createElement('div',{key:'end',style:{textAlign:'center',padding:'14px',fontSize:'13px',color:'rgba(255,255,255,.3)'}},`All ${orders.length} orders shown`)
+				loadingMore && React.createElement('div',{key:'lm',style:{textAlign:'center',padding:'16px',color:'#94a3b8',fontSize:'14px'}}, 'Loading more...'),
+				!hasMore&&orders.length>0 && React.createElement('div',{key:'end',style:{textAlign:'center',padding:'14px',fontSize:'13px',color:'#94a3b8'}},`All ${orders.length} orders shown`)
 			])
 		])
 	]);
@@ -270,91 +270,91 @@ function OverviewScreen({onNavigate}) {
 
 	const mkCard = (key,icon,label,val,sub,bg,onClick)=>React.createElement('div',{
 		key,
-		style:{background:bg||'rgba(255,255,255,.09)',borderRadius:'12px',padding:'14px 16px',textAlign:'center',cursor:onClick?'pointer':'default',border:'1px solid rgba(255,255,255,.1)',transition:'transform .15s,box-shadow .15s',flex:'1 1 100px',minWidth:'90px'},
+		style:{background:bg||'white',borderRadius:'12px',padding:'14px 16px',textAlign:'center',cursor:onClick?'pointer':'default',border:'1px solid rgba(0,0,0,.08)',boxShadow:'0 1px 4px rgba(0,0,0,.06)',transition:'transform .15s,box-shadow .15s',flex:'1 1 100px',minWidth:'90px'},
 		onClick,
-		onMouseEnter:e=>onClick&&(e.currentTarget.style.transform='translateY(-3px)',e.currentTarget.style.boxShadow='0 8px 20px rgba(0,0,0,.3)'),
-		onMouseLeave:e=>onClick&&(e.currentTarget.style.transform='translateY(0)',e.currentTarget.style.boxShadow='none')
+		onMouseEnter:e=>onClick&&(e.currentTarget.style.transform='translateY(-3px)',e.currentTarget.style.boxShadow='0 8px 20px rgba(0,0,0,.12)'),
+		onMouseLeave:e=>onClick&&(e.currentTarget.style.transform='translateY(0)',e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,.06)')
 	},[
 		React.createElement('div',{key:'ic',style:{fontSize:'22px',marginBottom:'4px'}},icon),
-		React.createElement('div',{key:'v',style:{fontSize:'26px',fontWeight:'900',color:'white',lineHeight:1.1}},val),
-		React.createElement('div',{key:'l',style:{fontSize:'11px',fontWeight:'700',color:'rgba(255,255,255,.7)',marginTop:'3px'}},label),
-		sub&&React.createElement('div',{key:'s',style:{fontSize:'10px',color:'rgba(255,255,255,.4)',marginTop:'1px'}},sub)
+		React.createElement('div',{key:'v',style:{fontSize:'26px',fontWeight:'900',color:'#1e293b',lineHeight:1.1}},val),
+		React.createElement('div',{key:'l',style:{fontSize:'11px',fontWeight:'700',color:'#64748b',marginTop:'3px'}},label),
+		sub&&React.createElement('div',{key:'s',style:{fontSize:'10px',color:'#94a3b8',marginTop:'1px'}},sub)
 	]);
 
 	const sectionHdr = (icon,title,sub,iconBg)=>React.createElement('div',{
 		key:'hdr',
-		style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px',paddingBottom:'12px',borderBottom:'1px solid rgba(255,255,255,.08)'}
+		style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px',paddingBottom:'12px',borderBottom:'1px solid #e2e8f0'}
 	},[
 		React.createElement('span',{key:'ic',style:{fontSize:'18px',background:iconBg,borderRadius:'8px',padding:'7px 9px',lineHeight:1}},icon),
 		React.createElement('div',{key:'txt'},[
-			React.createElement('h3',{key:'t',style:{color:'white',fontSize:'15px',fontWeight:'800',margin:0}},title),
-			React.createElement('p',{key:'s',style:{color:'rgba(255,255,255,.4)',fontSize:'11px',margin:'2px 0 0'}},sub)
+			React.createElement('h3',{key:'t',style:{color:'#1e293b',fontSize:'15px',fontWeight:'800',margin:0}},title),
+			React.createElement('p',{key:'s',style:{color:'#94a3b8',fontSize:'11px',margin:'2px 0 0'}},sub)
 		])
 	]);
 
 	const RANGES=[{r:'all',l:'All'},{r:'week',l:'This Week'},{r:'month',l:'This Month'},{r:'quarter',l:'This Quarter'},{r:'year',l:'This Year'}];
-	const inpStyle={height:'30px',padding:'0 8px',borderRadius:'6px',border:'1px solid rgba(255,255,255,.2)',background:'rgba(255,255,255,.08)',color:'white',fontSize:'12px',outline:'none',colorScheme:'dark'};
+	const inpStyle={height:'30px',padding:'0 8px',borderRadius:'6px',border:'1px solid #e2e8f0',background:'white',color:'#374151',fontSize:'12px',outline:'none',colorScheme:'light'};
 
 	return React.createElement('div',{},[
 		React.createElement('div',{key:'title',style:{marginBottom:'14px'}},[
-			React.createElement('h2',{key:'h',style:{color:'white',fontSize:'22px',fontWeight:'800',margin:0}},'📊 Sales Order Overview'),
-			React.createElement('p',{key:'s',style:{color:'rgba(255,255,255,.5)',fontSize:'13px',margin:'4px 0 0'}},'Click any tile or chart segment to drill into the list')
+			React.createElement('h2',{key:'h',style:{color:'#1e293b',fontSize:'22px',fontWeight:'800',margin:0}},'📊 Sales Order Dashboard'),
+			React.createElement('p',{key:'s',style:{color:'#64748b',fontSize:'13px',margin:'4px 0 0'}},'Click any tile or chart segment to drill into the list')
 		]),
 
 		// ── Date Filter Bar ──
-		React.createElement('div',{key:'filterbar',style:{background:'rgba(255,255,255,.06)',borderRadius:'12px',padding:'12px 18px',marginBottom:'18px',border:'1px solid rgba(255,255,255,.1)',display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},[
-			React.createElement('span',{key:'lbl',style:{fontSize:'11px',fontWeight:'700',color:'rgba(255,255,255,.4)',letterSpacing:'.5px',marginRight:'4px'}},'DELIVERY DATE'),
+		React.createElement('div',{key:'filterbar',style:{background:'white',borderRadius:'12px',padding:'12px 18px',marginBottom:'18px',border:'1px solid #e2e8f0',boxShadow:'0 1px 4px rgba(0,0,0,.05)',display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},[
+			React.createElement('span',{key:'lbl',style:{fontSize:'11px',fontWeight:'700',color:'#94a3b8',letterSpacing:'.5px',marginRight:'4px'}},'DELIVERY DATE'),
 			...RANGES.map(({r,l})=>{
 				const active=df.range===r;
-				return React.createElement('button',{key:r,onClick:()=>setDf({range:r,...presets(r)}),style:{padding:'5px 13px',borderRadius:'20px',fontSize:'12px',fontWeight:'700',cursor:'pointer',border:active?'1px solid #f59e0b':'1px solid rgba(255,255,255,.15)',background:active?'rgba(245,158,11,.2)':'transparent',color:active?'#f59e0b':'rgba(255,255,255,.6)',transition:'all .15s'}},l);
+				return React.createElement('button',{key:r,onClick:()=>setDf({range:r,...presets(r)}),style:{padding:'5px 13px',borderRadius:'20px',fontSize:'12px',fontWeight:'700',cursor:'pointer',border:active?'1px solid #c9a84c':'1px solid #e2e8f0',background:active?'#F2D894':'transparent',color:active?'#713f12':'#64748b',transition:'all .15s'}},l);
 			}),
 			React.createElement('div',{key:'range',style:{display:'flex',gap:'6px',alignItems:'center',marginLeft:'auto'}},[
 				React.createElement('input',{key:'fd',type:'date',value:df.from_date,onChange:e=>setDf({range:'custom',from_date:e.target.value,to_date:df.to_date}),style:inpStyle}),
-				React.createElement('span',{key:'arr',style:{color:'rgba(255,255,255,.3)',fontSize:'12px'}},'→'),
+				React.createElement('span',{key:'arr',style:{color:'#94a3b8',fontSize:'12px'}},'→'),
 				React.createElement('input',{key:'td',type:'date',value:df.to_date,onChange:e=>setDf({range:'custom',from_date:df.from_date,to_date:e.target.value}),style:inpStyle}),
 			])
 		]),
 
 		// ── Production Section ──
-		React.createElement('div',{key:'prod-sec',style:{background:'rgba(248,113,113,.04)',borderRadius:'16px',border:'1px solid rgba(248,113,113,.18)',padding:'20px 24px',marginBottom:'18px'}},[
-			sectionHdr('🏭','Production Status','Active SOs by delivery risk level','rgba(248,113,113,.15)'),
+		React.createElement('div',{key:'prod-sec',style:{background:'#FFF5F3',borderRadius:'16px',border:'1px solid #F9C0AF',boxShadow:'0 1px 6px rgba(0,0,0,.05)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('🏭','Production Status','Active SOs by delivery risk level','rgba(249,192,175,.4)'),
 			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
-				mkCard('ta','📋','Total',grandTotal,'Active + Completed','rgba(255,255,255,.07)',()=>onNavigate(null)),
-				mkCard('ov','🚨','Overdue',prod['OVERDUE']||0,'Need attention','rgba(248,113,113,.18)',()=>onNavigate('OVERDUE')),
-				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(251,191,36,.15)',()=>onNavigate('DELIVERY RISK')),
-				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','rgba(167,139,250,.18)',()=>onNavigate('ON HOLD')),
-				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','rgba(52,211,153,.18)',()=>onNavigate('ON TRACK')),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
+				mkCard('ta','📋','Total',grandTotal,'Active + Completed','white',()=>onNavigate(null)),
+				mkCard('ov','🚨','Overdue',prod['OVERDUE']||0,'Need attention','#FFDDD8',()=>onNavigate('OVERDUE')),
+				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','#F2D894',()=>onNavigate('DELIVERY RISK')),
+				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','#D2C7E5',()=>onNavigate('ON HOLD')),
+				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','#D3EADA',()=>onNavigate('ON TRACK')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','#F9ECE3',()=>onNavigate('COMPLETED')),
 			]),
-			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:prodPieData,total:grandTotal,onSlice:onNavigate,embedded:true})
+			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:prodPieData,total:grandTotal,onSlice:onNavigate,embedded:true,light:true})
 		]),
 
 		// ── Planning Section ──
-		React.createElement('div',{key:'plan-sec',style:{background:'rgba(96,165,250,.04)',borderRadius:'16px',border:'1px solid rgba(96,165,250,.18)',padding:'20px 24px',marginBottom:'18px'}},[
-			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(96,165,250,.15)'),
+		React.createElement('div',{key:'plan-sec',style:{background:'#F0EDF8',borderRadius:'16px',border:'1px solid #D2C7E5',boxShadow:'0 1px 6px rgba(0,0,0,.05)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(210,199,229,.5)'),
 			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
-				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(96,165,250,.18)',()=>onNavigate(null,'planned')),
-				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.14)',()=>onNavigate(null,'not_planned')),
-				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
+				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','#D3EADA',()=>onNavigate(null,'planned')),
+				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','#F9ECE3',()=>onNavigate(null,'not_planned')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','#FFDDD8',()=>onNavigate('COMPLETED')),
 			]),
-			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:planPieData,total:grandTotal,onSlice:null,embedded:true})
+			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:planPieData,total:grandTotal,onSlice:null,embedded:true,light:true})
 		]),
 
 		// ── Top Overdue ──
-		data.top_overdue&&data.top_overdue.length>0&&React.createElement('div',{key:'top',style:{background:'rgba(255,255,255,.07)',borderRadius:'14px',padding:'20px 24px',border:'1px solid rgba(255,255,255,.12)'}},[
+		data.top_overdue&&data.top_overdue.length>0&&React.createElement('div',{key:'top',style:{background:'white',borderRadius:'14px',padding:'20px 24px',border:'1px solid #e2e8f0',boxShadow:'0 1px 4px rgba(0,0,0,.05)'}},[
 			React.createElement('div',{key:'hd',style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}},[
-				React.createElement('h3',{key:'t',style:{color:'white',fontSize:'15px',fontWeight:'800',margin:0}},'🚨 Top Overdue Orders'),
-				React.createElement('button',{key:'b',onClick:()=>onNavigate('OVERDUE'),style:{background:'rgba(220,38,38,.3)',border:'1px solid #dc2626',color:'white',borderRadius:'7px',padding:'4px 12px',fontSize:'12px',fontWeight:'700',cursor:'pointer'}},'View All →')
+				React.createElement('h3',{key:'t',style:{color:'#1e293b',fontSize:'15px',fontWeight:'800',margin:0}},'🚨 Top Overdue Orders'),
+				React.createElement('button',{key:'b',onClick:()=>onNavigate('OVERDUE'),style:{background:'#FFDDD8',border:'1px solid #F9C0AF',color:'#7f1d1d',borderRadius:'7px',padding:'4px 12px',fontSize:'12px',fontWeight:'700',cursor:'pointer'}},'View All →')
 			]),
-			...data.top_overdue.map((so,i)=>React.createElement('div',{key:so.name,style:{display:'flex',alignItems:'center',gap:'12px',padding:'10px 12px',background:i%2===0?'rgba(255,255,255,.05)':'transparent',borderRadius:'8px',cursor:'pointer'},onClick:()=>onNavigate('OVERDUE')},[
-				React.createElement('span',{key:'r',style:{fontSize:'18px',fontWeight:'900',color:'rgba(220,38,38,.7)',minWidth:'24px',textAlign:'center'}},i+1),
+			...data.top_overdue.map((so,i)=>React.createElement('div',{key:so.name,style:{display:'flex',alignItems:'center',gap:'12px',padding:'10px 12px',background:i%2===0?'#FFF5F3':'transparent',borderRadius:'8px',cursor:'pointer'},onClick:()=>onNavigate('OVERDUE')},[
+				React.createElement('span',{key:'r',style:{fontSize:'18px',fontWeight:'900',color:'#dc2626',minWidth:'24px',textAlign:'center'}},i+1),
 				React.createElement('div',{key:'i',style:{flex:1,minWidth:0}},[
-					React.createElement('p',{key:'n',style:{fontSize:'13px',fontWeight:'800',color:'white',margin:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.name),
-					React.createElement('p',{key:'c',style:{fontSize:'11px',color:'rgba(255,255,255,.5)',margin:'1px 0 0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.customer)
+					React.createElement('p',{key:'n',style:{fontSize:'13px',fontWeight:'800',color:'#1e293b',margin:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.name),
+					React.createElement('p',{key:'c',style:{fontSize:'11px',color:'#64748b',margin:'1px 0 0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.customer)
 				]),
 				React.createElement('div',{key:'d',style:{textAlign:'right',flexShrink:0}},[
-					React.createElement('span',{key:'ov',style:{fontSize:'13px',fontWeight:'900',color:'#ef4444',background:'rgba(220,38,38,.15)',borderRadius:'6px',padding:'2px 10px'}},`+${so.overdue_days}d`),
-					React.createElement('p',{key:'dt',style:{fontSize:'10px',color:'rgba(255,255,255,.4)',margin:'2px 0 0',textAlign:'right'}},fmtDate(so.delivery_date))
+					React.createElement('span',{key:'ov',style:{fontSize:'13px',fontWeight:'900',color:'#dc2626',background:'#FFDDD8',borderRadius:'6px',padding:'2px 10px'}},`+${so.overdue_days}d`),
+					React.createElement('p',{key:'dt',style:{fontSize:'10px',color:'#94a3b8',margin:'2px 0 0',textAlign:'right'}},fmtDate(so.delivery_date))
 				])
 			]))
 		])
@@ -362,7 +362,7 @@ function OverviewScreen({onNavigate}) {
 }
 
 // ─── SVG Pie Chart Card ───────────────────────────────────────────────────────
-function PieCard({title,subtitle,data,total,onSlice,embedded}) {
+function PieCard({title,subtitle,data,total,onSlice,embedded,light}) {
 	const size = 160, cx=size/2, cy=size/2, r=size/2-12;
 	let angle = -Math.PI/2;
 	const tot = data.reduce((s,d)=>s+d.value,0)||1;
@@ -388,13 +388,13 @@ function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 					onClick:()=>onSlice&&onSlice(s.key)
 				})),
 				// Donut hole — dark circle ensures center text is always readable
-				React.createElement('circle',{key:'hole',cx:cx,cy:cy,r:Math.round(r*0.52),fill:'rgba(12,18,36,.96)'})
+				React.createElement('circle',{key:'hole',cx:cx,cy:cy,r:Math.round(r*0.52),fill:light?'white':'rgba(12,18,36,.96)'})
 			]),
 			React.createElement('div',{key:'ct',style:{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',pointerEvents:'none'}},[
-				React.createElement('div',{key:'v',style:{fontSize:'20px',fontWeight:'900',color:'white',lineHeight:1}},
+				React.createElement('div',{key:'v',style:{fontSize:'20px',fontWeight:'900',color:light?'#1e293b':'white',lineHeight:1}},
 					hovered!==null ? data[hovered].value : tot
 				),
-				React.createElement('div',{key:'l',style:{fontSize:'9px',color:hovered!==null?data[hovered].color:'rgba(255,255,255,.5)',fontWeight:'700'}},
+				React.createElement('div',{key:'l',style:{fontSize:'9px',color:hovered!==null?data[hovered].color:light?'#94a3b8':'rgba(255,255,255,.5)',fontWeight:'700'}},
 					hovered!==null ? data[hovered]?.label : 'TOTAL'
 				)
 			])
@@ -402,13 +402,13 @@ function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 		React.createElement('div',{key:'leg',style:{display:'flex',flexDirection:'column',gap:'2px'}},
 			data.map((d,i)=>React.createElement('div',{
 				key:d.label,
-				style:{display:'flex',alignItems:'center',gap:'10px',padding:'5px 10px',borderRadius:'8px',background:hovered===i?'rgba(255,255,255,.07)':'transparent',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.4,transition:'opacity .2s,background .15s'},
+				style:{display:'flex',alignItems:'center',gap:'10px',padding:'5px 10px',borderRadius:'8px',background:hovered===i?(light?'rgba(0,0,0,.04)':'rgba(255,255,255,.07)'):'transparent',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.4,transition:'opacity .2s,background .15s'},
 				onMouseEnter:()=>setHovered(i),
 				onMouseLeave:()=>setHovered(null),
 				onClick:()=>onSlice&&onSlice(d.key)
 			},[
 				React.createElement('div',{key:'dot',style:{width:'9px',height:'9px',borderRadius:'50%',background:d.color,flexShrink:0,boxShadow:`0 0 5px ${d.color}`}}),
-				React.createElement('span',{key:'l',style:{fontSize:'12px',color:'rgba(255,255,255,.75)',minWidth:'90px'}},d.label),
+				React.createElement('span',{key:'l',style:{fontSize:'12px',color:light?'#374151':'rgba(255,255,255,.75)',minWidth:'90px'}},d.label),
 				React.createElement('span',{key:'v',style:{fontSize:'14px',fontWeight:'900',color:d.color,minWidth:'24px',textAlign:'right'}},d.value)
 			]))
 		)
@@ -426,12 +426,12 @@ function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 // ─── Filters ──────────────────────────────────────────────────────────────────
 function Filters({filterInputs,setFilterInputs,onApply,onClear}) {
 	const upd=(k,v)=>setFilterInputs(p=>({...p,[k]:v}));
-	const inp={height:'36px',padding:'0 10px',border:'1px solid rgba(255,255,255,.2)',borderRadius:'7px',fontSize:'14px',color:'#111',background:'rgba(255,255,255,.95)',outline:'none',width:'100%',boxSizing:'border-box'};
-	const lbl={fontSize:'11px',fontWeight:'700',color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:'.5px',marginBottom:'5px',display:'block'};
-	return React.createElement('div',{style:{background:'rgba(255,255,255,.07)',backdropFilter:'blur(12px)',borderRadius:'12px',padding:'16px 20px',marginBottom:'16px',border:'1px solid rgba(255,255,255,.12)'}}, [
+	const inp={height:'36px',padding:'0 10px',border:'1px solid #e2e8f0',borderRadius:'7px',fontSize:'14px',color:'#374151',background:'white',outline:'none',width:'100%',boxSizing:'border-box'};
+	const lbl={fontSize:'11px',fontWeight:'700',color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.5px',marginBottom:'5px',display:'block'};
+	return React.createElement('div',{style:{background:'white',borderRadius:'12px',padding:'16px 20px',marginBottom:'16px',border:'1px solid #e2e8f0',boxShadow:'0 1px 4px rgba(0,0,0,.05)'}}, [
 		React.createElement('div',{key:'hd',style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'12px'}}, [
 			React.createElement('span',{key:'ic',style:{fontSize:'15px'}},'🔍'),
-			React.createElement('span',{key:'tx',style:{fontSize:'14px',fontWeight:'700',color:'white'}},'Filters')
+			React.createElement('span',{key:'tx',style:{fontSize:'14px',fontWeight:'700',color:'#1e293b'}},'Filters')
 		]),
 		React.createElement('div',{key:'g',style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(145px,1fr))',gap:'10px',alignItems:'end'}}, [
 			fc('so','Sales Order','SAL-ORD-...',filterInputs.so,v=>upd('so',v),'text',onApply,inp,lbl),
@@ -451,8 +451,8 @@ function Filters({filterInputs,setFilterInputs,onApply,onClear}) {
 				].map(([v,t])=>React.createElement('option',{key:v,value:v},t)))
 			]),
 			React.createElement('div',{key:'bt',style:{display:'flex',gap:'8px'}}, [
-				React.createElement('button',{key:'ap',onClick:onApply,style:{flex:1,height:'36px',background:'linear-gradient(135deg,#f59e0b,#d97706)',color:'white',border:'none',borderRadius:'7px',fontSize:'14px',fontWeight:'700',cursor:'pointer'}},'Apply'),
-				React.createElement('button',{key:'cl',onClick:onClear,style:{flex:1,height:'36px',background:'rgba(255,255,255,.12)',color:'white',border:'1px solid rgba(255,255,255,.25)',borderRadius:'7px',fontSize:'14px',fontWeight:'600',cursor:'pointer'}},'Clear')
+				React.createElement('button',{key:'ap',onClick:onApply,style:{flex:1,height:'36px',background:'#F2D894',color:'#713f12',border:'1px solid #c9a84c',borderRadius:'7px',fontSize:'14px',fontWeight:'700',cursor:'pointer'}},'Apply'),
+				React.createElement('button',{key:'cl',onClick:onClear,style:{flex:1,height:'36px',background:'white',color:'#374151',border:'1px solid #e2e8f0',borderRadius:'7px',fontSize:'14px',fontWeight:'600',cursor:'pointer'}},'Clear')
 			])
 		])
 	]);
@@ -935,19 +935,19 @@ function WOPanelBody({det}) {
 
 // ─── Hint / Loading / Empty ───────────────────────────────────────────────────
 function WOHint() {
-	return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',minHeight:'220px',background:'rgba(255,255,255,.05)',borderRadius:'12px',border:'2px dashed rgba(255,255,255,.12)'}},
+	return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',minHeight:'220px',background:'white',borderRadius:'12px',border:'2px dashed #e2e8f0',boxShadow:'0 1px 4px rgba(0,0,0,.05)'}},
 		React.createElement('div',{style:{textAlign:'center'}},[
 			React.createElement('div',{key:'ic',style:{fontSize:'44px',opacity:.35,marginBottom:'10px'}},'⚙️'),
-			React.createElement('p',{key:'t',style:{color:'rgba(255,255,255,.45)',fontSize:'14px',fontWeight:'600'}},'Click a Work Order on the left'),
-			React.createElement('p',{key:'s',style:{color:'rgba(255,255,255,.25)',fontSize:'12px',marginTop:'3px'}},'Open multiple WOs side by side')
+			React.createElement('p',{key:'t',style:{color:'#94a3b8',fontSize:'14px',fontWeight:'600'}},'Click a Work Order on the left'),
+			React.createElement('p',{key:'s',style:{color:'#cbd5e1',fontSize:'12px',marginTop:'3px'}},'Open multiple WOs side by side')
 		])
 	);
 }
 function Spinner() {
 	return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',minHeight:'300px'}},
 		React.createElement('div',{style:{textAlign:'center'}},[
-			React.createElement('div',{key:'sp',style:{width:'48px',height:'48px',border:'3px solid rgba(255,255,255,.15)',borderTopColor:'#f59e0b',borderRadius:'50%',margin:'0 auto',animation:'spin .8s linear infinite'}}),
-			React.createElement('p',{key:'tx',style:{marginTop:'14px',color:'rgba(255,255,255,.55)',fontSize:'14px'}},'Calculating delivery risks...')
+			React.createElement('div',{key:'sp',style:{width:'48px',height:'48px',border:'3px solid #e2e8f0',borderTopColor:'#c9a84c',borderRadius:'50%',margin:'0 auto',animation:'spin .8s linear infinite'}}),
+			React.createElement('p',{key:'tx',style:{marginTop:'14px',color:'#94a3b8',fontSize:'14px'}},'Calculating delivery risks...')
 		])
 	);
 }
@@ -955,8 +955,8 @@ function Empty() {
 	return React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',minHeight:'300px'}},
 		React.createElement('div',{style:{textAlign:'center'}},[
 			React.createElement('div',{key:'ic',style:{fontSize:'56px',marginBottom:'12px'}},'✅'),
-			React.createElement('h3',{key:'h',style:{fontSize:'20px',fontWeight:'700',color:'white',marginBottom:'6px'}},'All Clear!'),
-			React.createElement('p',{key:'p',style:{color:'rgba(255,255,255,.55)',fontSize:'14px'}},'No active orders with delivery risk found.')
+			React.createElement('h3',{key:'h',style:{fontSize:'20px',fontWeight:'700',color:'#1e293b',marginBottom:'6px'}},'All Clear!'),
+			React.createElement('p',{key:'p',style:{color:'#64748b',fontSize:'14px'}},'No active orders with delivery risk found.')
 		])
 	);
 }
