@@ -45,11 +45,11 @@ class DeliveryRiskDashboard {
 
 // ─── Production Status ────────────────────────────────────────────────────────
 const P = {
-	'OVERDUE':       { label:'OVERDUE',       color:'#dc2626', bg:'#fee2e2', border:'#dc2626', cardBg:'#fff5f5', icon:'🚨' },
-	'DELIVERY RISK': { label:'DELIVERY RISK', color:'#b45309', bg:'#fef3c7', border:'#f59e0b', cardBg:'#fffbeb', icon:'⚠️' },
-	'ON HOLD':       { label:'ON HOLD',       color:'#7c3aed', bg:'#ede9fe', border:'#8b5cf6', cardBg:'#faf5ff', icon:'⏸️' },
-	'ON TRACK':      { label:'ON TRACK',      color:'#065f46', bg:'#d1fae5', border:'#10b981', cardBg:'#f0fdf4', icon:'✅' },
-	'COMPLETED':     { label:'COMPLETED',     color:'#1e40af', bg:'#dbeafe', border:'#3b82f6', cardBg:'#eff6ff', icon:'🏁' },
+	'OVERDUE':       { label:'OVERDUE',       color:'#b91c1c', bg:'#fee2e2', border:'#f87171', cardBg:'#fff5f5', icon:'🚨' },
+	'DELIVERY RISK': { label:'DELIVERY RISK', color:'#92400e', bg:'#fef3c7', border:'#fbbf24', cardBg:'#fffbeb', icon:'⚠️' },
+	'ON HOLD':       { label:'ON HOLD',       color:'#6d28d9', bg:'#ede9fe', border:'#a78bfa', cardBg:'#faf5ff', icon:'⏸️' },
+	'ON TRACK':      { label:'ON TRACK',      color:'#065f46', bg:'#d1fae5', border:'#34d399', cardBg:'#f0fdf4', icon:'✅' },
+	'COMPLETED':     { label:'COMPLETED',     color:'#0e7490', bg:'#cffafe', border:'#22d3ee', cardBg:'#ecfeff', icon:'🏁' },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ function DRDApp() {
 	const [selectedSO,setSelectedSO]   = useState(null);
 	const [openWOs,setOpenWOs]         = useState([]);
 
-	const EMPTY = {so:'',customer:'',from_date:'',to_date:'',priority:''};
+	const EMPTY = {so:'',customer:'',from_date:'',to_date:'',priority:'',planning:''};
 	const [filterInputs,setFilterInputs] = useState(EMPTY);
 	const [activeFilters,setActiveFilters] = useState({});
 
@@ -110,14 +110,19 @@ function DRDApp() {
 		if (f.from_date) { d=d.filter(o=>o.expected_date>=f.from_date); }
 		if (f.to_date)   { d=d.filter(o=>o.expected_date<=f.to_date); }
 		if (f.priority)  { d=d.filter(o=>o.priority===f.priority); }
+		if (f.planning==='planned')     { d=d.filter(o=>o.has_pp); }
+		if (f.planning==='not_planned') { d=d.filter(o=>!o.has_pp); }
 		return d;
 	};
 
 	useEffect(() => {
 		if (screen !== 'list') return;
 		setOrders([]); setOffset(0); setHasMore(false); setLoading(true);
+		// Fetch completed SOs from backend only when navigating to Completed filter
+		const needsCompleted = activeFilters.priority === 'COMPLETED';
 		frappe.call({
 			method:'ujwal_industries.api.sales_order_tracker.get_so_list',
+			args:{include_completed: needsCompleted ? 1 : 0},
 			callback:(r)=>{
 				if (r.message) {
 					const filtered = applyFilters(r.message, activeFilters);
@@ -155,10 +160,12 @@ function DRDApp() {
 	const openSet  = new Set(openWOs);
 
 	// Navigate from overview to list with a pre-set filter
-	const goToList = useCallback((priorityFilter)=>{
-		const f = priorityFilter ? {...EMPTY, priority: priorityFilter} : EMPTY;
-		setFilterInputs(f);
-		setActiveFilters(priorityFilter ? {priority: priorityFilter} : {});
+	const goToList = useCallback((priorityFilter, planningFilter)=>{
+		const filters = {};
+		if (priorityFilter) filters.priority  = priorityFilter;
+		if (planningFilter) filters.planning   = planningFilter;
+		setFilterInputs({...EMPTY, ...filters});
+		setActiveFilters(filters);
 		setSelectedSO(null); setOpenWOs([]);
 		setScreen('list');
 	},[]);
@@ -177,6 +184,9 @@ function DRDApp() {
 			React.createElement('button',{key:'back',onClick:()=>setScreen('overview'),style:{background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',color:'white',borderRadius:'8px',padding:'6px 14px',fontSize:'13px',fontWeight:'700',cursor:'pointer'}},'← Overview'),
 			activeFilters.priority && React.createElement('span',{key:'badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:(P[activeFilters.priority]||{}).bg||'#e5e7eb',color:(P[activeFilters.priority]||{}).color||'#374151'}},
 				`${(P[activeFilters.priority]||{}).icon||''} ${activeFilters.priority}`
+			),
+			activeFilters.planning && React.createElement('span',{key:'plan-badge',style:{fontSize:'12px',fontWeight:'800',padding:'3px 10px',borderRadius:'20px',background:'rgba(59,130,246,.2)',color:'#60a5fa'}},
+				activeFilters.planning==='planned' ? '📅 PLANNED' : '📝 NOT PLANNED'
 			)
 		]),
 		React.createElement(Filters,{key:'f',filterInputs,setFilterInputs,onApply:()=>setActiveFilters({...filterInputs}),onClear:()=>{setFilterInputs(EMPTY);setActiveFilters({});}}),
@@ -208,16 +218,30 @@ function DRDApp() {
 
 // ─── Overview Screen ──────────────────────────────────────────────────────────
 function OverviewScreen({onNavigate}) {
-	const {useState,useEffect} = React;
-	const [data,setData] = useState(null);
+	const {useState,useEffect,useCallback} = React;
+	const [data,setData]       = useState(null);
 	const [loading,setLoading] = useState(true);
+	const [df,setDf]           = useState({range:'all',from_date:'',to_date:''});
+
+	const presets = useCallback(range=>{
+		const t=new Date();
+		// Use local date parts to avoid UTC-shift bug (toISOString converts to UTC)
+		const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+		if(range==='week'){const s=new Date(t);s.setDate(t.getDate()-t.getDay());const e=new Date(s);e.setDate(s.getDate()+6);return{from_date:fmt(s),to_date:fmt(e)};}
+		if(range==='month'){return{from_date:fmt(new Date(t.getFullYear(),t.getMonth(),1)),to_date:fmt(new Date(t.getFullYear(),t.getMonth()+1,0))};}
+		if(range==='quarter'){const q=Math.floor(t.getMonth()/3);return{from_date:fmt(new Date(t.getFullYear(),q*3,1)),to_date:fmt(new Date(t.getFullYear(),q*3+3,0))};}
+		if(range==='year'){return{from_date:`${t.getFullYear()}-01-01`,to_date:`${t.getFullYear()}-12-31`};}
+		return{from_date:'',to_date:''};
+	},[]);
 
 	useEffect(()=>{
+		setLoading(true); setData(null);
 		frappe.call({
 			method:'ujwal_industries.api.sales_order_tracker.get_so_overview',
+			args:{from_date:df.from_date||null,to_date:df.to_date||null},
 			callback:r=>{ if(r.message) setData(r.message); setLoading(false); }
 		});
-	},[]);
+	},[df]);
 
 	if (loading) return React.createElement('div',{style:{textAlign:'center',paddingTop:'80px'}},React.createElement(Spinner));
 	if (!data)   return React.createElement(Empty);
@@ -225,67 +249,110 @@ function OverviewScreen({onNavigate}) {
 	const prod = data.production||{};
 	const plan = data.planning||{};
 
+	// Grand total = active + completed — both pies must sum to this
+	const grandTotal = (data.total_active||0) + (data.completed||0);
+
 	const prodPieData = [
-		{label:'Overdue',       value:prod['OVERDUE']||0,       color:'#dc2626', key:'OVERDUE'},
-		{label:'Delivery Risk', value:prod['DELIVERY RISK']||0, color:'#f59e0b', key:'DELIVERY RISK'},
-		{label:'On Hold',       value:prod['ON HOLD']||0,       color:'#8b5cf6', key:'ON HOLD'},
-		{label:'On Track',      value:prod['ON TRACK']||0,      color:'#10b981', key:'ON TRACK'},
+		{label:'Overdue',       value:prod['OVERDUE']||0,       color:'#f87171', key:'OVERDUE'},
+		{label:'Delivery Risk', value:prod['DELIVERY RISK']||0, color:'#fbbf24', key:'DELIVERY RISK'},
+		{label:'On Hold',       value:prod['ON HOLD']||0,       color:'#a78bfa', key:'ON HOLD'},
+		{label:'On Track',      value:prod['ON TRACK']||0,      color:'#34d399', key:'ON TRACK'},
+		{label:'Completed',     value:data.completed||0,        color:'#22d3ee', key:'COMPLETED'},
 	].filter(d=>d.value>0);
 
+	// not_planned = active - planned; adding completed keeps planning total = grandTotal
+	const planNotPlanned = Math.max(0,(data.total_active||0)-(plan.planned||0));
 	const planPieData = [
-		{label:'Planned',     value:plan.planned||0,     color:'#3b82f6', key:'planned'},
-		{label:'Not Planned', value:plan.not_planned||0, color:'#94a3b8', key:'not_planned'},
-		{label:'Completed',   value:data.completed||0,   color:'#10b981', key:'completed'},
+		{label:'Planned',     value:plan.planned||0,   color:'#60a5fa', key:'planned'},
+		{label:'Not Planned', value:planNotPlanned,     color:'#94a3b8', key:'not_planned'},
+		{label:'Completed',   value:data.completed||0, color:'#22d3ee', key:'completed'},
 	].filter(d=>d.value>0);
 
-	const card = (icon,label,val,sub,bg,onClick)=>React.createElement('div',{
-		style:{background:bg||'rgba(255,255,255,.09)',borderRadius:'14px',padding:'20px 24px',textAlign:'center',cursor:onClick?'pointer':'default',border:'1px solid rgba(255,255,255,.12)',transition:'transform .15s',flex:'1 1 140px'},
+	const mkCard = (key,icon,label,val,sub,bg,onClick)=>React.createElement('div',{
+		key,
+		style:{background:bg||'rgba(255,255,255,.09)',borderRadius:'12px',padding:'14px 16px',textAlign:'center',cursor:onClick?'pointer':'default',border:'1px solid rgba(255,255,255,.1)',transition:'transform .15s,box-shadow .15s',flex:'1 1 100px',minWidth:'90px'},
 		onClick,
-		onMouseEnter:e=>onClick&&(e.currentTarget.style.transform='translateY(-3px)'),
-		onMouseLeave:e=>onClick&&(e.currentTarget.style.transform='translateY(0)')
+		onMouseEnter:e=>onClick&&(e.currentTarget.style.transform='translateY(-3px)',e.currentTarget.style.boxShadow='0 8px 20px rgba(0,0,0,.3)'),
+		onMouseLeave:e=>onClick&&(e.currentTarget.style.transform='translateY(0)',e.currentTarget.style.boxShadow='none')
 	},[
-		React.createElement('div',{key:'ic',style:{fontSize:'28px',marginBottom:'6px'}},icon),
-		React.createElement('div',{key:'v',style:{fontSize:'32px',fontWeight:'900',color:'white',lineHeight:1}},val),
-		React.createElement('div',{key:'l',style:{fontSize:'13px',fontWeight:'700',color:'rgba(255,255,255,.7)',marginTop:'4px'}},label),
-		sub&&React.createElement('div',{key:'s',style:{fontSize:'11px',color:'rgba(255,255,255,.4)',marginTop:'2px'}},sub)
+		React.createElement('div',{key:'ic',style:{fontSize:'22px',marginBottom:'4px'}},icon),
+		React.createElement('div',{key:'v',style:{fontSize:'26px',fontWeight:'900',color:'white',lineHeight:1.1}},val),
+		React.createElement('div',{key:'l',style:{fontSize:'11px',fontWeight:'700',color:'rgba(255,255,255,.7)',marginTop:'3px'}},label),
+		sub&&React.createElement('div',{key:'s',style:{fontSize:'10px',color:'rgba(255,255,255,.4)',marginTop:'1px'}},sub)
 	]);
 
+	const sectionHdr = (icon,title,sub,iconBg)=>React.createElement('div',{
+		key:'hdr',
+		style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'16px',paddingBottom:'12px',borderBottom:'1px solid rgba(255,255,255,.08)'}
+	},[
+		React.createElement('span',{key:'ic',style:{fontSize:'18px',background:iconBg,borderRadius:'8px',padding:'7px 9px',lineHeight:1}},icon),
+		React.createElement('div',{key:'txt'},[
+			React.createElement('h3',{key:'t',style:{color:'white',fontSize:'15px',fontWeight:'800',margin:0}},title),
+			React.createElement('p',{key:'s',style:{color:'rgba(255,255,255,.4)',fontSize:'11px',margin:'2px 0 0'}},sub)
+		])
+	]);
+
+	const RANGES=[{r:'all',l:'All'},{r:'week',l:'This Week'},{r:'month',l:'This Month'},{r:'quarter',l:'This Quarter'},{r:'year',l:'This Year'}];
+	const inpStyle={height:'30px',padding:'0 8px',borderRadius:'6px',border:'1px solid rgba(255,255,255,.2)',background:'rgba(255,255,255,.08)',color:'white',fontSize:'12px',outline:'none',colorScheme:'dark'};
+
 	return React.createElement('div',{},[
-		// Title row
-		React.createElement('div',{key:'title',style:{marginBottom:'24px'}}, [
+		React.createElement('div',{key:'title',style:{marginBottom:'14px'}},[
 			React.createElement('h2',{key:'h',style:{color:'white',fontSize:'22px',fontWeight:'800',margin:0}},'📊 Sales Order Overview'),
 			React.createElement('p',{key:'s',style:{color:'rgba(255,255,255,.5)',fontSize:'13px',margin:'4px 0 0'}},'Click any tile or chart segment to drill into the list')
 		]),
 
-		// Number cards row
-		React.createElement('div',{key:'cards',style:{display:'flex',gap:'12px',flexWrap:'wrap',marginBottom:'24px'}}, [
-			card('📋','Total Active',data.total_active,'Sales Orders','rgba(255,255,255,.09)',()=>onNavigate(null)),
-			card('🚨','Overdue',     prod['OVERDUE']||0,    'Need attention','rgba(220,38,38,.25)',  ()=>onNavigate('OVERDUE')),
-			card('⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(245,158,11,.2)',()=>onNavigate('DELIVERY RISK')),
-			card('⏸️','On Hold',     prod['ON HOLD']||0,    'JC blocked','rgba(139,92,246,.25)',    ()=>onNavigate('ON HOLD')),
-			card('✅','On Track',    prod['ON TRACK']||0,   'All good','rgba(16,185,129,.2)',        ()=>onNavigate('ON TRACK')),
-			card('🏁','Completed',  data.completed||0,      'This year','rgba(59,130,246,.2)',       ()=>onNavigate(null)),
+		// ── Date Filter Bar ──
+		React.createElement('div',{key:'filterbar',style:{background:'rgba(255,255,255,.06)',borderRadius:'12px',padding:'12px 18px',marginBottom:'18px',border:'1px solid rgba(255,255,255,.1)',display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},[
+			React.createElement('span',{key:'lbl',style:{fontSize:'11px',fontWeight:'700',color:'rgba(255,255,255,.4)',letterSpacing:'.5px',marginRight:'4px'}},'DELIVERY DATE'),
+			...RANGES.map(({r,l})=>{
+				const active=df.range===r;
+				return React.createElement('button',{key:r,onClick:()=>setDf({range:r,...presets(r)}),style:{padding:'5px 13px',borderRadius:'20px',fontSize:'12px',fontWeight:'700',cursor:'pointer',border:active?'1px solid #f59e0b':'1px solid rgba(255,255,255,.15)',background:active?'rgba(245,158,11,.2)':'transparent',color:active?'#f59e0b':'rgba(255,255,255,.6)',transition:'all .15s'}},l);
+			}),
+			React.createElement('div',{key:'range',style:{display:'flex',gap:'6px',alignItems:'center',marginLeft:'auto'}},[
+				React.createElement('input',{key:'fd',type:'date',value:df.from_date,onChange:e=>setDf({range:'custom',from_date:e.target.value,to_date:df.to_date}),style:inpStyle}),
+				React.createElement('span',{key:'arr',style:{color:'rgba(255,255,255,.3)',fontSize:'12px'}},'→'),
+				React.createElement('input',{key:'td',type:'date',value:df.to_date,onChange:e=>setDf({range:'custom',from_date:df.from_date,to_date:e.target.value}),style:inpStyle}),
+			])
 		]),
 
-		// Two pie charts
-		React.createElement('div',{key:'charts',style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:'16px',marginBottom:'24px'}}, [
-			React.createElement(PieCard,{key:'prod',title:'Production Status',subtitle:'Active SOs by delivery risk level',data:prodPieData,total:data.total_active,onSlice:onNavigate}),
-			React.createElement(PieCard,{key:'plan',title:'Planning Status',  subtitle:'Active SOs by production plan status',data:planPieData,total:data.total_active+(data.completed||0),onSlice:null}),
+		// ── Production Section ──
+		React.createElement('div',{key:'prod-sec',style:{background:'rgba(248,113,113,.04)',borderRadius:'16px',border:'1px solid rgba(248,113,113,.18)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('🏭','Production Status','Active SOs by delivery risk level','rgba(248,113,113,.15)'),
+			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
+				mkCard('ta','📋','Total',grandTotal,'Active + Completed','rgba(255,255,255,.07)',()=>onNavigate(null)),
+				mkCard('ov','🚨','Overdue',prod['OVERDUE']||0,'Need attention','rgba(248,113,113,.18)',()=>onNavigate('OVERDUE')),
+				mkCard('dr','⚠️','Delivery Risk',prod['DELIVERY RISK']||0,'Predicted late','rgba(251,191,36,.15)',()=>onNavigate('DELIVERY RISK')),
+				mkCard('oh','⏸️','On Hold',prod['ON HOLD']||0,'JC blocked','rgba(167,139,250,.18)',()=>onNavigate('ON HOLD')),
+				mkCard('ot','✅','On Track',prod['ON TRACK']||0,'All good','rgba(52,211,153,.18)',()=>onNavigate('ON TRACK')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
+			]),
+			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:prodPieData,total:grandTotal,onSlice:onNavigate,embedded:true})
 		]),
 
-		// Top 5 overdue table
-		data.top_overdue&&data.top_overdue.length>0 && React.createElement('div',{key:'top',style:{background:'rgba(255,255,255,.07)',borderRadius:'14px',padding:'20px 24px',border:'1px solid rgba(255,255,255,.12)'}}, [
-			React.createElement('div',{key:'hd',style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}}, [
+		// ── Planning Section ──
+		React.createElement('div',{key:'plan-sec',style:{background:'rgba(96,165,250,.04)',borderRadius:'16px',border:'1px solid rgba(96,165,250,.18)',padding:'20px 24px',marginBottom:'18px'}},[
+			sectionHdr('📋','Planning Status','Active SOs by production plan status','rgba(96,165,250,.15)'),
+			React.createElement('div',{key:'cards',style:{display:'flex',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}},[
+				mkCard('pl','📅','Planned',plan.planned||0,'Production planned','rgba(96,165,250,.18)',()=>onNavigate(null,'planned')),
+				mkCard('np','📝','Not Planned',planNotPlanned,'Needs planning','rgba(148,163,184,.14)',()=>onNavigate(null,'not_planned')),
+				mkCard('co','🏁','Completed',data.completed||0,'This period','rgba(34,211,238,.18)',()=>onNavigate('COMPLETED')),
+			]),
+			React.createElement(PieCard,{key:'pie',title:'',subtitle:'',data:planPieData,total:grandTotal,onSlice:null,embedded:true})
+		]),
+
+		// ── Top Overdue ──
+		data.top_overdue&&data.top_overdue.length>0&&React.createElement('div',{key:'top',style:{background:'rgba(255,255,255,.07)',borderRadius:'14px',padding:'20px 24px',border:'1px solid rgba(255,255,255,.12)'}},[
+			React.createElement('div',{key:'hd',style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}},[
 				React.createElement('h3',{key:'t',style:{color:'white',fontSize:'15px',fontWeight:'800',margin:0}},'🚨 Top Overdue Orders'),
 				React.createElement('button',{key:'b',onClick:()=>onNavigate('OVERDUE'),style:{background:'rgba(220,38,38,.3)',border:'1px solid #dc2626',color:'white',borderRadius:'7px',padding:'4px 12px',fontSize:'12px',fontWeight:'700',cursor:'pointer'}},'View All →')
 			]),
-			...data.top_overdue.map((so,i)=>React.createElement('div',{key:so.name,style:{display:'flex',alignItems:'center',gap:'12px',padding:'10px 12px',background:i%2===0?'rgba(255,255,255,.05)':'transparent',borderRadius:'8px',cursor:'pointer'},onClick:()=>onNavigate('OVERDUE')}, [
+			...data.top_overdue.map((so,i)=>React.createElement('div',{key:so.name,style:{display:'flex',alignItems:'center',gap:'12px',padding:'10px 12px',background:i%2===0?'rgba(255,255,255,.05)':'transparent',borderRadius:'8px',cursor:'pointer'},onClick:()=>onNavigate('OVERDUE')},[
 				React.createElement('span',{key:'r',style:{fontSize:'18px',fontWeight:'900',color:'rgba(220,38,38,.7)',minWidth:'24px',textAlign:'center'}},i+1),
-				React.createElement('div',{key:'i',style:{flex:1,minWidth:0}}, [
+				React.createElement('div',{key:'i',style:{flex:1,minWidth:0}},[
 					React.createElement('p',{key:'n',style:{fontSize:'13px',fontWeight:'800',color:'white',margin:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.name),
 					React.createElement('p',{key:'c',style:{fontSize:'11px',color:'rgba(255,255,255,.5)',margin:'1px 0 0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},so.customer)
 				]),
-				React.createElement('div',{key:'d',style:{textAlign:'right',flexShrink:0}}, [
+				React.createElement('div',{key:'d',style:{textAlign:'right',flexShrink:0}},[
 					React.createElement('span',{key:'ov',style:{fontSize:'13px',fontWeight:'900',color:'#ef4444',background:'rgba(220,38,38,.15)',borderRadius:'6px',padding:'2px 10px'}},`+${so.overdue_days}d`),
 					React.createElement('p',{key:'dt',style:{fontSize:'10px',color:'rgba(255,255,255,.4)',margin:'2px 0 0',textAlign:'right'}},fmtDate(so.delivery_date))
 				])
@@ -295,7 +362,7 @@ function OverviewScreen({onNavigate}) {
 }
 
 // ─── SVG Pie Chart Card ───────────────────────────────────────────────────────
-function PieCard({title,subtitle,data,total,onSlice}) {
+function PieCard({title,subtitle,data,total,onSlice,embedded}) {
 	const size = 160, cx=size/2, cy=size/2, r=size/2-12;
 	let angle = -Math.PI/2;
 	const tot = data.reduce((s,d)=>s+d.value,0)||1;
@@ -310,41 +377,49 @@ function PieCard({title,subtitle,data,total,onSlice}) {
 
 	const [hovered,setHovered] = React.useState(null);
 
-	return React.createElement('div',{style:{background:'rgba(255,255,255,.07)',borderRadius:'14px',padding:'20px 24px',border:'1px solid rgba(255,255,255,.12)'}}, [
-		React.createElement('h3',{key:'t',style:{color:'white',fontSize:'14px',fontWeight:'800',margin:'0 0 2px'}},title),
-		React.createElement('p',{key:'s',style:{fontSize:'11px',color:'rgba(255,255,255,.4)',margin:'0 0 16px'}},subtitle),
-		React.createElement('div',{key:'body',style:{display:'flex',gap:'20px',alignItems:'center',flexWrap:'wrap'}}, [
-			// SVG Pie
-			React.createElement('div',{key:'pie',style:{position:'relative',flexShrink:0}}, [
-				React.createElement('svg',{key:'svg',width:size,height:size,style:{display:'block'}},
-					slices.map((s,i)=>React.createElement('path',{
-						key:i, d:s.path, fill:s.color,
-						style:{cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.5,transition:'opacity .2s'},
-						onMouseEnter:()=>setHovered(i),
-						onMouseLeave:()=>setHovered(null),
-						onClick:()=>onSlice&&onSlice(s.key)
-					}))
-				),
-				React.createElement('div',{key:'ct',style:{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',pointerEvents:'none'}}, [
-					React.createElement('div',{key:'v',style:{fontSize:'20px',fontWeight:'900',color:'white',lineHeight:1}},tot),
-					React.createElement('div',{key:'l',style:{fontSize:'9px',color:'rgba(255,255,255,.5)',fontWeight:'600'}},hovered!==null?data[hovered]?.label:'TOTAL')
-				])
-			]),
-			// Legend
-			React.createElement('div',{key:'leg',style:{flex:1,minWidth:'120px'}},
-				data.map((d,i)=>React.createElement('div',{
-					key:d.label,
-					style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.6,transition:'opacity .2s'},
+	const mkBody = ()=>React.createElement('div',{style:{display:'flex',gap:'20px',alignItems:'center',flexWrap:'wrap'}},[
+		React.createElement('div',{key:'pie',style:{position:'relative',flexShrink:0}},[
+			React.createElement('svg',{key:'svg',width:size,height:size,style:{display:'block'}},[
+				...slices.map((s,i)=>React.createElement('path',{
+					key:i, d:s.path, fill:s.color,
+					style:{cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.5,transition:'opacity .2s'},
 					onMouseEnter:()=>setHovered(i),
 					onMouseLeave:()=>setHovered(null),
-					onClick:()=>onSlice&&onSlice(d.key)
-				}, [
-					React.createElement('div',{key:'dot',style:{width:'10px',height:'10px',borderRadius:'50%',background:d.color,flexShrink:0}}),
-					React.createElement('span',{key:'l',style:{fontSize:'12px',color:'rgba(255,255,255,.8)',flex:1}},d.label),
-					React.createElement('span',{key:'v',style:{fontSize:'13px',fontWeight:'800',color:'white'}},d.value)
-				]))
-			)
-		])
+					onClick:()=>onSlice&&onSlice(s.key)
+				})),
+				// Donut hole — dark circle ensures center text is always readable
+				React.createElement('circle',{key:'hole',cx:cx,cy:cy,r:Math.round(r*0.52),fill:'rgba(12,18,36,.96)'})
+			]),
+			React.createElement('div',{key:'ct',style:{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',pointerEvents:'none'}},[
+				React.createElement('div',{key:'v',style:{fontSize:'20px',fontWeight:'900',color:'white',lineHeight:1}},
+					hovered!==null ? data[hovered].value : tot
+				),
+				React.createElement('div',{key:'l',style:{fontSize:'9px',color:hovered!==null?data[hovered].color:'rgba(255,255,255,.5)',fontWeight:'700'}},
+					hovered!==null ? data[hovered]?.label : 'TOTAL'
+				)
+			])
+		]),
+		React.createElement('div',{key:'leg',style:{display:'flex',flexDirection:'column',gap:'2px'}},
+			data.map((d,i)=>React.createElement('div',{
+				key:d.label,
+				style:{display:'flex',alignItems:'center',gap:'10px',padding:'5px 10px',borderRadius:'8px',background:hovered===i?'rgba(255,255,255,.07)':'transparent',cursor:onSlice?'pointer':'default',opacity:hovered===null||hovered===i?1:.4,transition:'opacity .2s,background .15s'},
+				onMouseEnter:()=>setHovered(i),
+				onMouseLeave:()=>setHovered(null),
+				onClick:()=>onSlice&&onSlice(d.key)
+			},[
+				React.createElement('div',{key:'dot',style:{width:'9px',height:'9px',borderRadius:'50%',background:d.color,flexShrink:0,boxShadow:`0 0 5px ${d.color}`}}),
+				React.createElement('span',{key:'l',style:{fontSize:'12px',color:'rgba(255,255,255,.75)',minWidth:'90px'}},d.label),
+				React.createElement('span',{key:'v',style:{fontSize:'14px',fontWeight:'900',color:d.color,minWidth:'24px',textAlign:'right'}},d.value)
+			]))
+		)
+	]);
+
+	if (embedded) return mkBody();
+
+	return React.createElement('div',{style:{background:'rgba(255,255,255,.07)',borderRadius:'14px',padding:'20px 24px',border:'1px solid rgba(255,255,255,.12)'}},[
+		React.createElement('h3',{key:'t',style:{color:'white',fontSize:'14px',fontWeight:'800',margin:'0 0 2px'}},title),
+		React.createElement('p',{key:'s',style:{fontSize:'11px',color:'rgba(255,255,255,.4)',margin:'0 0 16px'}},subtitle),
+		mkBody()
 	]);
 }
 
@@ -366,7 +441,13 @@ function Filters({filterInputs,setFilterInputs,onApply,onClear}) {
 			React.createElement('div',{key:'pr'},[
 				React.createElement('label',{key:'l',style:lbl},'Production Status'),
 				React.createElement('select',{key:'s',className:'drd-filter-input',value:filterInputs.priority,onChange:e=>upd('priority',e.target.value),style:{...inp,cursor:'pointer'}},[
-					['','All'],['OVERDUE','🚨 OVERDUE'],['DELIVERY RISK','⚠️ DELIVERY RISK'],['ON HOLD','⏸️ ON HOLD'],['ON TRACK','✅ ON TRACK']
+					['','All'],['OVERDUE','🚨 OVERDUE'],['DELIVERY RISK','⚠️ DELIVERY RISK'],['ON HOLD','⏸️ ON HOLD'],['ON TRACK','✅ ON TRACK'],['COMPLETED','🏁 COMPLETED']
+				].map(([v,t])=>React.createElement('option',{key:v,value:v},t)))
+			]),
+			React.createElement('div',{key:'pl'},[
+				React.createElement('label',{key:'l',style:lbl},'Planning Status'),
+				React.createElement('select',{key:'s',className:'drd-filter-input',value:filterInputs.planning,onChange:e=>upd('planning',e.target.value),style:{...inp,cursor:'pointer'}},[
+					['','All'],['planned','📅 Planned'],['not_planned','📝 Not Planned']
 				].map(([v,t])=>React.createElement('option',{key:v,value:v},t)))
 			]),
 			React.createElement('div',{key:'bt',style:{display:'flex',gap:'8px'}}, [

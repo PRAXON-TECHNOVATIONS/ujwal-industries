@@ -22,7 +22,7 @@ from ujwal_industries.api.owner_dashboard import (
 #  INTERNAL IMPLEMENTATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_so_list():
+def _compute_so_list(from_date=None, to_date=None, include_completed=False):
     """
     Core SO list with per-SO delay prediction and 5-stage pipeline.
 
@@ -35,7 +35,16 @@ def _compute_so_list():
     today_date = getdate(nowdate())
 
     # ── 1. Active SOs ────────────────────────────────────────────────────
-    sales_orders = frappe.db.sql("""
+    date_cond = ""
+    params = {}
+    if from_date:
+        date_cond += " AND so.delivery_date >= %(from_date)s"
+        params["from_date"] = from_date
+    if to_date:
+        date_cond += " AND so.delivery_date <= %(to_date)s"
+        params["to_date"] = to_date
+
+    sales_orders = frappe.db.sql(f"""
         SELECT
             so.name, so.customer, so.customer_name,
             so.delivery_date, so.grand_total, so.status,
@@ -45,9 +54,10 @@ def _compute_so_list():
           AND so.status NOT IN ('Completed', 'Cancelled', 'Closed')
           AND so.per_delivered < 100
           AND so.delivery_date IS NOT NULL
+          {date_cond}
         ORDER BY so.delivery_date ASC
         LIMIT 200
-    """, as_dict=1)
+    """, params, as_dict=1)
 
     if not sales_orders:
         return []
@@ -255,6 +265,56 @@ def _compute_so_list():
             "has_pp":           so.name in so_has_pp,
         })
 
+    if include_completed:
+        c_params = {}
+        c_cond = ""
+        if from_date:
+            c_cond += " AND so.delivery_date >= %(from_date)s"
+            c_params["from_date"] = from_date
+        if to_date:
+            c_cond += " AND so.delivery_date <= %(to_date)s"
+            c_params["to_date"] = to_date
+
+        completed_sos = frappe.db.sql(f"""
+            SELECT so.name, so.customer, so.customer_name,
+                   so.delivery_date, so.grand_total, so.status, so.per_delivered
+            FROM `tabSales Order` so
+            WHERE so.docstatus = 1
+              AND so.status IN ('Completed', 'Closed')
+              {c_cond}
+            ORDER BY so.delivery_date DESC
+            LIMIT 100
+        """, c_params, as_dict=1)
+
+        if completed_sos:
+            c_names = tuple(so.name for so in completed_sos)
+            c_item_rows = frappe.db.sql("""
+                SELECT parent, item_code, item_name
+                FROM `tabSales Order Item`
+                WHERE parent IN %(c)s ORDER BY parent, idx
+            """, {"c": c_names}, as_dict=1)
+            c_items_by_so = {}
+            for it in c_item_rows:
+                c_items_by_so.setdefault(it.parent, []).append(it)
+
+            for so in completed_sos:
+                its = c_items_by_so.get(so.name, [])
+                lbl = [it.item_name or it.item_code for it in its[:2]]
+                if len(its) > 2:
+                    lbl.append(f"+{len(its)-2} more")
+                result.append({
+                    "name": so.name, "customer": so.customer,
+                    "customer_name": so.customer_name or so.customer,
+                    "expected_date": str(getdate(so.delivery_date)) if so.delivery_date else "",
+                    "predicted_date": None, "delay_days": 0, "actual_overdue_days": 0,
+                    "progress_pct": 100, "total_qty": 0, "produced_qty": 0,
+                    "wo_count": 0, "stages_done": 5, "stages_total": 5,
+                    "fg_produced_qty": 0, "fg_total_qty": 0, "fg_progress_pct": 100,
+                    "value": flt(so.grand_total), "status": so.status,
+                    "delay_source": "none", "priority": "COMPLETED", "priority_sort": -1,
+                    "items_display": " · ".join(lbl), "has_pp": False,
+                })
+
     result.sort(key=lambda r: -r["priority_sort"])
     return result
 
@@ -264,13 +324,13 @@ def _compute_so_list():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def get_so_list():
+def get_so_list(from_date=None, to_date=None, include_completed=False):
     """List of active SOs with delay prediction and priority classification."""
-    return _compute_so_list()
+    return _compute_so_list(from_date=from_date, to_date=to_date, include_completed=frappe.utils.cint(include_completed))
 
 
 @frappe.whitelist()
-def get_so_overview():
+def get_so_overview(from_date=None, to_date=None):
     """
     Summary data for the overview screen:
       - total active SO count + completed count
@@ -278,13 +338,17 @@ def get_so_overview():
       - production status breakdown by priority
       - top 5 most overdue SOs
     """
-    data = _compute_so_list()
+    data = _compute_so_list(from_date=from_date, to_date=to_date)
 
-    # Completed SO count (separate — not in active list)
-    completed_count = frappe.db.count(
-        "Sales Order",
-        filters={"docstatus": 1, "status": ["in", ["Completed", "Closed"]]},
-    )
+    # Completed SO count filtered by the same delivery date range
+    completed_filters = {"docstatus": 1, "status": ["in", ["Completed", "Closed"]]}
+    if from_date and to_date:
+        completed_filters["delivery_date"] = ["between", [from_date, to_date]]
+    elif from_date:
+        completed_filters["delivery_date"] = [">=", from_date]
+    elif to_date:
+        completed_filters["delivery_date"] = ["<=", to_date]
+    completed_count = frappe.db.count("Sales Order", filters=completed_filters)
 
     planning    = {"planned": 0, "not_planned": 0}
     production  = {"OVERDUE": 0, "DELIVERY RISK": 0, "ON HOLD": 0, "ON TRACK": 0}
