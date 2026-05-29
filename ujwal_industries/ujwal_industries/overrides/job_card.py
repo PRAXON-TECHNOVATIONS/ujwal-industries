@@ -574,6 +574,8 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     job_card_id = args.get("job_card_id")
     pause_reason = args.get("pause_reason")
     completed_qty = flt(args.get("completed_qty") or 0)
+    start_counter = flt(args.get("start_counter") or 0)
+    end_counter = flt(args.get("end_counter") or 0)
 
     if not job_card_id:
         frappe.throw("Job Card ID is required")
@@ -599,6 +601,8 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     if job_card.time_logs and len(job_card.time_logs) > 0:
         latest_time_log = job_card.time_logs[-1]
         latest_time_log.custom_pause_reason = pause_reason
+        latest_time_log.custom_start_counter = start_counter
+        latest_time_log.custom_end_counter = end_counter
         if completed_qty > 0:
             latest_time_log.completed_qty = completed_qty
 
