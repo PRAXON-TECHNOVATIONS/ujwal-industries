@@ -2173,7 +2173,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				mfg_days_b = 0
 				if sfg_row.get('type_of_manufacturing') == "Subcontract" and real_spm:
 					total_minutes = batch_qty / real_spm
-					mfg_days_b =  round(total_minutes / 600 , 2)
+					mfg_days_b = round(total_minutes / shift_minutes, 2) if shift_minutes > 0 else (math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1)
 				else:
 					mfg_days_b = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
 
@@ -2303,6 +2303,8 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				display_spm    = round(flt(spm_details.get("spm") or 0, 2))
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				real_spm      = per_shift_qty / minutes_per_shift if minutes_per_shift > 0 else 0
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
@@ -2419,9 +2421,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
     			"qty": sales_qty,
 	    		"qty_as_show": gross_qty,
     			"actual_qty": actual_qty,
-				"batchsize": base_batchsize, 
+				"batchsize": base_batchsize,
     			"spm": display_spm,
     			"spm_1": display_spm,
+				"real_spm": real_spm,
 				"machine_count": machine_count,
 				"custom_workstations_csv": spm_details.get("selected_workstations_display_csv") or spm_details.get("selected_workstations_csv") or "",
 				"custom_shift_types_csv": getattr(sfg, "custom_shift_types_csv", "") or "",
@@ -2456,9 +2459,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				row_shift_minutes = _get_shift_working_minutes(row_cfg)
 				ic_f  = sfg_data["item_code"]
 				gd_f  = int(grn_map.get(ic_f, 0))
-				espm  = sfg_data["spm"]
-				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
-				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				real_spm_f = sfg_data.get("real_spm") or 0
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
@@ -2596,9 +2597,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				row_shift_minutes = _get_shift_working_minutes(row_cfg)
 				ic_f  = sfg_data["item_code"]
 				gd_f  = int(grn_map.get(ic_f, 0))
-				espm  = sfg_data["spm"]
-				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
-				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				real_spm_f = sfg_data.get("real_spm") or 0
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
@@ -2737,10 +2736,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
 				mfg_days = 0
-				display_spm = spm_details.get("spm")
-				if fg.manufacturing_type == "Subcontract" and display_spm:
-					total_minutes = batch_qty / display_spm
-					mfg_days =  round(total_minutes / 600 , 2)
+				if fg.manufacturing_type == "Subcontract" and real_spm:
+					total_minutes = batch_qty / real_spm
+					mfg_days = round(total_minutes / shift_minutes, 2) if shift_minutes > 0 else (math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1)
 				else:
 					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
 
@@ -3235,6 +3233,8 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				display_spm    = round(flt(spm_details.get("spm") or 0),2)
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
+				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				real_spm      = per_shift_qty / minutes_per_shift if minutes_per_shift > 0 else 0
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
@@ -3312,9 +3312,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
     			"qty": sales_qty,
 	    		"qty_as_show": gross_qty,
     			"actual_qty": actual_qty,
-				"batchsize": base_batchsize, 
+				"batchsize": base_batchsize,
     			"spm": display_spm,
     			"spm_1": display_spm,
+				"real_spm": real_spm,
 				"machine_count": machine_count,
 				# "custom_workstations_csv": spm_details.get("selected_workstations_csv") or "",
 				"custom_workstations_csv": spm_details.get("selected_workstations_display_csv") or spm_details.get("selected_workstations_csv") or "",
@@ -3348,9 +3349,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				row_shift_minutes = _get_shift_working_minutes(row_cfg)
 				ic_f  = sfg_data["item_code"]
 				gd_f  = int(grn_map.get(ic_f, 0))
-				espm  = sfg_data["spm"]
-				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
-				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				real_spm_f = sfg_data.get("real_spm") or 0
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
@@ -3483,9 +3482,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				row_shift_minutes = _get_shift_working_minutes(row_cfg)
 				ic_f  = sfg_data["item_code"]
 				gd_f  = int(grn_map.get(ic_f, 0))
-				espm  = sfg_data["spm"]
-				shift_count_f = max(len(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv", "") or "")), 1)
-				real_spm_f = espm / shift_count_f if shift_count_f > 0 else espm
+				real_spm_f = sfg_data.get("real_spm") or 0
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
@@ -3596,10 +3593,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			batch_rows: list[dict] = []
 			for b_idx, batch_qty in enumerate(batches):
 				mfg_days = 0
-				display_spm = spm_details.get("spm")
-				if fg.manufacturing_type == "Subcontract" and display_spm:
-					total_minutes = batch_qty / display_spm
-					mfg_days =  round(total_minutes / 600 , 2)
+				if fg.manufacturing_type == "Subcontract" and real_spm:
+					total_minutes = batch_qty / real_spm
+					mfg_days = round(total_minutes / shift_minutes, 2) if shift_minutes > 0 else (math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1)
 				else:
 					mfg_days = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
 
