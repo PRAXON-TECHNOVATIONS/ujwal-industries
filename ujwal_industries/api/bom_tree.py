@@ -480,7 +480,12 @@ def _build_reverse_label_map():
 
 
 def _parse_import_excel(file_b64):
-	"""Parse base64-encoded Excel → [{doctype, name, fields: {fn: val}}]."""
+	"""Parse base64-encoded Excel.
+
+	Each record is one of:
+	  {"doctype", "name", "fields", "is_new": False}   – update existing row
+	  {"doctype", "parent_bom", "fields", "is_new": True} – create new child row
+	"""
 	import openpyxl
 
 	data = base64.b64decode(file_b64)
@@ -493,31 +498,107 @@ def _parse_import_excel(file_b64):
 	rev_map = _build_reverse_label_map()
 	col_map = {i: rev_map[h] for i, h in enumerate(headers) if h in rev_map}
 
-	records = []
+	# Carry-forward: the BOM that owns the child-table records on the current row group.
+	bom_ctx = None
+
+	# For UPDATE records we accumulate fields across all occurrences of the same ID.
+	# This handles shared SFGs that appear multiple times in the export: if the user
+	# left the first occurrence untouched and edited the second, the edit still lands.
+	# Later non-empty cell values override earlier ones via dict.update().
+	update_acc = {}   # (doctype, name) → {fieldname: value}
+
+	# For CREATE records deduplicate by content so a shared SFG doesn't produce
+	# duplicate new rows.  Two creates with identical (doctype, parent, fields)
+	# are the same logical operation — only the first is kept.
+	seen_create_keys = set()
+	create_records = []
+
 	for raw_row in all_rows[1:]:
-		# Pad row to header length
 		cells = list(raw_row) + [None] * max(0, len(headers) - len(raw_row))
 
-		# Find name (ID) for each doctype present in this row
 		dt_ids = {}
+		dt_fields = {}
+
 		for idx, (dt, fn) in col_map.items():
+			val = cells[idx]
+			if val is None or not str(val).strip():
+				continue
+			val = val if not isinstance(val, str) else val.strip()
 			if fn == "name":
-				val = cells[idx]
-				if val is not None and str(val).strip():
-					dt_ids[dt] = str(val).strip()
+				dt_ids[dt] = str(val)
+			else:
+				dt_fields.setdefault(dt, {})[fn] = val
 
-		# Collect non-empty field values for each doctype with an ID
+		# Blank rows are section separators between top-level BOMs in the export.
+		# Reset carry-forward so a new section never inherits the previous BOM context.
+		if not dt_ids and not dt_fields:
+			bom_ctx = None
+			continue
+
+		# Carry-forward step 1: bom_no column gives the sub-BOM hint
+		item_bom_no = dt_fields.get("BOM Item", {}).get("bom_no")
+		if item_bom_no:
+			bom_ctx = str(item_bom_no)
+
+		# Carry-forward step 2: DB parent of any existing child record (most accurate)
 		for dt, rec_id in dt_ids.items():
-			fields = {}
-			for idx, (col_dt, fn) in col_map.items():
-				if col_dt == dt and fn != "name":
-					val = cells[idx]
-					if val is not None and str(val).strip():
-						fields[fn] = val
-			if fields:
-				records.append({"doctype": dt, "name": rec_id, "fields": fields})
+			if dt == "BOM Item":
+				continue
+			try:
+				db_parent = frappe.db.get_value(dt, rec_id, "parent")
+				if db_parent:
+					bom_ctx = db_parent
+					break
+			except Exception:
+				pass
 
+		# Accumulate field edits for existing records
+		for dt, rec_id in dt_ids.items():
+			uid = (dt, rec_id)
+			fields = {fn: v for fn, v in dt_fields.get(dt, {}).items()
+			          if fn not in _NEVER_EDITABLE}
+			if fields:
+				if uid not in update_acc:
+					update_acc[uid] = {}
+				update_acc[uid].update(fields)  # later occurrences win
+
+		# Collect new records (no ID)
+		for dt, all_fields in dt_fields.items():
+			if dt in dt_ids:
+				continue
+			parent_bom = all_fields.get("parent")
+			if not parent_bom and dt != "BOM Item":
+				parent_bom = bom_ctx
+			if not parent_bom:
+				continue
+			editable = {fn: v for fn, v in all_fields.items() if fn not in _NEVER_EDITABLE}
+			if not editable:
+				continue
+			# Normalise values to lowercase strings so "2nd Bending" and "2nd bending"
+			# (typed inconsistently across duplicate BOM sections) are treated as one.
+			create_key = (dt, str(parent_bom),
+			              frozenset((fn, str(v).strip().lower()) for fn, v in editable.items()))
+			if create_key in seen_create_keys:
+				continue
+			seen_create_keys.add(create_key)
+			create_records.append({"doctype": dt, "parent_bom": str(parent_bom),
+			                       "fields": editable, "is_new": True})
+
+	records = [
+		{"doctype": dt, "name": rec_id, "fields": fields, "is_new": False}
+		for (dt, rec_id), fields in update_acc.items()
+		if fields
+	]
+	records.extend(create_records)
 	return records
+
+
+def _parentfield_for(child_doctype):
+	"""Return the fieldname in BOM that holds this child table."""
+	for f in frappe.get_meta("BOM").fields:
+		if f.fieldtype == "Table" and f.options == child_doctype:
+			return f.fieldname
+	return None
 
 
 def _vals_equal(old, new):
@@ -532,52 +613,109 @@ def _vals_equal(old, new):
 
 @frappe.whitelist()
 def preview_bom_import(file_b64):
-	"""Returns list of {doctype, name, field, old, new} for all detected changes."""
+	"""Returns list of change objects (field updates + new record creates)."""
 	records = _parse_import_excel(file_b64)
 	if not records:
 		return {"changes": [], "warning": "no_records"}
+
 	changes = []
 	for rec in records:
-		editable_fns = [fn for fn in rec["fields"] if fn not in _NEVER_EDITABLE]
-		if not editable_fns:
-			continue
-		try:
-			current = frappe.db.get_value(rec["doctype"], rec["name"], editable_fns, as_dict=True)
-		except Exception:
-			continue
-		if not current:
-			continue
-		for fn in editable_fns:
-			old_val = current.get(fn, "")
-			new_val = rec["fields"][fn]
-			if not _vals_equal(old_val, new_val):
-				changes.append({
-					"doctype": rec["doctype"],
-					"name": rec["name"],
-					"field": fn,
-					"old": old_val,
-					"new": new_val,
-				})
+		if rec.get("is_new"):
+			changes.append({
+				"change_type": "create",
+				"doctype": rec["doctype"],
+				"name": None,
+				"bom": rec.get("parent_bom", ""),
+				"new_fields": rec["fields"],
+			})
+		else:
+			editable_fns = [fn for fn in rec["fields"] if fn not in _NEVER_EDITABLE]
+			if not editable_fns:
+				continue
+			try:
+				fetch = list(set(editable_fns) | {"parent"})
+				current = frappe.db.get_value(rec["doctype"], rec["name"], fetch, as_dict=True)
+			except Exception:
+				continue
+			if not current:
+				continue
+			bom = current.get("parent") or ""
+			for fn in editable_fns:
+				old_val = current.get(fn, "")
+				new_val = rec["fields"][fn]
+				if not _vals_equal(old_val, new_val):
+					changes.append({
+						"change_type": "update",
+						"doctype": rec["doctype"],
+						"name": rec["name"],
+						"field": fn,
+						"old": old_val,
+						"new": new_val,
+						"bom": bom,
+					})
+
+	# Enrich with BOM item/name for the grouped preview
+	bom_names = list({c["bom"] for c in changes if c.get("bom")})
+	if bom_names:
+		bom_rows = frappe.db.get_all("BOM", filters={"name": ["in", bom_names]},
+		                             fields=["name", "item", "item_name"])
+		bom_map = {r.name: r for r in bom_rows}
+		for c in changes:
+			info = bom_map.get(c.get("bom") or "")
+			c["bom_item"] = info.item if info else ""
+			c["bom_item_name"] = info.item_name if info else ""
+
 	return {"changes": changes, "warning": None}
 
 
 @frappe.whitelist()
 def apply_bom_import(file_b64):
-	"""Apply editable field updates from the Excel file. Returns summary."""
+	"""Apply field updates and new record creates from the Excel file."""
 	records = _parse_import_excel(file_b64)
-	updated = skipped = 0
+	updated = created = skipped = 0
 	errors = []
+
 	for rec in records:
-		to_update = {fn: val for fn, val in rec["fields"].items()
-		             if fn not in _NEVER_EDITABLE}
-		if not to_update:
-			skipped += 1
-			continue
-		try:
-			for fn, val in to_update.items():
-				frappe.db.set_value(rec["doctype"], rec["name"], fn, val)
-			updated += 1
-		except Exception as e:
-			errors.append(f"{rec['doctype']} {rec['name']}: {e}")
+		if rec.get("is_new"):
+			dt = rec["doctype"]
+			parent_bom = rec.get("parent_bom")
+			if not parent_bom:
+				skipped += 1
+				continue
+			parentfield = _parentfield_for(dt)
+			if not parentfield:
+				errors.append(f"Cannot find parentfield for {dt} in BOM")
+				skipped += 1
+				continue
+			try:
+				result = frappe.db.sql(
+					f"SELECT COALESCE(MAX(idx), 0) FROM `tab{dt}` WHERE parent = %s",
+					parent_bom,
+				)
+				next_idx = (result[0][0] if result else 0) + 1
+				doc = frappe.new_doc(dt)
+				doc.parent = parent_bom
+				doc.parenttype = "BOM"
+				doc.parentfield = parentfield
+				doc.idx = next_idx
+				for fn, val in rec["fields"].items():
+					doc.set(fn, val)
+				doc.db_insert()
+				created += 1
+			except Exception as e:
+				errors.append(f"New {dt} in {parent_bom}: {e}")
+		else:
+			to_update = {fn: val for fn, val in rec["fields"].items()
+			             if fn not in _NEVER_EDITABLE}
+			if not to_update:
+				skipped += 1
+				continue
+			try:
+				for fn, val in to_update.items():
+					frappe.db.set_value(rec["doctype"], rec["name"], fn, val)
+				updated += 1
+			except Exception as e:
+				errors.append(f"{rec['doctype']} {rec['name']}: {e}")
+
 	frappe.db.commit()
-	return {"updated": updated, "skipped": skipped, "errors": errors}
+	return {"updated": updated, "created": created, "skipped": skipped, "errors": errors}
