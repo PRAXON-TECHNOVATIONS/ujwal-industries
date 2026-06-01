@@ -3,21 +3,21 @@ const original_bom_onload = bom_tree_settings.onload;
 
 const DEFAULT_EXPORT_LABELS = new Set([
 	// BOM Item
-	"BOM Item: ID", "BOM Item: Item Code", "BOM Item: Item Name",
+	"BOM Item: ID", "BOM Item: Parent BOM Ref", "BOM Item: Item Code", "BOM Item: Item Name",
 	"BOM Item: BOM No", "BOM Item: Qty", "BOM Item: UOM", "BOM Item: Rate",
 	// Tree
 	"Level", "Parent Item", "Parent BOM",
 	// BOM Header
 	"BOM: ID", "BOM: Item", "BOM: Item UOM", "BOM: Quantity", "BOM: Item Name",
-	// BOM Operation (doctype name prefix)
-	"BOM Operation: ID", "BOM Operation: Row #", "BOM Operation: Sequence ID",
+	// BOM Operation — Parent BOM Ref required to create new operations via import
+	"BOM Operation: ID", "BOM Operation: Parent BOM Ref", "BOM Operation: Row #", "BOM Operation: Sequence ID",
 	"BOM Operation: Operation", "BOM Operation: Fixed Lot Capacity",
 	"BOM Operation: Machine", "BOM Operation: Operation Time", "BOM Operation: BatchSize",
-	// Tool Child Table (doctype name prefix)
-	"Tool Child Table: ID", "Tool Child Table: Row #", "Tool Child Table: Operation",
+	// Tool Child Table
+	"Tool Child Table: ID", "Tool Child Table: Parent BOM Ref", "Tool Child Table: Row #", "Tool Child Table: Operation",
 	"Tool Child Table: Tool", "Tool Child Table: Tool Load Quantity", "Tool Child Table: Is Default",
-	// BOM Scrap Item (doctype name prefix)
-	"BOM Scrap Item: ID", "BOM Scrap Item: Row #", "BOM Scrap Item: Item Code",
+	// BOM Scrap Item
+	"BOM Scrap Item: ID", "BOM Scrap Item: Parent BOM Ref", "BOM Scrap Item: Row #", "BOM Scrap Item: Item Code",
 	"BOM Scrap Item: Item Name", "BOM Scrap Item: Qty",
 	"BOM Scrap Item: Tolerance (%)", "BOM Scrap Item: Rate",
 ]);
@@ -276,10 +276,15 @@ function show_import_dialog() {
 			<p style="font-size:13px; margin-bottom:6px;">
 				Upload your exported BOM Excel file (with edits). The tool previews all changes before applying.
 			</p>
-			<div style="background:#fff8e1; border-left:3px solid #f0ad4e; padding:8px 12px; margin-bottom:12px; font-size:12px;">
-				<strong>Required:</strong> Your Excel must include the <strong>ID columns</strong>
-				(e.g. <em>BOM Operation: ID</em>, <em>BOM Item: ID</em>) so records can be matched.
-				These are pre-ticked by default in the Export dialog — re-export if your file is missing them.
+			<div style="background:#fff8e1; border-left:3px solid #f0ad4e; padding:8px 12px; margin-bottom:8px; font-size:12px;">
+				<strong>Editing existing records:</strong> Include the <strong>ID columns</strong>
+				(e.g. <em>BOM Operation: ID</em>) so records can be matched.
+				These are pre-ticked by default in the Export dialog.
+			</div>
+			<div style="background:#f0fff4; border-left:3px solid #28a745; padding:8px 12px; margin-bottom:12px; font-size:12px;">
+				<strong>Adding new operations / rows:</strong> Leave the <strong>ID column blank</strong> and fill in
+				<strong>Parent BOM Ref</strong> (e.g. <em>BOM Operation: Parent BOM Ref</em>) with the BOM name.
+				The tool will create the new record automatically.
 			</div>
 			<div style="margin-bottom:14px;">
 				<label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">
@@ -321,6 +326,40 @@ function show_import_dialog() {
 	d.show();
 }
 
+function _group_changes_by_bom(changes) {
+	const bom_order = [];
+	const by_bom = {};
+
+	for (const c of changes) {
+		const bom_key = c.bom || "";
+		if (!by_bom[bom_key]) {
+			bom_order.push(bom_key);
+			by_bom[bom_key] = {
+				bom: c.bom || "",
+				bom_item: c.bom_item || "",
+				bom_item_name: c.bom_item_name || "",
+				records: [],
+				record_map: {},
+			};
+		}
+		const grp = by_bom[bom_key];
+
+		if (c.change_type === "create") {
+			grp.records.push({ type: "create", doctype: c.doctype, fields: c.new_fields || {} });
+		} else {
+			const rec_key = `${c.doctype}::${c.name}`;
+			if (!grp.record_map[rec_key]) {
+				const rec = { type: "update", doctype: c.doctype, name: c.name, field_changes: [] };
+				grp.record_map[rec_key] = rec;
+				grp.records.push(rec);
+			}
+			grp.record_map[rec_key].field_changes.push({ field: c.field, old: c.old, new: c.new });
+		}
+	}
+
+	return bom_order.map(k => by_bom[k]);
+}
+
 function _render_import_preview(d, changes, warning, on_apply) {
 	d.$body.find(".bom-import-preview").show();
 	const title_el = d.$body.find(".bom-preview-title");
@@ -352,37 +391,92 @@ function _render_import_preview(d, changes, warning, on_apply) {
 
 	title_el.text(__("Preview of Changes"));
 
-	const rows_html = changes.map(c => `
-		<tr>
-			<td style="font-size:12px;">${c.doctype}</td>
-			<td style="font-size:12px; color:#5e64ff; font-family:monospace; white-space:nowrap;">${c.name}</td>
-			<td style="font-size:12px;">${c.field}</td>
-			<td style="font-size:12px; color:#888;">${c.old ?? ""}</td>
-			<td style="font-size:12px; color:#28a745; font-weight:600;">${c.new}</td>
-		</tr>
-	`).join("");
+	const groups = _group_changes_by_bom(changes);
+	let update_count = 0;
+	let create_count = 0;
+	let all_rows_html = "";
+
+	for (const group of groups) {
+		const bom_label = group.bom
+			? `<span style="color:#1a56db; font-weight:700;">${group.bom}</span>`
+			  + (group.bom_item ? ` &mdash; <span style="color:#333;">${group.bom_item}</span>` : "")
+			  + (group.bom_item_name ? ` <span style="color:#888; font-size:11px;">(${group.bom_item_name})</span>` : "")
+			: `<span style="color:#888;">${__("(Unknown BOM)")}</span>`;
+
+		all_rows_html += `
+			<tr style="background:#dbe9ff;">
+				<td colspan="5" style="padding:6px 10px; font-size:12px; font-weight:600; border-top:2px solid #93c5fd;">
+					${bom_label}
+				</td>
+			</tr>
+		`;
+
+		for (const rec of group.records) {
+			if (rec.type === "create") {
+				all_rows_html += `
+					<tr style="background:#dcfce7;">
+						<td colspan="5" style="font-size:12px; padding:5px 10px; padding-left:20px; font-weight:600; color:#166534;">
+							<span style="background:#16a34a; color:white; font-size:10px; font-weight:700;
+							             padding:1px 5px; border-radius:3px; margin-right:6px;">NEW</span>
+							${rec.doctype}
+						</td>
+					</tr>
+				`;
+				for (const [fn, val] of Object.entries(rec.fields)) {
+					all_rows_html += `
+						<tr style="background:#f0fdf4;">
+							<td style="font-size:11px; padding-left:36px; color:#888;"></td>
+							<td style="font-size:11px; color:#aaa; font-style:italic;">(new)</td>
+							<td style="font-size:11px; color:#555;">${fn}</td>
+							<td style="font-size:11px; color:#aaa;">—</td>
+							<td style="font-size:11px; color:#16a34a; font-weight:600;">${val}</td>
+						</tr>
+					`;
+				}
+				create_count++;
+			} else {
+				for (const fc of rec.field_changes) {
+					all_rows_html += `
+						<tr>
+							<td style="font-size:12px; padding-left:20px;">${rec.doctype}</td>
+							<td style="font-size:12px; color:#5e64ff; font-family:monospace; white-space:nowrap;">${rec.name}</td>
+							<td style="font-size:12px;">${fc.field}</td>
+							<td style="font-size:12px; color:#888;">${fc.old ?? ""}</td>
+							<td style="font-size:12px; color:#28a745; font-weight:600;">${fc.new}</td>
+						</tr>
+					`;
+					update_count++;
+				}
+			}
+		}
+	}
 
 	table_el.html(`
-		<div style="max-height:45vh; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px;">
+		<div style="max-height:50vh; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px;">
 			<table class="table table-bordered table-condensed" style="margin:0;">
-				<thead style="background:#f8f9fa; position:sticky; top:0;">
+				<thead style="background:#f8f9fa; position:sticky; top:0; z-index:1;">
 					<tr>
-						<th style="font-size:12px;">DocType</th>
-						<th style="font-size:12px;">Record ID</th>
-						<th style="font-size:12px;">Field</th>
-						<th style="font-size:12px;">Current Value</th>
-						<th style="font-size:12px;">New Value</th>
+						<th style="font-size:12px; width:22%;">DocType</th>
+						<th style="font-size:12px; width:20%;">Record ID</th>
+						<th style="font-size:12px; width:26%;">Field</th>
+						<th style="font-size:12px; width:16%;">Current Value</th>
+						<th style="font-size:12px; width:16%;">New Value</th>
 					</tr>
 				</thead>
-				<tbody>${rows_html}</tbody>
+				<tbody>${all_rows_html}</tbody>
 			</table>
 		</div>
 	`);
-	count_el.text(__("{0} field change(s) will be applied.", [changes.length]));
 
-	d.set_primary_action(__("Apply {0} Change(s)", [changes.length]), () => {
+	const parts = [];
+	if (update_count) parts.push(__("{0} field update(s)", [update_count]));
+	if (create_count) parts.push(__("{0} new record(s)", [create_count]));
+	count_el.text(parts.join(" + ") + " " + __("will be applied."));
+
+	const apply_count = update_count + create_count;
+	d.set_primary_action(__("Apply {0} Change(s)", [apply_count]), () => {
 		frappe.confirm(
-			__("Apply {0} change(s) directly to BOM records?", [changes.length]),
+			__("Apply {0} change(s) directly to BOM records?", [apply_count]),
 			on_apply
 		);
 	});
@@ -402,6 +496,7 @@ function _apply_import(d, file_b64) {
 				title: __("Import Complete"),
 				message:
 					`<strong>${__("Records updated:")}</strong> ${res.updated}<br>` +
+					(res.created ? `<strong>${__("Records created:")}</strong> ${res.created}<br>` : "") +
 					`<strong>${__("Rows skipped:")}</strong> ${res.skipped}<br>` +
 					(has_errors
 						? `<strong style="color:#e74c3c;">${__("Errors:")}</strong><br>${res.errors.join("<br>")}`
