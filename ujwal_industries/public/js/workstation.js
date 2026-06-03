@@ -164,7 +164,7 @@ function update_status_indicator(frm) {
 		this.$wrapper.find(".btn-change-operator, .current-operator-display").remove();
 
 		(this.job_cards || []).forEach(function(data) {
-			if (data.status !== "Work In Progress") return;
+			if (!["Work In Progress", "On Hold"].includes(data.status)) return;
 
 			// Find the active time log (no to_time = job is currently running)
 			// Fall back to the most recent log if the job is paused between partial completions
