@@ -35,6 +35,7 @@ def update_work_order_no_process_loss(self):
             row.process_loss_qty = 0  # HARD ZERO
 
     wo.flags.ignore_validate_update_after_submit = True
+    wo.flags.ignore_permissions = True
     wo.save()
 
 JobCard.update_work_order = update_work_order_no_process_loss
