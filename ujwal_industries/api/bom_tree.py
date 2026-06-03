@@ -465,6 +465,13 @@ def _build_reverse_label_map():
 	for f in frappe.get_meta("BOM Item").fields:
 		if f.fieldname and f.label and f.fieldtype not in SKIP_FIELD_TYPES:
 			rev[f"BOM Item: {f.label}"] = ("BOM Item", f.fieldname)
+	# BOM header fields (label prefix matches _build_label_map: "BOM: ")
+	for fn, lbl in _SYSTEM_CHILD_TUPLES:
+		rev[f"BOM: {lbl}"] = ("BOM", fn)
+	for f in frappe.get_meta("BOM").fields:
+		if f.fieldname and f.label and f.fieldtype not in SKIP_FIELD_TYPES:
+			rev[f"BOM: {f.label}"] = ("BOM", f.fieldname)
+
 	# Secondary child tables (label prefix: "{child_doctype}: " — matches _build_label_map)
 	for f in frappe.get_meta("BOM").fields:
 		if f.fieldtype != "Table" or not f.options or f.options == PRIMARY_CHILD:
@@ -494,6 +501,18 @@ def _parse_import_excel(file_b64):
 	if len(all_rows) < 2:
 		return []
 
+	def _normalize_cell(value):
+		if value is None:
+			return None
+		if isinstance(value, float) and value.is_integer():
+			return str(int(value))
+		if isinstance(value, int):
+			return str(value)
+		if isinstance(value, str):
+			value = value.strip()
+			return value if value else None
+		return str(value)
+
 	headers = [str(h) if h is not None else "" for h in all_rows[0]]
 	rev_map = _build_reverse_label_map()
 	col_map = {i: rev_map[h] for i, h in enumerate(headers) if h in rev_map}
@@ -520,12 +539,11 @@ def _parse_import_excel(file_b64):
 		dt_fields = {}
 
 		for idx, (dt, fn) in col_map.items():
-			val = cells[idx]
-			if val is None or not str(val).strip():
+			val = _normalize_cell(cells[idx])
+			if val is None:
 				continue
-			val = val if not isinstance(val, str) else val.strip()
 			if fn == "name":
-				dt_ids[dt] = str(val)
+				dt_ids[dt] = val
 			else:
 				dt_fields.setdefault(dt, {})[fn] = val
 
@@ -535,14 +553,43 @@ def _parse_import_excel(file_b64):
 			bom_ctx = None
 			continue
 
-		# Carry-forward step 1: bom_no column gives the sub-BOM hint
-		item_bom_no = dt_fields.get("BOM Item", {}).get("bom_no")
-		if item_bom_no:
-			bom_ctx = str(item_bom_no)
+		# Step 1: BOM: ID column directly names the BOM that owns this row's child records.
+		# This is the most reliable signal for top-level BOM rows where BOM Item: bom_no
+		# points to a *sub-assembly* BOM, not the BOM that owns the operations.
+		bom_id_col = dt_ids.get("BOM")
+		if bom_id_col:
+			bom_ctx = str(bom_id_col)
 
-		# Carry-forward step 2: DB parent of any existing child record (most accurate)
+		# Step 2: BOM Item: BOM No column — only use it for carry-forward when there is no
+		# BOM: ID on this row (i.e. child/continuation rows that inherit context).
+		if not bom_id_col:
+			item_bom_no = dt_fields.get("BOM Item", {}).get("bom_no")
+			if item_bom_no:
+				bom_ctx = str(item_bom_no)
+
+		# Step 3: explicit Parent BOM Ref value on any new child row
+		if not bom_ctx:
+			for child_dt, fields in dt_fields.items():
+				if child_dt == "BOM Item":
+					continue
+				parent_ref = fields.get("parent")
+				if parent_ref:
+					bom_ctx = str(parent_ref)
+					break
+
+		# Step 4: look up DB parent of an existing BOM Item on this row
+		bom_item_id = dt_ids.get("BOM Item")
+		if bom_item_id and not bom_ctx:
+			try:
+				db_parent = frappe.db.get_value("BOM Item", bom_item_id, "parent")
+				if db_parent:
+					bom_ctx = db_parent
+			except Exception:
+				pass
+
+		# Step 5: DB parent of any other existing child record
 		for dt, rec_id in dt_ids.items():
-			if dt == "BOM Item":
+			if dt in ("BOM Item", "BOM"):
 				continue
 			try:
 				db_parent = frappe.db.get_value(dt, rec_id, "parent")
@@ -668,9 +715,16 @@ def preview_bom_import(file_b64):
 	return {"changes": changes, "warning": None}
 
 
+# BOMs that need with_operations enabled — activated once per BOM, not per row
+_with_ops_enabled = set()
+
+
 @frappe.whitelist()
 def apply_bom_import(file_b64):
 	"""Apply field updates and new record creates from the Excel file."""
+	global _with_ops_enabled
+	_with_ops_enabled = set()
+
 	records = _parse_import_excel(file_b64)
 	updated = created = skipped = 0
 	errors = []
@@ -688,6 +742,13 @@ def apply_bom_import(file_b64):
 				skipped += 1
 				continue
 			try:
+				# Ensure BOM has with_operations=1 before inserting an operation row
+				if dt == "BOM Operation" and parent_bom not in _with_ops_enabled:
+					current = frappe.db.get_value("BOM", parent_bom, "with_operations")
+					if not current:
+						frappe.db.set_value("BOM", parent_bom, "with_operations", 1)
+					_with_ops_enabled.add(parent_bom)
+
 				result = frappe.db.sql(
 					f"SELECT COALESCE(MAX(idx), 0) FROM `tab{dt}` WHERE parent = %s",
 					parent_bom,
