@@ -296,7 +296,13 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 		// Always save first so selected_items (from the Select Items dialog) is
 		// persisted to DB before the Python function reads it server-side.
-		frm.save().then(() => _run_generate_production_plan(frm));
+		// If the doc has no pending changes, frm.save() may not resolve the promise,
+		// so we call generate directly in that case.
+		if (frm.is_dirty()) {
+			frm.save().then(() => _run_generate_production_plan(frm));
+		} else {
+			_run_generate_production_plan(frm);
+		}
 	}
 });
 
