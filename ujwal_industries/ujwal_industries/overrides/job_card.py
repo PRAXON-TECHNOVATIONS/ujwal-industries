@@ -236,39 +236,88 @@ def build_tool_summary_html(doc):
     doc.custom_tool_summary = html
 
 # HELPER – FG AVAILABILITY
-def get_fg_availability_internal(work_order: str, exclude_job_card: str | None = None):
+def get_fg_availability_internal(work_order: str, exclude_job_card: str | None = None, job_card: str | None = None):
+    """
+    Compute how much quantity is available for a Job Card's operation to work on.
+
+    Operations run in sequence (by `sequence_id`): each operation can only process
+    what the *immediately preceding* operation has already completed. The very first
+    operation is fed by the Work Order's `material_transferred_for_manufacturing`.
+
+    Returns: (input_qty, this_op_completed_qty, available_qty)
+      - input_qty: qty available as input to this operation (from previous op, or RM transfer for the first op)
+      - this_op_completed_qty: qty this operation's job card(s) have already completed
+      - available_qty: input_qty - this_op_completed_qty (clamped to >= 0)
+    """
     if not work_order:
         return 0, 0, 0
 
     wo = frappe.get_doc("Work Order", work_order)
 
-    transferred_fg = flt(wo.material_transferred_for_manufacturing or 0)
+    jc = frappe.get_doc("Job Card", job_card) if job_card else None
+    if jc is None and exclude_job_card:
+        jc = frappe.get_doc("Job Card", exclude_job_card)
 
-    manufactured_fg = (
+    sequence_id = cint(getattr(jc, "sequence_id", 0)) if jc else 0
+
+    if sequence_id:
+        prev_op = frappe.get_all(
+            "Work Order Operation",
+            filters={"parent": work_order, "sequence_id": ("<", sequence_id)},
+            fields=["name"],
+            order_by="sequence_id desc",
+            limit=1,
+        )
+    else:
+        prev_op = []
+
+    if prev_op:
+        # Input to this operation = what the immediately preceding operation has completed
+        input_qty = flt(
+            frappe.db.sql(
+                """
+                SELECT SUM(total_completed_qty)
+                FROM `tabJob Card`
+                WHERE work_order=%s
+                  AND operation_id=%s
+                  AND docstatus=1
+                """,
+                (work_order, prev_op[0].name),
+            )[0][0]
+            or 0
+        )
+    else:
+        # First operation: fed directly by the material transferred for manufacturing
+        input_qty = flt(wo.material_transferred_for_manufacturing or 0)
+
+    exclude_clause = ""
+    params: list[Any] = [work_order]
+    if jc and jc.operation_id:
+        exclude_clause += " AND operation_id=%s"
+        params.append(jc.operation_id)
+    if exclude_job_card:
+        exclude_clause += " AND name != %s"
+        params.append(exclude_job_card)
+
+    this_op_completed_qty = flt(
         frappe.db.sql(
-            """
+            f"""
             SELECT SUM(total_completed_qty)
             FROM `tabJob Card`
             WHERE work_order=%s
               AND docstatus=1
-              {exclude}
-            """.format(
-                exclude="AND name != %s" if exclude_job_card else ""
-            ),
-            tuple(
-                [work_order, exclude_job_card]
-                if exclude_job_card
-                else [work_order]
-            ),
+              {exclude_clause}
+            """,
+            tuple(params),
         )[0][0]
         or 0
     )
 
-    available_fg = transferred_fg - flt(manufactured_fg)
-    if available_fg < 0:
-        available_fg = 0
+    available_qty = input_qty - this_op_completed_qty
+    if available_qty < 0:
+        available_qty = 0
 
-    return transferred_fg, manufactured_fg, available_fg
+    return input_qty, this_op_completed_qty, available_qty
 
 # START / RESUME JOB -VALIDATION
 
@@ -293,24 +342,33 @@ def make_time_log_with_material_check(args):
             args["custom_tool_reason"] = jc.custom_reason_for_tool_change
 
         if jc.work_order:
-            transferred_fg, manufactured_fg, available_fg = get_fg_availability_internal(
-                jc.work_order, exclude_job_card=jc.name
+            input_qty, this_op_completed_qty, available_qty = get_fg_availability_internal(
+                jc.work_order, exclude_job_card=jc.name, job_card=jc.name
             )
 
-            if available_fg <= 0:
+            if available_qty <= 0:
+                is_first_op = not frappe.db.exists(
+                    "Work Order Operation",
+                    {"parent": jc.work_order, "sequence_id": ("<", cint(jc.sequence_id))},
+                )
+                input_label = "Material Transferred (RM)" if is_first_op else "Qty Completed by Previous Operation"
+                hint = (
+                    "Please transfer additional material against the Work Order"
+                    if is_first_op
+                    else "Please wait for the previous operation to complete more quantity"
+                )
                 frappe.throw(
                     title="No Quantity Available",
                     msg=f"""
                     <b>No production quantity available to continue this Job</b><br><br>
 
                     <b>Work Order:</b> {jc.work_order}<br>
-                    <b>Material Transferred (FG):</b> {transferred_fg}<br>
-                    <b>Already Manufactured:</b> {manufactured_fg}<br>
+                    <b>{input_label}:</b> {input_qty}<br>
+                    <b>Already Completed (this operation):</b> {this_op_completed_qty}<br>
                     <b>Available Qty:</b>
                     <span style="color:red;"><b>0</b></span><br><br>
 
-                    Please transfer additional material against the Work Order
-                    to resume or start this Job Card.
+                    {hint} to resume or start this Job Card.
                     """
                 )
     result = _original_make_time_log(args)
@@ -336,31 +394,31 @@ def validate_job_card_qty_fg_based(doc: Document, method=None):
     if not doc.work_order:
         return
 
-    transferred_fg, manufactured_fg, available_fg = get_fg_availability_internal(
-        doc.work_order, exclude_job_card=doc.name
+    input_qty, this_op_completed_qty, available_qty = get_fg_availability_internal(
+        doc.work_order, exclude_job_card=doc.name, job_card=doc.name
     )
 
     entered_qty = flt(doc.total_completed_qty)
 
-    if entered_qty > available_fg:
+    if entered_qty > available_qty:
         frappe.throw(
-            title="Quantity Exceeds Material Transfer",
+            title="Quantity Exceeds Available Input",
             msg=f"""
-            <b>Production quantity exceeds transferred material</b><br><br>
+            <b>Production quantity exceeds quantity available to this operation</b><br><br>
 
             <b>Work Order:</b> {doc.work_order}<br>
-            <b>Material Transferred for Manufacturing (FG):</b>
-            <b>{transferred_fg}</b><br>
+            <b>Qty Available as Input to this Operation:</b>
+            <b>{input_qty}</b><br>
 
-            <b>Already Manufactured:</b> {manufactured_fg}<br>
+            <b>Already Completed (this operation):</b> {this_op_completed_qty}<br>
             <b>Available for this Job Card:</b>
-            <span style="color:green;"><b>{available_fg}</b></span><br><br>
+            <span style="color:green;"><b>{available_qty}</b></span><br><br>
 
             <b>Entered Completed Qty:</b>
             <span style="color:red;"><b>{entered_qty}</b></span><br><br>
 
-            Please transfer additional material against the Work Order
-            to increase allowed production quantity.
+            Please ensure the previous operation has completed enough quantity,
+            or transfer additional material against the Work Order.
             """
         )
 

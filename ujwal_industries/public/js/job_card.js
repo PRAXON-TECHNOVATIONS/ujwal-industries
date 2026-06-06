@@ -248,6 +248,12 @@ function hide_job_card_timer(frm) {
 function show_pause_reason_dialog(frm) {
 	let tool_cavities = 1;
 
+	// Default start counter = end counter of last time log (machine counter continuity),
+	// falling back to 0 if no previous log exists.
+	const time_logs = frm.doc.time_logs || [];
+	const last_log = time_logs.length ? time_logs[time_logs.length - 1] : null;
+	const default_start_counter = flt(last_log && last_log.custom_end_counter || 0);
+
 	const d = new frappe.ui.Dialog({
 		title: __("Pause Job"),
 		fields: [
@@ -267,7 +273,7 @@ function show_pause_reason_dialog(frm) {
 				label: __("Start Counter"),
 				fieldname: "start_counter",
 				reqd: 1,
-				default: flt(frm.doc.total_completed_qty || 0),
+				default: default_start_counter,
 				description: __("Counter reading at job start")
 			},
 			{
