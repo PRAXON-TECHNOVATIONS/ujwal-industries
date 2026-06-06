@@ -178,6 +178,21 @@ def get_job_cards_with_operator(workstation: str) -> list:
     if not job_cards:
         return job_cards
 
+    # Bulk fetch item names for the production items shown in each card heading
+    item_codes = {card.get("production_item") for card in job_cards if card.get("production_item")}
+    item_names: dict[str, str] = {}
+    if item_codes:
+        rows = frappe.db.get_all(
+            "Item",
+            filters={"name": ["in", list(item_codes)]},
+            fields=["name", "item_name"],
+        )
+        item_names = {r["name"]: r["item_name"] for r in rows}
+
+    for card in job_cards:
+        production_item = card.get("production_item")
+        card["production_item_name"] = item_names.get(production_item, "") if production_item else ""
+
     # Collect all employee IDs across all time logs
     employee_ids = set()
     for card in job_cards:
