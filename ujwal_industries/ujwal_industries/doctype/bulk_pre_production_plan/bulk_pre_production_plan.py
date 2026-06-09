@@ -1748,6 +1748,7 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			soi.qty,
 			soi.stock_uom,
 			soi.bom_no,
+			soi.delivery_date,
 			so.order_type AS so_order_type,
 			COALESCE(item.custom_planning_type, '') AS custom_planning_type,
 			COALESCE(item.custom_forecast_threashold, 0) AS custom_forecast_threashold
@@ -2218,8 +2219,11 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				})
 			return batch_rows
 
-		# ── Get FG deadline = SO delivery_date (always fresh) ───────────────────
-		_so_del = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+		# ── Get FG deadline = SO item delivery_date (per-line, not SO header) ──
+		# Use the FG row's sales_order_item to get the per-line delivery date; fall back to SO header.
+		_fg0_soi = getattr(items["fg"][0], "sales_order_item", None) if items.get("fg") else None
+		_item_del = frappe.db.get_value("Sales Order Item", _fg0_soi, "delivery_date") if _fg0_soi else None
+		_so_del = _item_del or frappe.db.get_value("Sales Order", so_name, "delivery_date")
 		fg_deadline_dt = get_datetime(_so_del) if _so_del else today_dt
 		# If delivery_date is in the past and backdating not allowed → anchor from today
 		if not allow_backdated and fg_deadline_dt < today_dt:
@@ -3152,8 +3156,11 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				})
 			return batch_rows
 
-		# ── Get FG deadline = SO delivery_date (always fresh) ───────────────────
-		_so_del = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+		# ── Get FG deadline = SO item delivery_date (per-line, not SO header) ──
+		# Use the FG row's sales_order_item to get the per-line delivery date; fall back to SO header.
+		_fg0_soi = getattr(items["fg"][0], "sales_order_item", None) if items.get("fg") else None
+		_item_del = frappe.db.get_value("Sales Order Item", _fg0_soi, "delivery_date") if _fg0_soi else None
+		_so_del = _item_del or frappe.db.get_value("Sales Order", so_name, "delivery_date")
 		fg_deadline_dt = get_datetime(_so_del) if _so_del else today_dt
 		# If delivery_date is in the past and backdating not allowed → anchor from today
 		if not allow_backdated and fg_deadline_dt < today_dt:
@@ -3996,14 +4003,24 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	# Get the warehouse and item selection for this sales order from sales_orders table
 	so_warehouse = None
 	selected_boms = _get_selected_bom_map(doc, so_name)
-	selected_item_codes = None
+	selected_item_codes = None  # set of item_code strings (legacy) or None
+	selected_item_keys = None   # set of (item_code, delivery_date) tuples (new format) or None
 	has_item_selection = False
 	for so_row in doc.sales_orders:
 		if so_row.sales_order == so_name:
 			so_warehouse = so_row.for_warehouse
 			if so_row.selected_items is not None and so_row.selected_items != '':
 				try:
-					selected_item_codes = set(frappe.parse_json(so_row.selected_items))
+					parsed = frappe.parse_json(so_row.selected_items)
+					# New format: list of {item_code, delivery_date} dicts
+					if parsed and isinstance(parsed[0], dict):
+						selected_item_keys = set(
+							(d["item_code"], str(d.get("delivery_date") or ""))
+							for d in parsed
+						)
+					else:
+						# Legacy format: list of item_code strings
+						selected_item_codes = set(parsed)
 					has_item_selection = True
 				except Exception:
 					pass
@@ -4047,7 +4064,13 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 
 	# Filter to user-selected items only (if selection dialog was opened)
 	if has_item_selection:
-		so_items = [item for item in so_items if item.item_code in selected_item_codes]
+		if selected_item_keys is not None:
+			so_items = [
+				item for item in so_items
+				if (item.item_code, str(item.delivery_date or "")) in selected_item_keys
+			]
+		elif selected_item_codes is not None:
+			so_items = [item for item in so_items if item.item_code in selected_item_codes]
 
 	target_warehouse_map = _get_item_default_warehouse_map([item.item_code for item in so_items], doc.company)
 	existing_fg_ws_map = (getattr(doc.flags, "existing_fg_workstation_maps", {}) or {}).get(so_name, {})
@@ -4517,15 +4540,18 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	))
 	fg_bom_cache = _fetch_bom_operations_cache(fg_bom_nos)
 
-	# Always use SO delivery_date as the deadline — never use stale planned_start_date
-	_so_delivery_date = frappe.db.get_value("Sales Order", so_name, "delivery_date")
+	# Always use item-level delivery_date as the deadline — never use stale planned_start_date
+	_so_delivery_date_fallback = frappe.db.get_value("Sales Order", so_name, "delivery_date")
 
 	for fg_row in doc.po_items:
 		if fg_row.sales_order != so_name or not fg_row.bom_no:
 			continue
 
-		# Use SO delivery_date directly (not stale planned_start_date from previous run)
-		delivery_dt = get_datetime(_so_delivery_date) if _so_delivery_date else get_datetime(fg_row.planned_start_date)
+		# Use per-line SO item delivery_date; fall back to SO header date
+		_soi = getattr(fg_row, "sales_order_item", None)
+		_item_del = frappe.db.get_value("Sales Order Item", _soi, "delivery_date") if _soi else None
+		_row_delivery_date = _item_del or _so_delivery_date_fallback
+		delivery_dt = get_datetime(_row_delivery_date) if _row_delivery_date else get_datetime(fg_row.planned_start_date)
 		prod_minutes = _calculate_row_production_minutes(fg_row, flt(fg_row.planned_qty), fg_bom_cache)
 
 		if prod_minutes > 0:
