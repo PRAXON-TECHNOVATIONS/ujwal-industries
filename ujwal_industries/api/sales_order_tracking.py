@@ -45,7 +45,9 @@ def get_so_items_for_list(sales_orders):
 
 
 @frappe.whitelist()
-def get_sales_orders(days="30", limit_page_length=6, limit_page_offset=0):
+def get_sales_orders(days="all", limit_page_length=6, limit_page_offset=0,
+					  sales_order_filter=None, from_date=None, to_date=None,
+					  customer=None, item=None, status=None):
 	"""
 	Get Sales Orders with complete tracking information (paginated).
 
@@ -53,6 +55,12 @@ def get_sales_orders(days="30", limit_page_length=6, limit_page_offset=0):
 		days (str): Number of days to look back, or 'all' for all orders
 		limit_page_length (int): Number of records to return (default 6)
 		limit_page_offset (int): Offset for pagination (default 0)
+		sales_order_filter (str): Filter by Sales Order name (partial match)
+		from_date (str): Filter by transaction date >= from_date (overrides days)
+		to_date (str): Filter by transaction date <= to_date
+		customer (str): Filter by customer code or customer name (partial match)
+		item (str): Filter by item code or item name in order lines (partial match)
+		status (str): Filter by Sales Order status (exact match)
 
 	Returns:
 		dict: { "data": [...], "has_more": bool }
@@ -60,52 +68,129 @@ def get_sales_orders(days="30", limit_page_length=6, limit_page_offset=0):
 	limit_page_length = int(limit_page_length or 6)
 	limit_page_offset = int(limit_page_offset or 0)
 
-	# Calculate date filter
-	if days == "all" or not days or days == "NaN" or days == "null":
-		from_date = "2000-01-01"
-	else:
-		try:
-			from_date = add_days(nowdate(), -int(days))
-		except (ValueError, TypeError):
-			from_date = "2000-01-01"
+	conditions = ["so.docstatus = 1"]
+	params = {}
 
-	# Fetch one extra to check has_more
-	sales_orders = frappe.db.sql("""
+	# Date range: explicit from_date takes priority over the days shorthand
+	if from_date:
+		conditions.append("so.transaction_date >= %(from_date)s")
+		params["from_date"] = from_date
+	elif days not in ("all", None, "NaN", "null", ""):
+		try:
+			params["from_date"] = add_days(nowdate(), -int(days))
+			conditions.append("so.transaction_date >= %(from_date)s")
+		except (ValueError, TypeError):
+			pass
+
+	if to_date:
+		conditions.append("so.transaction_date <= %(to_date)s")
+		params["to_date"] = to_date
+
+	if sales_order_filter:
+		conditions.append("so.name LIKE %(so_filter)s")
+		params["so_filter"] = f"%{sales_order_filter}%"
+
+	if customer:
+		conditions.append("(so.customer LIKE %(customer)s OR so.customer_name LIKE %(customer)s)")
+		params["customer"] = f"%{customer}%"
+
+	if status:
+		conditions.append("so.status = %(status)s")
+		params["status"] = status
+
+	# Item filter via EXISTS to avoid row duplication
+	item_condition = ""
+	if item:
+		item_condition = """AND EXISTS (
+			SELECT 1 FROM `tabSales Order Item` soi
+			WHERE soi.parent = so.name
+			AND (soi.item_code LIKE %(item)s OR soi.item_name LIKE %(item)s)
+		)"""
+		params["item"] = f"%{item}%"
+
+	where_clause = " AND ".join(conditions)
+	params["limit"] = limit_page_length + 1
+	params["offset"] = limit_page_offset
+
+	sales_orders = frappe.db.sql(f"""
 		SELECT
-			name,
-			customer,
-			customer_name,
-			transaction_date,
-			delivery_date,
-			status,
-			grand_total,
-			currency,
-			per_delivered,
-			per_billed
+			so.name,
+			so.customer,
+			so.customer_name,
+			so.transaction_date,
+			so.delivery_date,
+			so.status,
+			so.grand_total,
+			so.currency,
+			so.per_delivered,
+			so.per_billed
 		FROM
-			`tabSales Order`
+			`tabSales Order` so
 		WHERE
-			docstatus = 1
-			AND transaction_date >= %(from_date)s
+			{where_clause}
+			{item_condition}
 		ORDER BY
-			transaction_date DESC
+			so.transaction_date DESC
 		LIMIT %(limit)s OFFSET %(offset)s
-	""", {
-		"from_date": from_date,
-		"limit": limit_page_length + 1,
-		"offset": limit_page_offset
-	}, as_dict=1)
+	""", params, as_dict=1)
 
 	has_more = len(sales_orders) > limit_page_length
 	sales_orders = sales_orders[:limit_page_length]
 
-	# Enrich with tracking data
+	# Batch-fetch items for all returned SOs (one query, avoids N+1)
+	items_by_so = {}
+	if sales_orders:
+		so_names = [so.name for so in sales_orders]
+		all_items = frappe.db.sql("""
+			SELECT parent, item_code, item_name, qty, stock_uom
+			FROM `tabSales Order Item`
+			WHERE parent IN %(so_names)s
+			ORDER BY parent, idx
+		""", {"so_names": tuple(so_names)}, as_dict=1)
+		for item in all_items:
+			items_by_so.setdefault(item.parent, []).append(item)
+
+	# Enrich with tracking data (single pass, avoids repeated DB hits)
 	for so in sales_orders:
-		so['progress'] = calculate_progress(so)
-		so['production_plan_count'] = get_production_plan_count(so.name)
-		so['work_order_count'] = get_work_order_count(so.name)
-		so['job_card_count'] = get_job_card_count(so.name)
-		so['delivery_note_count'] = get_delivery_note_count(so.name)
+		pp_count = get_production_plan_count(so.name)
+		wo_count = get_work_order_count(so.name)
+		jc_count = get_job_card_count(so.name)
+		dn_count = get_delivery_note_count(so.name)
+
+		# Stage-based progress: 5 fixed stages, each worth 20%
+		stages_done = 1  # Stage 1: SO Created (always done)
+		if pp_count > 0:
+			stages_done += 1  # Stage 2: Production Plan
+		if wo_count > 0:
+			stages_done += 1  # Stage 3: Work Orders
+
+		# Stage 4: Job Cards (any completed)
+		work_orders = frappe.db.get_all(
+			'Work Order', {'sales_order': so.name, 'docstatus': ['!=', 2]}, pluck='name'
+		)
+		jc_completed = 0
+		if work_orders:
+			jc_completed = frappe.db.count('Job Card', {
+				'work_order': ['in', work_orders], 'docstatus': 1, 'status': 'Completed'
+			})
+			if jc_completed > 0:
+				stages_done += 1  # Stage 4: Job Cards progressing
+
+		# Stage 5: Delivery
+		if flt(so.get('per_delivered', 0)) >= 100:
+			stages_done = 5
+		elif flt(so.get('per_delivered', 0)) > 0:
+			stages_done = min(stages_done + 1, 5)
+
+		so['stages_done'] = stages_done
+		so['total_stages'] = 5
+		so['progress'] = round((stages_done / 5) * 100)
+		so['job_card_completed'] = jc_completed
+		so['production_plan_count'] = pp_count
+		so['work_order_count'] = wo_count
+		so['job_card_count'] = jc_count
+		so['delivery_note_count'] = dn_count
+		so['items'] = items_by_so.get(so.name, [])
 
 	return {"data": sales_orders, "has_more": has_more}
 
@@ -229,6 +314,7 @@ def get_sales_order_detail(sales_order):
 		"sales_order": {
 			"name": so.name,
 			"customer": so.customer,
+			"customer_name": so.customer_name,
 			"transaction_date": so.transaction_date,
 			"delivery_date": so.delivery_date,
 			"status": so.status,
@@ -265,25 +351,28 @@ def get_linked_production_plans(sales_order):
 
 
 def get_linked_work_orders(sales_order):
-	"""Get Work Orders linked to Sales Order."""
+	"""Get Work Orders linked to Sales Order, including item name."""
 	return frappe.db.sql("""
 		SELECT
-			name,
-			production_plan,
-			production_item,
-			qty,
-			produced_qty,
-			status,
-			planned_start_date,
-			actual_start_date,
-			actual_end_date
+			wo.name,
+			wo.production_plan,
+			wo.production_item,
+			item.item_name AS production_item_name,
+			wo.qty,
+			wo.produced_qty,
+			wo.status,
+			wo.planned_start_date,
+			wo.actual_start_date,
+			wo.actual_end_date
 		FROM
-			`tabWork Order`
+			`tabWork Order` wo
+		LEFT JOIN
+			`tabItem` item ON item.name = wo.production_item
 		WHERE
-			sales_order = %(sales_order)s
-			AND docstatus != 2
+			wo.sales_order = %(sales_order)s
+			AND wo.docstatus != 2
 		ORDER BY
-			planned_start_date DESC
+			wo.planned_start_date DESC
 	""", {"sales_order": sales_order}, as_dict=1)
 
 

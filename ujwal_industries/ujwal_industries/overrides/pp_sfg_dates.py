@@ -696,6 +696,9 @@ def set_subcontracting_suppliers(doc: Document, method: str | None = None) -> No
         return
     # AVI
 
+    if doc.get("custom_bulk_pre_production_plan"):
+        return
+
     if not doc.get("sub_assembly_items"):
         return
     

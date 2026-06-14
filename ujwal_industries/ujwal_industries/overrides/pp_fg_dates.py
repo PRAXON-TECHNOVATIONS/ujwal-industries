@@ -65,6 +65,9 @@ def validate_planned_start_dates(doc: Document, method: str | None = None) -> No
         return
     # AVI
 
+    if doc.get("custom_bulk_pre_production_plan"):
+        return
+
     # If backdated dates are allowed (default), skip validation
     if _get_allow_backdated_setting():
         return
@@ -128,6 +131,8 @@ def master_set_fg_dates_by_type(doc: Document, method: str | None = None) -> Non
     if _skip_during_data_import():
         return
     # AVI
+    if doc.get("custom_bulk_pre_production_plan"):
+        return
     if not doc.get("po_items"):
         return
 
@@ -340,6 +345,9 @@ def set_planned_start_dates(doc: Document, method: str | None = None) -> None:
     if _skip_during_data_import():
         return
     # AVI
+
+    if doc.get("custom_bulk_pre_production_plan"):
+        return
 
     if doc.get("get_items_from") != "Sales Order":
         return

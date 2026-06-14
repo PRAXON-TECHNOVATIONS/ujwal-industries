@@ -69,22 +69,27 @@ function open_parallel_manage_dates_dialog(frm) {
 		args: { item_codes: JSON.stringify([...new Set(_all_item_codes)]) },
 		callback(r) {
 			const suppliers_by_item = r.message || {};
-			// Fetch item names for FG items (po_items) that may not have item_name stored
-			const fg_codes = [...new Set((frm.doc.po_items || []).map(r => r.item_code).filter(Boolean))];
-			if (fg_codes.length) {
+			// Fetch item names for FG + SFG items that may not have item_name stored
+			const fg_codes  = [...new Set((frm.doc.po_items           || []).map(r => r.item_code).filter(Boolean))];
+			const sfg_codes = [...new Set((frm.doc.sub_assembly_items || []).map(r => r.production_item).filter(Boolean))];
+			const all_codes = [...new Set([...fg_codes, ...sfg_codes])];
+			if (all_codes.length) {
 				frappe.call({
 					method: 'frappe.client.get_list',
 					args: {
 						doctype: 'Item',
-						filters: [['name', 'in', fg_codes]],
+						filters: [['name', 'in', all_codes]],
 						fields: ['name', 'item_name'],
-						limit_page_length: fg_codes.length + 10,
+						limit_page_length: all_codes.length + 10,
 					},
 					callback(ir) {
 						const name_map = {};
 						(ir.message || []).forEach(i => { name_map[i.name] = i.item_name; });
 						(frm.doc.po_items || []).forEach(row => {
 							if (!row.item_name) row._fetched_item_name = name_map[row.item_code] || '';
+						});
+						(frm.doc.sub_assembly_items || []).forEach(row => {
+							if (!row.item_name) row._fetched_item_name = name_map[row.production_item] || '';
 						});
 						_build_manage_dates_dialog(frm, suppliers_by_item);
 					},
@@ -310,7 +315,7 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 		sfg_items.forEach(row => {
 			const key = row.production_item || '(unknown)';
 			if (!_group_map[key]) {
-				_group_map[key] = { rows: [], item_name: row.item_name || '', chain_id: row.production_plan_item || '' };
+				_group_map[key] = { rows: [], item_name: row.item_name || row._fetched_item_name || '', chain_id: row.production_plan_item || '' };
 				_group_order.push(key);
 			}
 			_group_map[key].rows.push(row);
@@ -448,7 +453,7 @@ function _build_manage_dates_dialog(frm, suppliers_by_item) {
 							<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
 								<span style="font-size:13px;font-weight:700;color:#1e1b4b;">${esc(item_code)}</span>
 								${grp.item_name && grp.item_name !== item_code
-									? `<span style="font-size:10px;color:#94a3b8;">${esc(grp.item_name)}</span>`
+									? `<span style="font-size:11px;color:#64748b;font-weight:500;">${esc(grp.item_name)}</span>`
 									: ''}
 								<div style="display:inline-flex;align-items:center;gap:4px;
 									background:${pal.bg};border:1px solid ${pal.border};border-radius:20px;padding:2px 8px;">

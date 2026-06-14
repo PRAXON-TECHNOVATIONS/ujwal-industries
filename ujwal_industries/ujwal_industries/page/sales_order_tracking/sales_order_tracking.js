@@ -45,6 +45,10 @@ class SalesOrderTrackingDashboard {
 					from { transform: rotate(0deg); }
 					to { transform: rotate(360deg); }
 				}
+				.sot-filter-input:focus {
+					border-color: #667eea !important;
+					box-shadow: 0 0 0 2px rgba(102,126,234,0.15) !important;
+				}
 			`;
 			document.head.appendChild(style);
 		}
@@ -119,6 +123,21 @@ class SalesOrderTrackingDashboard {
 	}
 }
 
+// Helper: build args object for get_sales_orders API calls
+function buildFilterArgs(filters, pageOffset, pageSize) {
+	return {
+		days: 'all',
+		limit_page_length: pageSize,
+		limit_page_offset: pageOffset,
+		sales_order_filter: (filters && filters.sales_order) || null,
+		from_date: (filters && filters.from_date) || null,
+		to_date: (filters && filters.to_date) || null,
+		customer: (filters && filters.customer) || null,
+		item: (filters && filters.item) || null,
+		status: (filters && filters.status) || null
+	};
+}
+
 // React App Component
 function App() {
 	const { useState, useEffect, useRef, useCallback } = React;
@@ -129,10 +148,19 @@ function App() {
 	const [hasMore, setHasMore] = useState(false);
 	const [offset, setOffset] = useState(0);
 	const [selectedOrder, setSelectedOrder] = useState(null);
+
+	const EMPTY_FILTERS = { sales_order: '', from_date: '', to_date: '', customer: '', item: '', status: '' };
+	const [filterInputs, setFilterInputs] = useState(EMPTY_FILTERS);
+	const [activeFilters, setActiveFilters] = useState({});
+
 	const sentinelRef = useRef(null);
+	const activeFiltersRef = useRef({});
 	const PAGE_SIZE = 6;
 
-	// Initial fetch
+	// Keep ref in sync so real-time handlers always see latest filters
+	useEffect(() => { activeFiltersRef.current = activeFilters; }, [activeFilters]);
+
+	// Fetch (or re-fetch) whenever activeFilters changes
 	useEffect(() => {
 		setSalesOrders([]);
 		setOffset(0);
@@ -140,7 +168,7 @@ function App() {
 		setLoading(true);
 		frappe.call({
 			method: 'ujwal_industries.api.sales_order_tracking.get_sales_orders',
-			args: { days: 'all', limit_page_length: PAGE_SIZE, limit_page_offset: 0 },
+			args: buildFilterArgs(activeFilters, 0, PAGE_SIZE),
 			callback: (r) => {
 				if (r.message) {
 					setSalesOrders(r.message.data);
@@ -150,7 +178,7 @@ function App() {
 				setLoading(false);
 			}
 		});
-	}, []);
+	}, [activeFilters]);
 
 	// Listen for real-time updates
 	useEffect(() => {
@@ -160,7 +188,7 @@ function App() {
 			setLoading(true);
 			frappe.call({
 				method: 'ujwal_industries.api.sales_order_tracking.get_sales_orders',
-				args: { days: 'all', limit_page_length: PAGE_SIZE, limit_page_offset: 0 },
+				args: buildFilterArgs(activeFiltersRef.current, 0, PAGE_SIZE),
 				callback: (r) => {
 					if (r.message) {
 						setSalesOrders(r.message.data);
@@ -189,7 +217,7 @@ function App() {
 		setLoadingMore(true);
 		frappe.call({
 			method: 'ujwal_industries.api.sales_order_tracking.get_sales_orders',
-			args: { days: 'all', limit_page_length: PAGE_SIZE, limit_page_offset: offset },
+			args: buildFilterArgs(activeFilters, offset, PAGE_SIZE),
 			callback: (r) => {
 				if (r.message) {
 					setSalesOrders(prev => [...prev, ...r.message.data]);
@@ -199,7 +227,7 @@ function App() {
 				setLoadingMore(false);
 			}
 		});
-	}, [loadingMore, hasMore, offset]);
+	}, [loadingMore, hasMore, offset, activeFilters]);
 
 	// Intersection Observer on sentinel
 	useEffect(() => {
@@ -213,6 +241,12 @@ function App() {
 		return () => observer.disconnect();
 	}, [hasMore, loadingMore, fetchMore]);
 
+	const handleApplyFilters = () => setActiveFilters({ ...filterInputs });
+	const handleClearFilters = () => {
+		setFilterInputs(EMPTY_FILTERS);
+		setActiveFilters({});
+	};
+
 	return React.createElement('div', {
 		style: {
 			minHeight: '100vh',
@@ -222,6 +256,15 @@ function App() {
 			width: 'calc(100% + 30px)'
 		}
 	}, [
+		// Filter Panel
+		React.createElement(FilterPanel, {
+			key: 'filters',
+			filterInputs,
+			setFilterInputs,
+			onApply: handleApplyFilters,
+			onClear: handleClearFilters
+		}),
+
 		// Main Content
 		React.createElement('div', {
 			key: 'content',
@@ -292,6 +335,201 @@ function App() {
 	]);
 }
 
+// Filter Panel Component
+function FilterPanel({ filterInputs, setFilterInputs, onApply, onClear }) {
+	const inputStyle = {
+		height: '34px',
+		padding: '0 10px',
+		border: '1px solid #e5e7eb',
+		borderRadius: '6px',
+		fontSize: '13px',
+		color: '#374151',
+		background: 'white',
+		outline: 'none',
+		width: '100%',
+		boxSizing: 'border-box',
+		transition: 'border-color 0.15s'
+	};
+
+	const labelStyle = {
+		fontSize: '11px',
+		fontWeight: '600',
+		color: '#6b7280',
+		textTransform: 'uppercase',
+		letterSpacing: '0.5px',
+		marginBottom: '5px',
+		display: 'block'
+	};
+
+	const update = (key, value) => setFilterInputs(prev => ({ ...prev, [key]: value }));
+
+	const handleKeyDown = (e) => { if (e.key === 'Enter') onApply(); };
+
+	return React.createElement('div', {
+		style: {
+			background: 'white',
+			borderRadius: '12px',
+			padding: '18px 22px',
+			marginBottom: '20px',
+			boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+			border: '1px solid #e5e7eb'
+		}
+	}, [
+		React.createElement('div', {
+			key: 'header',
+			style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }
+		}, [
+			React.createElement('span', { key: 'icon', style: { fontSize: '16px' } }, '🔍'),
+			React.createElement('span', {
+				key: 'title',
+				style: { fontSize: '14px', fontWeight: '600', color: '#111827' }
+			}, 'Filters')
+		]),
+
+		React.createElement('div', {
+			key: 'grid',
+			style: {
+				display: 'grid',
+				gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))',
+				gap: '12px',
+				alignItems: 'end'
+			}
+		}, [
+			// Sales Order No
+			React.createElement('div', { key: 'so' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'Sales Order No'),
+				React.createElement('input', {
+					key: 'inp',
+					type: 'text',
+					className: 'sot-filter-input',
+					placeholder: 'SAL-ORD-...',
+					value: filterInputs.sales_order,
+					onChange: (e) => update('sales_order', e.target.value),
+					onKeyDown: handleKeyDown,
+					style: inputStyle
+				})
+			]),
+
+			// Customer
+			React.createElement('div', { key: 'customer' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'Customer'),
+				React.createElement('input', {
+					key: 'inp',
+					type: 'text',
+					className: 'sot-filter-input',
+					placeholder: 'Name or Code',
+					value: filterInputs.customer,
+					onChange: (e) => update('customer', e.target.value),
+					onKeyDown: handleKeyDown,
+					style: inputStyle
+				})
+			]),
+
+			// From Date
+			React.createElement('div', { key: 'from' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'From Date'),
+				React.createElement('input', {
+					key: 'inp',
+					type: 'date',
+					className: 'sot-filter-input',
+					value: filterInputs.from_date,
+					onChange: (e) => update('from_date', e.target.value),
+					style: inputStyle
+				})
+			]),
+
+			// To Date
+			React.createElement('div', { key: 'to' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'To Date'),
+				React.createElement('input', {
+					key: 'inp',
+					type: 'date',
+					className: 'sot-filter-input',
+					value: filterInputs.to_date,
+					onChange: (e) => update('to_date', e.target.value),
+					style: inputStyle
+				})
+			]),
+
+			// Item
+			React.createElement('div', { key: 'item' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'Item'),
+				React.createElement('input', {
+					key: 'inp',
+					type: 'text',
+					className: 'sot-filter-input',
+					placeholder: 'Code or Name',
+					value: filterInputs.item,
+					onChange: (e) => update('item', e.target.value),
+					onKeyDown: handleKeyDown,
+					style: inputStyle
+				})
+			]),
+
+			// Status
+			React.createElement('div', { key: 'status' }, [
+				React.createElement('label', { key: 'lbl', style: labelStyle }, 'Status'),
+				React.createElement('select', {
+					key: 'sel',
+					className: 'sot-filter-input',
+					value: filterInputs.status,
+					onChange: (e) => update('status', e.target.value),
+					style: { ...inputStyle, cursor: 'pointer' }
+				}, [
+					React.createElement('option', { key: 'all', value: '' }, 'All Statuses'),
+					React.createElement('option', { key: 'draft', value: 'Draft' }, 'Draft'),
+					React.createElement('option', { key: 'tdb', value: 'To Deliver and Bill' }, 'To Deliver and Bill'),
+					React.createElement('option', { key: 'tb', value: 'To Bill' }, 'To Bill'),
+					React.createElement('option', { key: 'td', value: 'To Deliver' }, 'To Deliver'),
+					React.createElement('option', { key: 'comp', value: 'Completed' }, 'Completed'),
+					React.createElement('option', { key: 'hold', value: 'On Hold' }, 'On Hold'),
+					React.createElement('option', { key: 'canc', value: 'Cancelled' }, 'Cancelled')
+				])
+			]),
+
+			// Buttons
+			React.createElement('div', {
+				key: 'actions',
+				style: { display: 'flex', gap: '8px' }
+			}, [
+				React.createElement('button', {
+					key: 'apply',
+					onClick: onApply,
+					style: {
+						flex: 1,
+						height: '34px',
+						background: 'linear-gradient(135deg, #667eea, #764ba2)',
+						color: 'white',
+						border: 'none',
+						borderRadius: '6px',
+						fontSize: '13px',
+						fontWeight: '600',
+						cursor: 'pointer',
+						transition: 'opacity 0.15s'
+					},
+					onMouseEnter: (e) => e.currentTarget.style.opacity = '0.88',
+					onMouseLeave: (e) => e.currentTarget.style.opacity = '1'
+				}, 'Apply'),
+				React.createElement('button', {
+					key: 'clear',
+					onClick: onClear,
+					style: {
+						flex: 1,
+						height: '34px',
+						background: 'white',
+						color: '#6b7280',
+						border: '1px solid #e5e7eb',
+						borderRadius: '6px',
+						fontSize: '13px',
+						fontWeight: '600',
+						cursor: 'pointer'
+					}
+				}, 'Clear')
+			])
+		])
+	]);
+}
+
 // Sales Order Grid
 function SalesOrderGrid({ salesOrders, selectedOrder, setSelectedOrder }) {
 	return React.createElement('div', {
@@ -330,6 +568,15 @@ function SalesOrderCard({ order, onClick }) {
 	};
 
 	const statusColor = getStatusColor(order.status);
+
+	// Job execution metrics
+	const jcTotal = order.job_card_count || 0;
+	const jcDone = order.job_card_completed || 0;
+	const jcPct = jcTotal > 0 ? Math.round((jcDone / jcTotal) * 100) : 0;
+	const jcColor = jcTotal === 0 ? '#9ca3af'
+		: jcPct < 30 ? '#ef4444'
+		: jcPct < 70 ? '#f59e0b'
+		: '#10b981';
 
 	return React.createElement('div', {
 		style: {
@@ -372,13 +619,17 @@ function SalesOrderCard({ order, onClick }) {
 							marginBottom: '4px'
 						}
 					}, order.name),
-					React.createElement('p', {
-						key: 'customer',
-						style: {
-							fontSize: '14px',
-							color: '#6b7280'
-						}
-					}, order.customer)
+					// Customer: show name prominently, code as secondary
+					React.createElement('div', { key: 'customer' }, [
+						React.createElement('p', {
+							key: 'cname',
+							style: { fontSize: '14px', color: '#374151', fontWeight: '500' }
+						}, order.customer_name || order.customer),
+						order.customer_name && React.createElement('p', {
+							key: 'ccode',
+							style: { fontSize: '12px', color: '#9ca3af', marginTop: '1px' }
+						}, order.customer)
+					])
 				]),
 				React.createElement('span', {
 					key: 'status',
@@ -392,35 +643,117 @@ function SalesOrderCard({ order, onClick }) {
 					}
 				}, order.status)
 			]),
-			// Progress Bar
-			React.createElement('div', { key: 'progress', style: { marginTop: '12px' } }, [
-				React.createElement('div', {
-					key: 'bar-bg',
-					style: {
-						width: '100%',
-						height: '8px',
-						backgroundColor: '#e5e7eb',
-						borderRadius: '4px',
-						overflow: 'hidden'
-					}
-				}, React.createElement('div', {
-					style: {
-						height: '100%',
-						width: `${order.progress}%`,
-						backgroundColor: getProgressColor(order.progress),
-						borderRadius: '4px',
-						transition: 'width 0.3s'
-					}
-				})),
-				React.createElement('p', {
-					key: 'text',
-					style: {
-						fontSize: '12px',
-						color: '#6b7280',
-						marginTop: '4px'
-					}
-				}, `${order.progress}% Complete`)
+			// Dates row
+			React.createElement('div', {
+				key: 'dates',
+				style: { display: 'flex', gap: '16px', marginTop: '8px', flexWrap: 'wrap' }
+			}, [
+				order.transaction_date && React.createElement('span', {
+					key: 'ord',
+					style: { fontSize: '12px', color: '#6b7280' }
+				}, `📅 Order: ${formatDate(order.transaction_date)}`),
+				order.delivery_date && React.createElement('span', {
+					key: 'del',
+					style: { fontSize: '12px', color: '#dc2626', fontWeight: '600' }
+				}, `🚚 Delivery: ${formatDate(order.delivery_date)}`)
+			]),
+			// Progress Bars
+			React.createElement('div', { key: 'progress', style: { marginTop: '10px' } }, [
+
+				// Bar 1: Stage Progress
+				React.createElement('div', { key: 'stage-bar', style: { marginBottom: '8px' } }, [
+					React.createElement('div', {
+						key: 'row',
+						style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }
+					}, [
+						React.createElement('span', {
+							key: 'lbl',
+							style: { fontSize: '11px', fontWeight: '600', color: '#374151' }
+						}, '📊 Stage Progress'),
+						React.createElement('span', {
+							key: 'val',
+							style: { fontSize: '11px', fontWeight: '700', color: getProgressColor(order.progress) }
+						}, `${order.stages_done || 0} / ${order.total_stages || 5} stages`)
+					]),
+					React.createElement('div', {
+						key: 'track',
+						style: { width: '100%', height: '7px', backgroundColor: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }
+					}, React.createElement('div', {
+						style: {
+							height: '100%',
+							width: `${order.progress}%`,
+							backgroundColor: getProgressColor(order.progress),
+							borderRadius: '4px',
+							transition: 'width 0.3s'
+						}
+					}))
+				]),
+
+				// Bar 2: Job Execution
+				React.createElement('div', { key: 'jc-bar' }, [
+					React.createElement('div', {
+						key: 'row',
+						style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }
+					}, [
+						React.createElement('span', {
+							key: 'lbl',
+							style: { fontSize: '11px', fontWeight: '600', color: '#374151' }
+						}, '⚙️ Job Execution'),
+						React.createElement('span', {
+							key: 'val',
+							style: { fontSize: '11px', fontWeight: '700', color: jcColor }
+						}, jcTotal > 0
+							? `${jcDone} / ${jcTotal} done (${jcPct}%)`
+							: 'No job cards yet')
+					]),
+					React.createElement('div', {
+						key: 'track',
+						style: { width: '100%', height: '7px', backgroundColor: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }
+					}, React.createElement('div', {
+						style: {
+							height: '100%',
+							width: `${jcPct}%`,
+							backgroundColor: jcColor,
+							borderRadius: '4px',
+							transition: 'width 0.3s'
+						}
+					}))
+				])
 			])
+		]),
+
+		// Items section
+		order.items && order.items.length > 0 && React.createElement('div', {
+			key: 'items',
+			style: {
+				padding: '10px 20px 12px',
+				borderBottom: '1px solid #f3f4f6',
+				background: '#fafafa'
+			}
+		}, [
+			React.createElement('p', {
+				key: 'lbl',
+				style: { fontSize: '11px', fontWeight: '600', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }
+			}, 'Items'),
+			...order.items.slice(0, 3).map((item, idx) =>
+				React.createElement('div', {
+					key: item.item_code + idx,
+					style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }
+				}, [
+					React.createElement('span', {
+						key: 'desc',
+						style: { fontSize: '12px', color: '#374151', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }
+					}, `${item.item_code}${item.item_name ? ' — ' + item.item_name : ''}`),
+					React.createElement('span', {
+						key: 'qty',
+						style: { fontSize: '11px', color: '#6b7280', whiteSpace: 'nowrap', marginLeft: '8px', flexShrink: 0 }
+					}, `${Number(item.qty || 0).toLocaleString()} ${item.stock_uom || ''}`)
+				])
+			),
+			order.items.length > 3 && React.createElement('p', {
+				key: 'more',
+				style: { fontSize: '11px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic' }
+			}, `+${order.items.length - 3} more item${order.items.length - 3 > 1 ? 's' : ''}`)
 		]),
 
 		// Stats
@@ -545,7 +878,7 @@ function EmptyState() {
 		React.createElement('p', {
 			key: 'desc',
 			style: { color: '#6b7280', fontSize: '14px' }
-		}, 'There are no sales orders in the selected time range.')
+		}, 'No sales orders match the current filters.')
 	]));
 }
 
@@ -620,7 +953,9 @@ function OrderDetailModal({ order, onClose }) {
 				React.createElement('p', {
 					key: 'customer',
 					style: { fontSize: '14px', opacity: 0.9 }
-				}, order.customer)
+				}, order.customer_name
+					? `${order.customer_name}  (${order.customer})`
+					: order.customer)
 			]),
 			React.createElement('button', {
 				key: 'close',
@@ -1170,6 +1505,11 @@ function WorkOrderSection({ workOrder, jobCards, stockEntries }) {
 		return { bg: '#fef3c7', text: '#92400e', dot: '#f59e0b' };
 	};
 
+	// Build item display: code + name if available
+	const itemDisplay = workOrder.production_item_name
+		? `${workOrder.production_item} — ${workOrder.production_item_name}`
+		: workOrder.production_item;
+
 	return React.createElement('div', {
 		style: {
 			background: 'white',
@@ -1218,7 +1558,7 @@ function WorkOrderSection({ workOrder, jobCards, stockEntries }) {
 					React.createElement('p', {
 						key: 'item',
 						style: { fontSize: '12px', color: '#78716c', marginTop: '3px' }
-					}, `Item: ${workOrder.production_item}`),
+					}, `Item: ${itemDisplay}`),
 					React.createElement('div', {
 						key: 'dates',
 						style: { display: 'flex', gap: '16px', marginTop: '6px' }
@@ -1474,4 +1814,3 @@ function WorkOrderSection({ workOrder, jobCards, stockEntries }) {
 		])
 	]);
 }
-

@@ -12,7 +12,7 @@ def supplier_query(doctype, txt, searchfield, start, page_len, filters):
     }
 
     or_filters = [
-        [searchfield, "like", f"%{txt}%"],
+        ["name", "like", f"%{txt}%"],
         ["custom_supplier_names", "like", f"%{txt}%"],
     ]
 
@@ -29,7 +29,7 @@ def supplier_query(doctype, txt, searchfield, start, page_len, filters):
     return get_list(
         doctype,
         filters=final_filters,
-        fields=["name", "supplier_name","custom_supplier_names","supplier_group"],
+        fields=["name", "custom_supplier_names", "supplier_group"],
         limit_start=start,
         limit_page_length=page_len,
         order_by="name asc",

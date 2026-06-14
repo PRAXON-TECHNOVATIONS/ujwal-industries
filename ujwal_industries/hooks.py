@@ -43,6 +43,7 @@ app_include_js = [
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
 	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.2",
+	"/assets/ujwal_industries/js/rate_visibility.js?V=0.1.2",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
 # include js, css files in header of web template
@@ -83,6 +84,7 @@ doctype_js = {
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
+	"BOM": "public/js/bom_tree.js",
 }
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
@@ -167,11 +169,12 @@ after_uninstall = "ujwal_industries.ujwal_industries.uninstall.after_uninstall"
 permission_query_conditions = {
 	"Workstation": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_workstation",
 	"Job Card": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_job_card",
+	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_query_work_order",
 }
 #
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+has_permission = {
+	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_work_order",
+}
 
 # DocType Class
 # ---------------
@@ -234,6 +237,8 @@ doc_events = {
 	},
 	"Material Request": {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field",
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_material_request_create",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_sales_purchase_head_on_material_request_submit",
 	},
  
 	"Sales Order": {
@@ -280,7 +285,12 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
 	},
 	"Work Order":{
-		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert"
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_production_supervisor_on_work_order_create",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+	},
+	"Subcontracting Order": {
+		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_outsource_store_manager_on_subcontract_create",
 	},
  	"Quality Inspection": {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
@@ -305,6 +315,7 @@ doc_events = {
 	"Purchase Order":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.purchase_order.autoname",
+		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_purchase_order_submit",
 	},
 	"Quotation":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",
@@ -413,7 +424,9 @@ override_doctype_dashboards = {
 # Standard Queries
 # ----------------
 standard_queries = {
-	"Supplier": "ujwal_industries.api.approved_supplier_only.supplier_query"
+	"Supplier": "ujwal_industries.api.approved_supplier_only.supplier_query",
+	"Item": "ujwal_industries.api.link_queries.item_query",
+	"Customer": "ujwal_industries.api.link_queries.customer_query",
 }
 
 # Fixtures

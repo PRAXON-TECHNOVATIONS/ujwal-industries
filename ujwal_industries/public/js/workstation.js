@@ -104,6 +104,7 @@ function update_status_indicator(frm) {
 	WorkstationDashboard.prototype.render_job_cards = function() {
 		_orig_render.call(this);
 		this._inject_operator_ui();
+		this._fix_card_layout();
 	};
 
 	// 3. After start/complete updates the card, re-inject operator UI
@@ -111,6 +112,7 @@ function update_status_indicator(frm) {
 	WorkstationDashboard.prototype.update_job_card_details = function() {
 		_orig_update.call(this);
 		this._inject_operator_ui();
+		this._fix_card_layout();
 	};
 
 	// 4. Start the job properly via make_time_log (sets started_time, employee field, etc.)
@@ -164,7 +166,7 @@ function update_status_indicator(frm) {
 		this.$wrapper.find(".btn-change-operator, .current-operator-display").remove();
 
 		(this.job_cards || []).forEach(function(data) {
-			if (data.status !== "Work In Progress") return;
+			if (!["Work In Progress", "On Hold"].includes(data.status)) return;
 
 			// Find the active time log (no to_time = job is currently running)
 			// Fall back to the most recent log if the job is paused between partial completions
@@ -207,6 +209,34 @@ function update_status_indicator(frm) {
 		this.$wrapper.off("click.change_op").on("click.change_op", ".btn-change-operator", function(e) {
 			let job_card = $(e.currentTarget).data("job-card");
 			me._change_operator_dialog(job_card);
+		});
+	};
+
+	// 5b. Fix card heading (add item name) and link spacing/tap targets for every card
+	WorkstationDashboard.prototype._fix_card_layout = function() {
+		let me = this;
+
+		(this.job_cards || []).forEach(function(data) {
+			let $card = me.$wrapper.find("[data-name='" + data.name + "']");
+			if (!$card.length) return;
+
+			// Append item name to the heading: "Blanking - 200146 — Item Name"
+			let $heading = $card.find(".section-head-job-card");
+			if (data.production_item_name && !$heading.find(".job-card-item-name").length) {
+				// Insert the item name text right before the collapse-indicator span
+				let $indicator = $heading.find(".collapse-indicator-job");
+				$indicator.before(
+					'<span class="job-card-item-name text-muted" style="font-size:12px;">'
+					+ ' — ' + frappe.utils.escape_html(data.production_item_name)
+					+ '</span>'
+				);
+			}
+
+			// Add spacing between Job Card and Work Order links so they don't
+			// overlap as tap targets on mobile.
+			let $links_col = $card.find(".frappe-control[title='" + __("Job Card") + "']").closest(".form-column");
+			$links_col.find(".frappe-control[title='" + __("Job Card") + "']").css("margin-bottom", "10px");
+			$links_col.find(".frappe-control[title='" + __("Work Order") + "']").css("margin-top", "10px");
 		});
 	};
 
