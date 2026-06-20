@@ -62,6 +62,29 @@ def get_stock_requirements(item_code, warehouse):
 
 
 @frappe.whitelist()
+def get_default_warehouse(item_code, company=None):
+    """
+    Resolve the most relevant warehouse for an item, used when drilling into a
+    BOM-tree child whose stock is kept in a different warehouse than the root
+    item (e.g. raw materials kept in RM Store while the FG is kept in FG Store).
+    """
+    if not item_code:
+        frappe.throw("Item Code is required")
+
+    filters = {"parent": item_code}
+    if company:
+        filters["company"] = company
+
+    warehouse = frappe.db.get_value("Item Default", filters, "default_warehouse")
+
+    if not warehouse and company:
+        # Retry without the company filter in case Item Default has no row for it
+        warehouse = frappe.db.get_value("Item Default", {"parent": item_code}, "default_warehouse")
+
+    return warehouse
+
+
+@frappe.whitelist()
 def get_bom_tree(item_code):
     """
     Recursively explode the default/active BOM of an item into a tree of
@@ -190,12 +213,13 @@ def _get_purchase_requisitions(item_code, warehouse):
             mri.schedule_date   AS date,
             mri.qty,
             mri.uom,
+            mr.docstatus,
             mr.status
         FROM `tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
         WHERE mri.item_code = %s
           AND mri.warehouse = %s
-          AND mr.docstatus = 1
+          AND mr.docstatus IN (0, 1)
           AND mr.material_request_type = 'Purchase'
           AND mr.status NOT IN ('Ordered', 'Cancelled', 'Stopped')
     """, (item_code, warehouse), as_dict=True)
@@ -209,7 +233,7 @@ def _get_purchase_requisitions(item_code, warehouse):
             "uom": r.uom,
             "rate": 0,
             "party": "",
-            "status": r.status,
+            "status": r.status if r.docstatus == 1 else "Draft",
             "direction": "receipt",
             "icon": "pr",
         }
@@ -336,12 +360,13 @@ def _get_material_requests(item_code, warehouse):
             mri.schedule_date   AS date,
             mri.qty,
             mri.uom,
+            mr.docstatus,
             mr.status
         FROM `tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
         WHERE mri.item_code = %s
           AND mri.warehouse = %s
-          AND mr.docstatus = 1
+          AND mr.docstatus IN (0, 1)
           AND mr.material_request_type = 'Material Issue'
           AND mr.status NOT IN ('Transferred', 'Issued', 'Cancelled', 'Stopped')
     """, (item_code, warehouse), as_dict=True)
@@ -355,7 +380,7 @@ def _get_material_requests(item_code, warehouse):
             "uom": r.uom,
             "rate": 0,
             "party": "",
-            "status": r.status,
+            "status": r.status if r.docstatus == 1 else "Draft",
             "direction": "requirement",
             "icon": "mr",
         }

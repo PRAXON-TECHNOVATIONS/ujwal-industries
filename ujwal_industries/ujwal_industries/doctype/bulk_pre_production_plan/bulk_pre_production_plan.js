@@ -345,13 +345,15 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					return;
 				}
 
-				// Deduplicate by item_code, summing qty across multiple SO lines
+				// Deduplicate by item_code + delivery_date so same item with different
+				// delivery dates appears as separate selectable entries.
 				const item_map = {};
 				r.message.forEach(item => {
-					if (item_map[item.item_code]) {
-						item_map[item.item_code].qty = (item_map[item.item_code].qty || 0) + (item.qty || 0);
+					const key = `${item.item_code}__${item.delivery_date || ''}`;
+					if (item_map[key]) {
+						item_map[key].qty = (item_map[key].qty || 0) + (item.qty || 0);
 					} else {
-						item_map[item.item_code] = Object.assign({}, item);
+						item_map[key] = Object.assign({}, item);
 					}
 				});
 				const items = Object.values(item_map);
@@ -361,20 +363,27 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
 				} catch (_) { already_selected = []; }
 
-				// All items are selectable regardless of SO order type or planning_type.
-				// Previously this restricted Sales SOs to planning_type=1 and Forecast SOs
-				// to planning_type=2, which caused all items to appear disabled when the
-				// items didn't match those types. Removed so the user can freely pick any FG.
+				// Normalise already_selected to a set of "item_code__delivery_date" keys
+				// supporting both old string format and new {item_code, delivery_date} format
+				const already_selected_keys = new Set(
+					already_selected.map(s =>
+						typeof s === 'string' ? `${s}__` : `${s.item_code}__${s.delivery_date || ''}`
+					)
+				);
+
 				const is_selectable = (_item) => true;
 
-				// Build dialog fields — one Check per unique item_code
+				// Build dialog fields — one Check per unique item_code+delivery_date
 				const fields = items.map(item => {
+					const key = `${item.item_code}__${item.delivery_date || ''}`;
 					const selectable = is_selectable(item);
+					const date_label = item.delivery_date
+						? `  [Del: ${frappe.datetime.str_to_user(item.delivery_date)}]` : '';
 					return {
 						fieldtype: 'Check',
-						fieldname: item.item_code,
-						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
-						default: selectable && (already_selected.length === 0 || already_selected.includes(item.item_code)) ? 1 : 0,
+						fieldname: key,
+						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}${date_label}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+						default: selectable && (already_selected.length === 0 || already_selected_keys.has(key)) ? 1 : 0,
 					};
 				});
 
@@ -383,10 +392,10 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					fields: fields,
 					primary_action_label: __('Confirm'),
 					primary_action(values) {
-						// Only include selectable items; disabled items are excluded
+						// Store as {item_code, delivery_date} objects so backend can filter by both
 						const selected = items
-							.filter(item => is_selectable(item) && values[item.item_code])
-							.map(item => item.item_code);
+							.filter(item => is_selectable(item) && values[`${item.item_code}__${item.delivery_date || ''}`])
+							.map(item => ({ item_code: item.item_code, delivery_date: item.delivery_date || '' }));
 
 						frappe.model.set_value(cdt, cdn, 'selected_items', JSON.stringify(selected));
 
@@ -418,7 +427,8 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 				setTimeout(() => {
 					items.forEach(item => {
 						if (!is_selectable(item)) {
-							const $field = d.get_field(item.item_code);
+							const key = `${item.item_code}__${item.delivery_date || ''}`;
+							const $field = d.get_field(key);
 							if ($field) {
 								$field.$wrapper.find('input[type="checkbox"]').prop('disabled', true);
 								$field.$wrapper.css('opacity', '0.45');
@@ -435,10 +445,10 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					</div>`
 				);
 				d.$wrapper.on('click', '.so-select-all', () => {
-					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 1); });
+					items.forEach(item => { if (is_selectable(item)) d.set_value(`${item.item_code}__${item.delivery_date || ''}`, 1); });
 				});
 				d.$wrapper.on('click', '.so-deselect-all', () => {
-					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 0); });
+					items.forEach(item => { if (is_selectable(item)) d.set_value(`${item.item_code}__${item.delivery_date || ''}`, 0); });
 				});
 
 				d.show();
