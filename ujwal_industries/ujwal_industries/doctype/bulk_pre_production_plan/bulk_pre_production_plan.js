@@ -4266,7 +4266,15 @@ function _get_workstation_options(txt) {
 	}
 	return frappe.call({
 		method: 'frappe.client.get_list',
+<<<<<<< HEAD
 		args
+=======
+		args: {
+			doctype: 'Workstation',
+			fields: ['name', 'custom_asset'],
+			limit_page_length: 500
+		}
+>>>>>>> 3f5f450 (Report)
 	}).then(res => {
 		const rows = res.message || [];
 		return rows.map(ws =>
