@@ -24,7 +24,16 @@ def get_machine_production_data():
 			jc.total_completed_qty AS completed_qty,
 			wo.sales_order     AS sales_order,
 			wo.planned_start_date  AS wo_planned_start,
-			wo.planned_end_date    AS wo_planned_end
+			wo.planned_end_date    AS wo_planned_end,
+			(
+				SELECT tl.custom_pause_reason
+				FROM `tabJob Card Time Log` tl
+				WHERE tl.parent = jc.name
+					AND tl.custom_pause_reason IS NOT NULL
+					AND tl.custom_pause_reason != ''
+				ORDER BY tl.from_time DESC
+				LIMIT 1
+			) AS pause_reason
 		FROM `tabJob Card` jc
 		LEFT JOIN `tabWork Order` wo ON wo.name = jc.work_order
 		LEFT JOIN `tabWorkstation` ws ON ws.name = jc.workstation

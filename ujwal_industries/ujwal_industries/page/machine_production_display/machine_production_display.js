@@ -9,10 +9,10 @@ frappe.pages['machine_production_display'].on_page_load = function (wrapper) {
 };
 
 const STATUS_CFG = {
-	'Work In Progress':     { color: '#16a34a', bg: '#dcfce7', label: 'IN PROGRESS'    },
-	'Open':                 { color: '#d97706', bg: '#fef3c7', label: 'OPEN'           },
-	'On Hold':              { color: '#dc2626', bg: '#fee2e2', label: 'ON HOLD'        },
-	'Material Transferred': { color: '#2563eb', bg: '#dbeafe', label: 'MATERIAL READY' },
+	'Work In Progress':     { color: '#16a34a', bg: '#dcfce7', label: 'In Progress'    },
+	'Open':                 { color: '#d97706', bg: '#fef3c7', label: 'Open'           },
+	'On Hold':              { color: '#dc2626', bg: '#fee2e2', label: 'On Hold'        },
+	'Material Transferred': { color: '#2563eb', bg: '#dbeafe', label: 'Material Ready' },
 };
 
 function statusCfg(s) {
@@ -23,7 +23,7 @@ function fmtDt(dt) {
 	if (!dt) return '—';
 	const d = new Date(dt);
 	const p = n => String(n).padStart(2, '0');
-	return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}  ${p(d.getHours())}:${p(d.getMinutes())}`;
+	return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;
 }
 
 function mpdLink(doctype, name) {
@@ -37,7 +37,7 @@ class MachineProductionDisplay {
 		this.wrapper    = wrapper;
 		this.page       = page;
 		this.rows       = [];
-		this.PAGE_SIZE  = 10;   // rows per page
+		this.PAGE_SIZE  = 10;     // rows per page
 		this.PAGE_DWELL = 30;    // seconds on each page before auto-advance
 		this.DATA_REFRESH = 60; // seconds before re-fetching from server
 
@@ -52,6 +52,7 @@ class MachineProductionDisplay {
 	_init() {
 		this._injectStyles();
 		this._buildToolbar();
+		this._shrinkPageHeader();
 
 		this.$root = $(`<div id="mpd-root"></div>`)
 			.appendTo($(this.wrapper).find('.page-content'));
@@ -73,6 +74,24 @@ class MachineProductionDisplay {
 		$(`<span id="mpd-data-cd" style="font-size:12px;color:#6b7280;margin-left:12px;">
 			Data refresh in <b id="mpd-data-num">${this.DATA_REFRESH}</b>s
 		</span>`).appendTo(this.page.inner_toolbar);
+	}
+
+	// ── Shrink Frappe's default page header (title, buttons, spacing) ──────────
+	_shrinkPageHeader() {
+		const $w = $(this.wrapper);
+		$w.find('.page-head').css({ 'margin-bottom': '0', 'min-height': 'auto', 'padding-bottom': '4px' });
+		$w.find('.page-content').css({ 'padding-top': '0', 'margin-top': '0' });
+		$w.find('.container').css('padding-top', '0');
+		$w.find('.page-title .title-text, .page-title h1, .title-area .title-text')
+			.css({ 'font-size': '15px', 'line-height': '1.1', 'margin': '0' });
+		$w.find('.page-actions .btn, .custom-actions .btn').css({
+			'font-size': '11px',
+			'padding': '2px 8px',
+			'line-height': '1.3',
+		});
+		$w.find('.page-actions, .custom-actions').css('margin-top', '0');
+		$w.find('.page-head-content').css({ 'margin-bottom': '0', 'padding-bottom': '0' });
+		$w.find('.standard-sidebar-section, .page-form').css('display', 'none');
 	}
 
 	// ── Data load ─────────────────────────────────────────────────────────────
@@ -118,13 +137,15 @@ class MachineProductionDisplay {
 			<col style="width:40px">
 			<col style="width:90px">
 			<col style="width:140px">
-			<col style="width:80px">
-			<col style="width:auto">
-			<col style="width:140px">
-			<col style="width:140px">
-			<col style="width:150px">
+			<col style="width:70px">
+			<col style="width:200px">
+			<col style="width:95px">
+			<col style="width:95px">
+			<col style="width:95px">
+			<col style="width:95px">
+			<col style="width:100px">
+			<col style="width:120px">
 			<col style="width:170px">
-			<col style="width:110px">
 		</colgroup>`;
 
 		const thead = `
@@ -135,10 +156,12 @@ class MachineProductionDisplay {
 			<th>Item Code</th>
 			<th>Item Name</th>
 			<th>Planned Start</th>
+			<th>Actual Start</th>
 			<th>Planned End</th>
 			<th>Qty (Done / Plan)</th>
-			<th>Work Order</th>
 			<th>Status</th>
+			<th>Pause Reason</th>
+			<th>Work Order</th>
 		</tr></thead>`;
 
 		const tbody = pageRows.map((j, i) => {
@@ -150,14 +173,16 @@ class MachineProductionDisplay {
 			<tr data-status="${j.status || ''}">
 				<td class="mpd-num">${globalN}</td>
 				<td class="mpd-machine">${frappe.utils.escape_html(j.machine_no || '—')}</td>
-				<td>${frappe.utils.escape_html(j.machine_name || '—')}</td>
+				<td class="mpd-machinename">${frappe.utils.escape_html(j.machine_name || '—')}</td>
 				<td>${mpdLink('Item', j.item_code)}</td>
-				<td>${frappe.utils.escape_html(j.item_name || '—')}</td>
+				<td class="mpd-itemname">${frappe.utils.escape_html(j.item_name || '—')}</td>
 				<td>${fmtDt(startDt)}</td>
+				<td>${fmtDt(j.actual_start_date)}</td>
 				<td>${fmtDt(endDt)}</td>
 				<td class="mpd-qty">${(j.completed_qty||0).toLocaleString()} / ${(j.planned_qty||0).toLocaleString()}</td>
+				<td class="mpd-status"><span class="mpd-badge" style="color:${cfg.color};background:${cfg.bg}">${cfg.label}</span></td>
+				<td class="mpd-pausereason">${frappe.utils.escape_html(j.pause_reason || '—')}</td>
 				<td>${mpdLink('Work Order', j.work_order)}</td>
-				<td><span class="mpd-badge" style="color:${cfg.color};background:${cfg.bg}">${cfg.label}</span></td>
 			</tr>`;
 		}).join('');
 
@@ -274,16 +299,16 @@ class MachineProductionDisplay {
 		s.id = 'mpd-styles';
 		s.textContent = `
 #mpd-root {
-	padding: 16px 20px;
+	padding: 0 20px 10px;
 	font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
 #mpd-info {
 	display: flex;
 	justify-content: space-between;
-	font-size: 12px;
+	font-size: 11px;
 	color: #6b7280;
-	margin-bottom: 12px;
+	margin: 0 0 4px;
 }
 
 /* ── Table ── */
@@ -293,36 +318,48 @@ class MachineProductionDisplay {
 	border-radius: 8px;
 }
 .mpd-table {
-	width: 100%;
+	min-width: 1280px;
+	width: 1280px;
 	table-layout: fixed;
 	border-collapse: collapse;
 	font-size: 13px;
 	color: #111827;
 }
+.mpd-table thead tr { height: 45px; }
 .mpd-table thead th {
 	background: #f9fafb;
-	padding: 10px 12px;
+	height: 45px;
+	max-height: 45px;
+	padding: 4px 12px;
 	text-align: left;
-	font-size: 11px;
+	font-size: 13px;
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	color: #374151;
 	border-bottom: 2px solid #e5e7eb;
 	border-right: 1px solid #e5e7eb;
-	white-space: nowrap;
+	white-space: normal;
+	word-break: break-word;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	text-overflow: clip;
+	vertical-align: middle;
+	line-height: 1.2;
+	box-sizing: border-box;
 }
 .mpd-table thead th:last-child { border-right: none; }
+.mpd-table tbody tr { height: 45px; }
 .mpd-table tbody td {
-	padding: 11px 12px;
+	height: 45px;
+	max-height: 45px;
+	padding: 4px 12px;
 	border-bottom: 1px solid #f3f4f6;
 	border-right: 1px solid #f0f0f0;
 	vertical-align: middle;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	word-wrap: break-word;
+	box-sizing: border-box;
+	white-space: nowrap;
 }
 .mpd-table tbody td:last-child  { border-right: none; }
 .mpd-table tbody tr:last-child td { border-bottom: none; }
@@ -334,26 +371,40 @@ class MachineProductionDisplay {
 .mpd-table tbody tr[data-status="Open"]                td:nth-child(2) { border-left: 4px solid #d97706; }
 .mpd-table tbody tr[data-status="Material Transferred"] td:nth-child(2) { border-left: 4px solid #2563eb; }
 
-.mpd-num     { color: #9ca3af; font-size: 12px; width: 36px; }
-.mpd-machine { font-weight: 600; }
-.mpd-qty     { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mpd-num      { color: #9ca3af; width: 36px; }
+.mpd-machine  { font-weight: 400; }
+.mpd-qty,
+.mpd-itemname,
+.mpd-pausereason,
+.mpd-machinename {
+	white-space: normal !important;
+	word-break: break-word;
+	overflow-wrap: break-word;
+	overflow: hidden !important;
+	text-overflow: clip !important;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	line-height: 1.15;
+}
+.mpd-qty { font-variant-numeric: tabular-nums; }
 
 .mpd-link {
 	color: #111827;
+	font-weight: 400;
 	text-decoration: none;
-	font-weight: 500;
 	white-space: nowrap;
 }
 .mpd-link:hover { text-decoration: underline; }
 
+.mpd-status { white-space: normal !important; }
 .mpd-badge {
 	display: inline-block;
 	padding: 2px 10px;
 	border-radius: 20px;
-	font-size: 11px;
-	font-weight: 700;
+	font-weight: 400;
 	letter-spacing: 0.5px;
-	white-space: nowrap;
+	white-space: normal;
 }
 
 /* ── Pagination bar ── */
@@ -361,7 +412,7 @@ class MachineProductionDisplay {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	margin-top: 14px;
+	margin-top: 10px;
 	flex-wrap: wrap;
 }
 
