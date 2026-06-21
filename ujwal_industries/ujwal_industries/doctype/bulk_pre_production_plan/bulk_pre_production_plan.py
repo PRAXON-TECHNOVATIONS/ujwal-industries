@@ -157,9 +157,13 @@ def _resolve_bom_tool_info(
 		chosen = next((row for row in tools if cint(row.get("is_default")) == 1), None) or tools[0]
 
 	if chosen:
+		tool_load_qty = cint(chosen.get("tool_load_qty") or 0)
+		if not tool_load_qty:
+			# Tool configured but has no load qty - fall back to fixed lot capacity.
+			tool_load_qty = cint(fallback_lot_capacity or 0)
 		return {
 			"tool": chosen.get("tool") or "",
-			"tool_load_qty": cint(chosen.get("tool_load_qty") or 0),
+			"tool_load_qty": tool_load_qty,
 			"pm_days": cint(chosen.get("pm_days") or 0),
 			"operation": chosen.get("operation") or "",
 			"tools": tools,
@@ -174,6 +178,29 @@ def _resolve_bom_tool_info(
 		"tools": tools,
 		"has_tool_rows": 0,
 	}
+
+
+def _is_spm_split_allowed() -> bool:
+	"""Whether SPM-based qty splitting is enabled via Ujwal Industries Setting."""
+	ui_setting = frappe.get_doc("Ujwal Industries Setting", "Ujwal Industries Setting")
+	return cint(ui_setting.consider_spm_for_split) == 1
+
+
+def _resolve_split_qty(tool_load_qty: int | float, per_day_qty: int | float, manufacturing_type: str | None) -> float:
+	"""
+	Resolve the qty to split batches by, for In House / In House - Vendor rows.
+
+	Tool load qty (already merged with fixed lot capacity in _resolve_bom_tool_info)
+	wins if nonzero. If it's 0 and SPM-based splitting is disabled (Ujwal Industries
+	Setting.consider_spm_for_split unchecked), the row is scheduled as a single
+	unsplit batch instead of falling back to SPM - the operator runs it sequentially
+	on one line. Subcontract rows are not affected and should not call this function.
+	"""
+	if tool_load_qty:
+		return tool_load_qty
+	if (manufacturing_type or "") in ("In House", "In House - Vendor") and not _is_spm_split_allowed():
+		return 0
+	return per_day_qty
 
 
 def _get_bom_spm_details_map(
@@ -2317,7 +2344,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 
 
 			# Calculations use per-day capacity (combined shifts); UI shows per-shift.
-			split_qty = tool_load_qty or per_day_qty
+			split_qty = _resolve_split_qty(tool_load_qty, per_day_qty, sfg.type_of_manufacturing)
 			batches   = _split_batches(sales_qty, split_qty)
 
 			# ── Batch 0: backward schedule from deadline (or anchor override) ─
@@ -2467,7 +2494,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
-				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
 				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
@@ -2605,7 +2632,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
-				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
 				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
@@ -2733,8 +2760,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				per_day_qty    = per_shift_qty * shift_count
 
 			# Split into batches.
-			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
-			split_qty = tool_load_qty or per_day_qty
+			# Prefer tool/fixed-lot capacity; if missing and SPM-split is enabled, fall back
+			# to one-shift output from SPM. Otherwise In House/In House - Vendor rows run as
+			# a single unsplit batch.
+			split_qty = _resolve_split_qty(tool_load_qty, per_day_qty, fg.manufacturing_type)
 			batches = _split_batches(sales_qty, split_qty)
 
 			batch_rows: list[dict] = []
@@ -3250,7 +3279,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 
 			# Calculations use per-day capacity (combined shifts); UI shows per-shift.
-			split_qty = tool_load_qty or per_day_qty
+			split_qty = _resolve_split_qty(tool_load_qty, per_day_qty, sfg.type_of_manufacturing)
 			batches   = _split_batches(sales_qty, split_qty)
 
 			# ── Batch 0: backward schedule from deadline ──────────────────────
@@ -3360,7 +3389,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
-				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
 				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
@@ -3493,7 +3522,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
-				blist = _split_batches(sfg_data["qty"], tlq or psq_day)
+				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
 				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
@@ -3593,8 +3622,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				per_day_qty    = per_shift_qty * shift_count
 
 			# Split into batches.
-			# Prefer tool/fixed-lot capacity; if missing, fall back to one-shift output from SPM.
-			split_qty = tool_load_qty or per_day_qty
+			# Prefer tool/fixed-lot capacity; if missing and SPM-split is enabled, fall back
+			# to one-shift output from SPM. Otherwise In House/In House - Vendor rows run as
+			# a single unsplit batch.
+			split_qty = _resolve_split_qty(tool_load_qty, per_day_qty, fg.manufacturing_type)
 			batches = _split_batches(sales_qty, split_qty)
 
 			batch_rows: list[dict] = []

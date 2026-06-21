@@ -7,7 +7,8 @@
  "field_order": [
   "settings_section",
   "machine_conflict_validation",
-  "create_work_order_and_material_request_on_submit"
+  "create_work_order_and_material_request_on_submit",
+  "consider_spm_for_split"
  ],
  "fields": [
   {
@@ -28,6 +29,13 @@
    "fieldname": "create_work_order_and_material_request_on_submit",
    "fieldtype": "Check",
    "label": "By Pass Create Work Order and Material Request on submit"
+  },
+  {
+   "default": "0",
+   "description": "In Bulk Pre Production Plan. If unchecked, In House / In House - Vendor rows with no tool load qty and no fixed lot capacity are scheduled as a single unsplit batch instead of falling back to SPM-based splitting. Subcontract rows are unaffected by this setting.",
+   "fieldname": "consider_spm_for_split",
+   "fieldtype": "Check",
+   "label": "Consider SPM for Split"
   }
  ],
  "grid_page_length": 50,
