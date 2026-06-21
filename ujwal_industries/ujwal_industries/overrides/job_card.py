@@ -459,6 +459,7 @@ def job_card_validate(doc: Document, method=None):
     _set_tool_from_production_plan(doc)
     build_tool_summary_html(doc)
     set_previous_tool(doc)
+    validate_job_card_qty_not_over_tolerance(doc, method)
         
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
@@ -761,32 +762,20 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
     doc.set_onload("operation_requires_tool", operation_requires_tool(doc.bom_no, doc.operation))
 
 
-def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
+def _get_qty_tolerance_range(doc: Document) -> tuple | None:
     """
-    Override the standard Job Card quantity validation on submit with tolerance-based validation.
-
-    By default, ERPNext requires that (Total Completed Qty + Process Loss Qty) must equal
-    Qty to Manufacture exactly. This override uses the Item's custom_tolerance_ field to allow
-    completion within an acceptable range.
+    Compute the tolerance-based acceptable range for a Job Card's Total Completed Qty.
 
     Tolerance is defined as a percentage in the Item master's custom_tolerance_ field.
     For example, if custom_tolerance_ = 0.5 (representing 0.5%), then:
     - Qty to Manufacture = 100
     - Acceptable range = 100 ± 0.5 = 99.5 to 100.5
 
-    If total_completed_qty falls within this range, we auto-adjust process_loss_qty
-    to make the validation pass.
-
-    This function should be hooked to Job Card's before_submit event.
-
-    Args:
-        doc: Job Card document
-        method: Event method name (unused)
+    Returns a tuple of (total_completed_qty, for_quantity, tolerance_percentage,
+    min_acceptable, max_acceptable), or None if there's nothing to validate.
     """
-    _ = method  # Unused but required for hook signature
-
     if not doc.for_quantity or not doc.production_item:
-        return
+        return None
 
     from frappe.utils import flt
 
@@ -794,40 +783,87 @@ def override_job_card_qty_validation(doc: Document, method: str | None = None) -
     total_completed_qty = flt(doc.total_completed_qty, precision)
     for_quantity = flt(doc.for_quantity, precision)
 
-    # Get tolerance percentage from Item master's custom_tolerance_ field
     tolerance_percentage = flt(
         frappe.db.get_value("Item", doc.production_item, "custom_tolerance_") or 0
     )
 
-    # Calculate tolerance amount
     # If tolerance is 0.5%, then tolerance_amount = for_quantity * 0.5 / 100
     tolerance_amount = flt((for_quantity * tolerance_percentage) / 100, precision)
 
-    # Calculate acceptable range
     min_acceptable = flt(for_quantity - tolerance_amount, precision)
     max_acceptable = flt(for_quantity + tolerance_amount, precision)
 
-    # Check if total_completed_qty is within tolerance
+    return total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable
+
+
+def _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable) -> None:
+    frappe.throw(
+        frappe._(
+            "Total Completed Qty ({0}) is outside the acceptable tolerance range.<br>"
+            "Qty to Manufacture: {1}<br>"
+            "Tolerance: ±{2}%<br>"
+            "Acceptable Range: {3} to {4}"
+        ).format(
+            frappe.bold(total_completed_qty),
+            frappe.bold(for_quantity),
+            frappe.bold(tolerance_percentage),
+            frappe.bold(min_acceptable),
+            frappe.bold(max_acceptable)
+        )
+    )
+
+
+def validate_job_card_qty_not_over_tolerance(doc: Document, method: str | None = None) -> None:
+    """
+    Save-time check: only blocks when Total Completed Qty exceeds the upper
+    tolerance bound. Being under is allowed on save since qty is often logged
+    in splits across multiple time logs before the job card is submitted.
+
+    Hooked to Job Card's validate event.
+    """
+    _ = method  # Unused but required for hook signature
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is None:
+        return
+
+    total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+
+    if total_completed_qty > max_acceptable:
+        _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
+
+
+def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
+    """
+    Override the standard Job Card quantity validation on submit with tolerance-based validation.
+
+    By default, ERPNext requires that (Total Completed Qty + Process Loss Qty) must equal
+    Qty to Manufacture exactly. This override uses the Item's custom_tolerance_ field to allow
+    completion within an acceptable range (see _get_qty_tolerance_range).
+
+    If total_completed_qty falls within this range, we auto-adjust process_loss_qty
+    to make the validation pass.
+
+    This is the final check, hooked to Job Card's before_submit event, and checks
+    both the lower and upper bound since qty entry must be complete by submit time.
+
+    Args:
+        doc: Job Card document
+        method: Event method name (unused)
+    """
+    _ = method  # Unused but required for hook signature
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is None:
+        return
+
+    total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+
     if min_acceptable <= total_completed_qty <= max_acceptable:
         # Within tolerance - adjust process_loss_qty to make validation pass
         doc.process_loss_qty = for_quantity - total_completed_qty
     else:
-        # Outside tolerance - let the standard validation throw an error
-        # But enhance the error message to show the acceptable range
-        frappe.throw(
-            frappe._(
-                "Total Completed Qty ({0}) is outside the acceptable tolerance range.<br>"
-                "Qty to Manufacture: {1}<br>"
-                "Tolerance: ±{2}%<br>"
-                "Acceptable Range: {3} to {4}"
-            ).format(
-                frappe.bold(total_completed_qty),
-                frappe.bold(for_quantity),
-                frappe.bold(tolerance_percentage),
-                frappe.bold(min_acceptable),
-                frappe.bold(max_acceptable)
-            )
-        )
+        _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
 
 
 
