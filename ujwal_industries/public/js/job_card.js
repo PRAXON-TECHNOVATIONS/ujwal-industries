@@ -18,6 +18,15 @@ frappe.ui.form.on("Job Card", {
 			render_tool_summary(frm);
 			update_balance_qty(frm);
 		}
+
+		// The "Completed" status is reused as a pre-submit signal (see
+		// apply_order_completed_status in job_card.py) so reports/displays that
+		// filter on status="Completed" keep working unchanged. Once the document
+		// is actually submitted, show "Submitted" on the page badge only — the
+		// underlying status field stays "Completed" in the database.
+		if (frm.doc.docstatus === 1 && frm.doc.status === "Completed") {
+			frm.page.set_indicator(__("Submitted"), "blue");
+		}
 	},
 
 	for_quantity(frm) {
