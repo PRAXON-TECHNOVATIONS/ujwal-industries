@@ -460,7 +460,36 @@ def job_card_validate(doc: Document, method=None):
     build_tool_summary_html(doc)
     set_previous_tool(doc)
     validate_job_card_qty_not_over_tolerance(doc, method)
-        
+    apply_order_completed_status(doc)
+
+
+def apply_order_completed_status(doc: Document) -> None:
+    """
+    Operators cannot submit a Job Card, so core's set_status() never reaches
+    "Completed" pre-submit (it only does so when docstatus == 1). Treat the
+    "Order Completed" pause reason as the operator's signal that production on
+    this job card is done, so the status reflects that ahead of submission.
+
+    validate_job_card_qty_not_over_tolerance (called earlier in job_card_validate)
+    already throws if qty is over the upper tolerance bound. Here we additionally
+    block marking the card Completed if qty is still below the lower bound, so an
+    operator can't close out a job that's genuinely unfinished.
+    """
+    if doc.docstatus != 0:
+        return
+
+    last_log = doc.time_logs[-1] if doc.time_logs else None
+    if not last_log or last_log.custom_pause_reason != "Order Completed":
+        return
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is not None:
+        total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+        if total_completed_qty < min_acceptable:
+            _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
+
+    doc.status = "Completed"
+
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
         return
