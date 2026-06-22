@@ -199,6 +199,24 @@ frappe.ui.form.on("Job Card", {
 		// This is a workaround since we can't call super() in Frappe
 		_original_prepare_timer_buttons(frm);
 
+		// Data-integrity guard: the core button logic above only looks at
+		// started_time/current_time/status, not at whether a time log row is
+		// actually open. If the job card claims to be running but has no open
+		// (to_time unset) row, "Pause Job" has nothing to close and pausing
+		// throws server-side. Show "Resume Job" instead so the operator can
+		// recover by creating a fresh open row.
+		const time_logs = frm.doc.time_logs || [];
+		const has_open_time_log = time_logs.some((tl) => !tl.to_time);
+		const appears_running = frm.doc.started_time || frm.doc.current_time;
+
+		if (appears_running && frm.doc.status != "On Hold" && !has_open_time_log) {
+			frm.page.remove_inner_button(__("Pause Job"));
+			frm.page.remove_inner_button(__("Complete Job"));
+			frm.add_custom_button(__("Resume Job"), () => {
+				frm.events.start_job(frm, "Resume Job", frm.doc.employee);
+			}).addClass("btn-primary");
+		}
+
 		//  CHECK DOWNTIME
 		const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
 
@@ -213,7 +231,7 @@ frappe.ui.form.on("Job Card", {
 
 		// Now override the Pause Job button behavior
 		if (frm.doc.started_time || frm.doc.current_time) {
-			if (frm.doc.status != "On Hold") {
+			if (frm.doc.status != "On Hold" && has_open_time_log) {
 				// Remove the default Pause Job button
 				frm.page.remove_inner_button(__("Pause Job"));
 
