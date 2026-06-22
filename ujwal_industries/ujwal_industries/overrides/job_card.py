@@ -671,6 +671,18 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # Get the job card document
     job_card = frappe.get_doc("Job Card", job_card_id)
 
+    # The row make_time_log will close (set to_time on) when pausing is the open
+    # row with no to_time yet. If none exists, the job card is in an anomalous
+    # state (e.g. "Work In Progress" with no open time log) and there is no
+    # correct row to attach this pause's counters/qty to - touching time_logs[-1]
+    # in that case would silently overwrite an already-closed historical row.
+    open_row_name = next((tl.name for tl in job_card.time_logs if not tl.to_time), None)
+    if not open_row_name:
+        frappe.throw(
+            "Cannot pause this Job Card: no active (open) time log was found to close. "
+            "The Job Card may be in an inconsistent state - please resume the job first."
+        )
+
     # Update sub-operation if needed (from standard ERPNext logic)
     if job_card.sub_operations and len(job_card.sub_operations) > 0:
         sub_operations = [d for d in job_card.sub_operations if d.status != "Complete"]
@@ -685,9 +697,11 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # Reload the job card to get the newly created time log
     job_card.reload()
 
-    # Find the most recent time log entry (the one just created)
-    if job_card.time_logs and len(job_card.time_logs) > 0:
-        latest_time_log = job_card.time_logs[-1]
+    # Locate the same row that was open before make_time_log ran (by name, not
+    # position) - it's the one make_time_log just closed and is the only row
+    # this pause's counters/qty/reason should be attached to.
+    latest_time_log = next((tl for tl in job_card.time_logs if tl.name == open_row_name), None)
+    if latest_time_log:
         latest_time_log.custom_pause_reason = pause_reason
         latest_time_log.custom_start_counter = start_counter
         latest_time_log.custom_end_counter = end_counter
