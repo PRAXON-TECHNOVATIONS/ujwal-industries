@@ -248,10 +248,12 @@ function hide_job_card_timer(frm) {
 function show_pause_reason_dialog(frm) {
 	let tool_cavities = 1;
 
-	// Default start counter = end counter of last time log (machine counter continuity),
-	// falling back to 0 if no previous log exists.
+	// Default start counter = end counter of last completed time log (machine counter continuity),
+	// falling back to 0 if no previous completed log exists. The current (resumed) row has no
+	// to_time yet and must be excluded, otherwise its unset end counter (0) wins instead.
 	const time_logs = frm.doc.time_logs || [];
-	const last_log = time_logs.length ? time_logs[time_logs.length - 1] : null;
+	const completed_logs = time_logs.filter((log) => log.to_time);
+	const last_log = completed_logs.length ? completed_logs[completed_logs.length - 1] : null;
 	const default_start_counter = flt(last_log && last_log.custom_end_counter || 0);
 
 	const d = new frappe.ui.Dialog({
