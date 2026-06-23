@@ -286,9 +286,15 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
 	},
 	"Work Order":{
-		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+		"before_insert": [
+			"ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+			"ujwal_industries.ujwal_industries.overrides.work_order.set_planned_end_date_from_production_plan",
+		],
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_production_supervisor_on_work_order_create",
-		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+		"on_submit": [
+			"ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+			"ujwal_industries.ujwal_industries.overrides.work_order.preserve_production_plan_end_date",
+		],
 	},
 	"Subcontracting Order": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_outsource_store_manager_on_subcontract_create",

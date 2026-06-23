@@ -3,6 +3,58 @@ import frappe
 STORE_INCHARGE_VISIBLE_STATUSES = ("In Process", "Not Started")
 
 
+def get_planned_end_date_from_production_plan(doc):
+	"""Return the planned end date from the Production Plan row that created this Work Order.
+
+	Work Orders link to their source via either:
+	  - production_plan_sub_assembly_item -> Production Plan Sub Assembly Item.custom_schedule_end_date
+	  - production_plan_item              -> Production Plan Item.custom_planned_end_date
+	"""
+	if doc.get("production_plan_sub_assembly_item"):
+		end = frappe.db.get_value(
+			"Production Plan Sub Assembly Item",
+			doc.production_plan_sub_assembly_item,
+			"custom_schedule_end_date",
+		)
+		if end:
+			return end
+
+	if doc.get("production_plan_item"):
+		end = frappe.db.get_value(
+			"Production Plan Item",
+			doc.production_plan_item,
+			"custom_planned_end_date",
+		)
+		if end:
+			return end
+
+	return None
+
+
+def set_planned_end_date_from_production_plan(doc, method=None):
+	"""before_insert: stamp the Production Plan's end date onto the Work Order.
+
+	The WO's own planned_end_date is otherwise only computed on submit; this carries
+	the planned end date through from the Production Plan at creation time.
+	"""
+	if doc.get("planned_end_date"):
+		return
+	end = get_planned_end_date_from_production_plan(doc)
+	if end:
+		doc.planned_end_date = end
+
+
+def preserve_production_plan_end_date(doc, method=None):
+	"""on_submit: re-apply the Production Plan end date.
+
+	ERPNext recomputes planned_end_date from the last operation's planned_end_time during
+	create_job_card() on submit. We restore the Production Plan's date so it is preserved.
+	"""
+	end = get_planned_end_date_from_production_plan(doc)
+	if end and doc.planned_end_date != end:
+		doc.db_set("planned_end_date", end, update_modified=False)
+
+
 def _is_store_incharge_limited(user: str) -> bool:
     if user == "Administrator":
         return False
