@@ -17,6 +17,7 @@ frappe.ui.form.on("Job Card", {
 		if (!frm.is_new()) {
 			render_tool_summary(frm);
 			update_balance_qty(frm);
+			add_material_return_button(frm);
 		}
 
 		// The "Completed" status is reused as a pre-submit signal (see
@@ -243,6 +244,62 @@ frappe.ui.form.on("Job Card", {
 		}
 	},
 });
+
+/**
+ * "Material Return" button.
+ *
+ * The operator clicks this when the job can't continue (e.g. machine breakdown) and the
+ * remaining transferred raw material has to be returned to store. It records whatever was
+ * produced so far, stops the job, and sets the Job Card status to "Material Return" — a
+ * signal for the Store Incharge (visible on the Store Display) to make the Manufacture
+ * Stock Entry for the produced qty and return the leftover raw material.
+ *
+ * Shown always on a draft Job Card (even when not running / 0 qty produced), and hidden
+ * once it is already in Material Return / Completed.
+ */
+function add_material_return_button(frm) {
+	if (frm.doc.docstatus !== 0) return;
+	if (frm.doc.status === "Material Return" || frm.doc.status === "Completed") return;
+
+	frm.add_custom_button(__("Material Return"), () => {
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Float",
+					label: __("Quantity Produced So Far"),
+					fieldname: "completed_qty",
+					default: flt(frm.doc.total_completed_qty),
+					description: __(
+						"This qty stays on the Job Card. Store will make a Manufacture Stock Entry for it and return the remaining raw material."
+					),
+				},
+			],
+			(values) => {
+				frappe.call({
+					method: "ujwal_industries.ujwal_industries.overrides.job_card.material_return_stop_job",
+					args: {
+						args: {
+							job_card_id: frm.doc.name,
+							completed_qty: flt(values.completed_qty),
+							complete_time: frappe.datetime.now_datetime(),
+						},
+					},
+					freeze: true,
+					freeze_message: __("Marking Material Return..."),
+					callback: () => {
+						frappe.show_alert({
+							message: __("Job Card marked for Material Return"),
+							indicator: "orange",
+						});
+						frm.reload_doc();
+					},
+				});
+			},
+			__("Material Return"),
+			__("Confirm")
+		);
+	}).addClass("btn-danger");
+}
 
 function hide_button(frm) {
 	const requires_tool = frm.doc.__onload && frm.doc.__onload.operation_requires_tool;

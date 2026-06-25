@@ -134,7 +134,7 @@ class MachineProductionDisplay {
 		// ── table ──
 		const colgroup = `
 		<colgroup>
-			<col style="width:40px">
+			<col style="width:45px">
 			<col style="width:90px">
 			<col style="width:140px">
 			<col style="width:70px">

@@ -52,7 +52,7 @@ def notify_outsource_store_manager_on_subcontract_create(doc, method):
 				"doctype": doc.doctype,
 				"name": doc.name,
 				"description": (
-					f"Subcontracting Order {doc.name} for item {doc.item_name or doc.name} has been created from Production Plan. "
+					f"Subcontracting Order {doc.name} for item {(doc.items[0].item_name if doc.items else None) or doc.name} has been created from Production Plan. "
 					"Please coordinate with the vendor and ensure materials are dispatched accordingly."
 				),
 			},

@@ -1,0 +1,27 @@
+{
+ "content": null,
+ "creation": "2026-06-23 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-06-23 12:44:22.085485",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "store_display",
+ "owner": "Administrator",
+ "page_name": "Store Display",
+ "roles": [
+  {
+   "role": "Store Incharge"
+  },
+  {
+   "role": "Store Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "No",
+ "system_page": 0,
+ "title": "Store Display"
+}

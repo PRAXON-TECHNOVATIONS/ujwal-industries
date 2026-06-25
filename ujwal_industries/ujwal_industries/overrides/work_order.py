@@ -1,6 +1,59 @@
 import frappe
+from frappe.utils import flt
 
 STORE_INCHARGE_VISIBLE_STATUSES = ("In Process", "Not Started")
+
+
+def get_planned_end_date_from_production_plan(doc):
+	"""Return the planned end date from the Production Plan row that created this Work Order.
+
+	Work Orders link to their source via either:
+	  - production_plan_sub_assembly_item -> Production Plan Sub Assembly Item.custom_schedule_end_date
+	  - production_plan_item              -> Production Plan Item.custom_planned_end_date
+	"""
+	if doc.get("production_plan_sub_assembly_item"):
+		end = frappe.db.get_value(
+			"Production Plan Sub Assembly Item",
+			doc.production_plan_sub_assembly_item,
+			"custom_schedule_end_date",
+		)
+		if end:
+			return end
+
+	if doc.get("production_plan_item"):
+		end = frappe.db.get_value(
+			"Production Plan Item",
+			doc.production_plan_item,
+			"custom_planned_end_date",
+		)
+		if end:
+			return end
+
+	return None
+
+
+def set_planned_end_date_from_production_plan(doc, method=None):
+	"""before_insert: stamp the Production Plan's end date onto the Work Order.
+
+	The WO's own planned_end_date is otherwise only computed on submit; this carries
+	the planned end date through from the Production Plan at creation time.
+	"""
+	if doc.get("planned_end_date"):
+		return
+	end = get_planned_end_date_from_production_plan(doc)
+	if end:
+		doc.planned_end_date = end
+
+
+def preserve_production_plan_end_date(doc, method=None):
+	"""on_submit: re-apply the Production Plan end date.
+
+	ERPNext recomputes planned_end_date from the last operation's planned_end_time during
+	create_job_card() on submit. We restore the Production Plan's date so it is preserved.
+	"""
+	end = get_planned_end_date_from_production_plan(doc)
+	if end and doc.planned_end_date != end:
+		doc.db_set("planned_end_date", end, update_modified=False)
 
 
 def _is_store_incharge_limited(user: str) -> bool:
@@ -81,6 +134,67 @@ def set_wip_before_insert(doc, method):
         
         doc.name = doc.amended_from
         doc.amended_from = None    
+
+
+@frappe.whitelist()
+def has_material_return_job_card(work_order):
+	"""True if any Job Card on this Work Order is in 'Material Return' status."""
+	if not work_order:
+		return False
+	return bool(
+		frappe.db.exists(
+			"Job Card",
+			{"work_order": work_order, "status": "Material Return", "docstatus": 0},
+		)
+	)
+
+
+@frappe.whitelist()
+def make_material_return_stock_entry(work_order):
+	"""
+	Build a draft Material Transfer Stock Entry that returns the leftover raw material
+	(transferred but not consumed) from the WIP warehouse back to each item's source
+	(RM) store. Returned for the Store Incharge to review and submit.
+
+	Leftover per required item = transferred_qty - consumed_qty.
+	"""
+	wo = frappe.get_doc("Work Order", work_order)
+
+	leftovers = []
+	for item in wo.required_items:
+		remaining = flt(item.transferred_qty) - flt(item.consumed_qty)
+		if remaining > 0:
+			leftovers.append((item, remaining))
+
+	if not leftovers:
+		frappe.throw("No leftover raw material to return (transferred qty has been fully consumed).")
+
+	if not wo.wip_warehouse:
+		frappe.throw("Work Order has no WIP warehouse set, cannot determine where to return material from.")
+
+	se = frappe.new_doc("Stock Entry")
+	se.stock_entry_type = "Material Transfer"
+	se.purpose = "Material Transfer"
+	se.company = wo.company
+	se.work_order = wo.name
+	# Tag so it's traceable as a return against this Work Order.
+	if se.meta.has_field("remarks"):
+		se.remarks = f"Material Return for Work Order {wo.name}"
+
+	for item, remaining in leftovers:
+		target = item.source_warehouse or wo.source_warehouse
+		se.append(
+			"items",
+			{
+				"item_code": item.item_code,
+				"qty": remaining,
+				"s_warehouse": wo.wip_warehouse,
+				"t_warehouse": target,
+			},
+		)
+
+	se.set_stock_entry_type()
+	return se.as_dict()
 
 
 @frappe.whitelist()

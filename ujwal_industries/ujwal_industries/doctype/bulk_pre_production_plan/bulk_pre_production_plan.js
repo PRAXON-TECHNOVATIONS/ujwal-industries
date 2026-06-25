@@ -1837,6 +1837,66 @@ function _on_seq_cell_changed(frm, params) {
 
 
 // ---------------------------------------------------------------------------
+// Dispatch checkbox + bucket logic (shared by Parallel & Consolidated grids)
+//
+// A tick on a batch row "closes" a dispatch bucket covering every batch since the
+// previous tick: bucket qty = sum of those batches, delivery date = the ticked batch's
+// end_date. Trailing batches after the last tick auto-form a final bucket. If no batch
+// in an FG is ticked, the FG falls back to one bucket = full qty at the Sales Order's
+// delivery date. The tick state lives on each batch as `b.dispatch` inside the
+// custom_batch_schedule JSON, so the Dispatch Display report can read it.
+// ---------------------------------------------------------------------------
+
+// Toggle the dispatch flag on a batch and persist it into the schedule JSON.
+//
+// `par_data` here is a single SO's slice ({fg:[...], sfg_chain:[...]}). We mutate the
+// batch on that in-memory slice (so the grid re-render reflects it immediately) AND
+// re-write the FULL custom_batch_schedule dict ({so_name: {...}}) so we never overwrite
+// the whole schedule with just one SO's data.
+function _toggle_batch_dispatch(frm, par_data, item_code, batch_label) {
+	const fg = (par_data.fg || []).find(f => f.item_code === item_code);
+	if (!fg) return;
+	const batch = (fg.batches || []).find(b => `${b.batch}/${b.total}` === batch_label);
+	if (!batch) return;
+
+	batch.dispatch = !batch.dispatch;
+
+	// Persist by mutating the matching batch inside the full stored schedule.
+	try {
+		const full = JSON.parse(frm.doc.custom_batch_schedule || '{}');
+		Object.values(full).forEach(so_slice => {
+			if (!so_slice || typeof so_slice !== 'object' || !Array.isArray(so_slice.fg)) return;
+			so_slice.fg.forEach(f => {
+				if (f.item_code !== item_code) return;
+				(f.batches || []).forEach(b => {
+					if (`${b.batch}/${b.total}` === batch_label) b.dispatch = batch.dispatch;
+				});
+			});
+		});
+		frm.doc.custom_batch_schedule = JSON.stringify(full);
+		frm.dirty();
+	} catch (e) { /* keep in-memory toggle even if persist fails */ }
+}
+
+// Column definition for the dispatch checkbox (batch rows only).
+function _dispatch_checkbox_col(frm, par_data, rebuild) {
+	return {
+		headerName: 'Dispatch', field: 'dispatch', width: 80, sortable: false, pinned: 'left',
+		cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+		cellRenderer: p => {
+			if (p.data?._is_group) return '';
+			return `<input type="checkbox" ${p.data?.dispatch ? 'checked' : ''}
+				style="width:15px;height:15px;cursor:pointer;" />`;
+		},
+		onCellClicked: p => {
+			if (p.data?._is_group) return;
+			_toggle_batch_dispatch(frm, par_data, p.data.item_code, p.data.batch_label);
+			rebuild();
+		}
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Parallel Grid — N batch rows per SFG with timeline bar column
 // ---------------------------------------------------------------------------
 
@@ -1944,6 +2004,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
 					qty: b.qty,
+					dispatch: !!b.dispatch,
 					mfg_days: b.mfg_days,
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
@@ -1988,6 +2049,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 
 		},
+		_dispatch_checkbox_col(frm, par_data, () => par_grids.setGridOption('rowData', _builds_rows())),
 		{
 			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
@@ -2834,6 +2896,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
 					qty: b.qty,
+					dispatch: !!b.dispatch,
 					mfg_days: b.mfg_days,
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
@@ -2880,6 +2943,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 
 		},
+		_dispatch_checkbox_col(frm, par_data, () => par_grids.setGridOption('rowData', _builds_rows())),
 		{
 			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
