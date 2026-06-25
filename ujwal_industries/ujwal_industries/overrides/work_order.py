@@ -1,4 +1,5 @@
 import frappe
+from frappe.utils import flt
 
 STORE_INCHARGE_VISIBLE_STATUSES = ("In Process", "Not Started")
 
@@ -133,6 +134,67 @@ def set_wip_before_insert(doc, method):
         
         doc.name = doc.amended_from
         doc.amended_from = None    
+
+
+@frappe.whitelist()
+def has_material_return_job_card(work_order):
+	"""True if any Job Card on this Work Order is in 'Material Return' status."""
+	if not work_order:
+		return False
+	return bool(
+		frappe.db.exists(
+			"Job Card",
+			{"work_order": work_order, "status": "Material Return", "docstatus": 0},
+		)
+	)
+
+
+@frappe.whitelist()
+def make_material_return_stock_entry(work_order):
+	"""
+	Build a draft Material Transfer Stock Entry that returns the leftover raw material
+	(transferred but not consumed) from the WIP warehouse back to each item's source
+	(RM) store. Returned for the Store Incharge to review and submit.
+
+	Leftover per required item = transferred_qty - consumed_qty.
+	"""
+	wo = frappe.get_doc("Work Order", work_order)
+
+	leftovers = []
+	for item in wo.required_items:
+		remaining = flt(item.transferred_qty) - flt(item.consumed_qty)
+		if remaining > 0:
+			leftovers.append((item, remaining))
+
+	if not leftovers:
+		frappe.throw("No leftover raw material to return (transferred qty has been fully consumed).")
+
+	if not wo.wip_warehouse:
+		frappe.throw("Work Order has no WIP warehouse set, cannot determine where to return material from.")
+
+	se = frappe.new_doc("Stock Entry")
+	se.stock_entry_type = "Material Transfer"
+	se.purpose = "Material Transfer"
+	se.company = wo.company
+	se.work_order = wo.name
+	# Tag so it's traceable as a return against this Work Order.
+	if se.meta.has_field("remarks"):
+		se.remarks = f"Material Return for Work Order {wo.name}"
+
+	for item, remaining in leftovers:
+		target = item.source_warehouse or wo.source_warehouse
+		se.append(
+			"items",
+			{
+				"item_code": item.item_code,
+				"qty": remaining,
+				"s_warehouse": wo.wip_warehouse,
+				"t_warehouse": target,
+			},
+		)
+
+	se.set_stock_entry_type()
+	return se.as_dict()
 
 
 @frappe.whitelist()

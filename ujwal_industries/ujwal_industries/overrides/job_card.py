@@ -461,6 +461,7 @@ def job_card_validate(doc: Document, method=None):
     set_previous_tool(doc)
     validate_job_card_qty_not_over_tolerance(doc, method)
     apply_order_completed_status(doc)
+    apply_material_return_status(doc)
 
 
 def apply_order_completed_status(doc: Document) -> None:
@@ -489,6 +490,23 @@ def apply_order_completed_status(doc: Document) -> None:
             _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
 
     doc.status = "Completed"
+
+
+def apply_material_return_status(doc: Document) -> None:
+    """
+    Keep the Job Card status as "Material Return" once the operator has signalled it.
+
+    Like apply_order_completed_status, this runs in validate so ERPNext's set_status()
+    (which only knows its own statuses) does not reset it back during save. The signal
+    is the "Material Return" pause reason on the latest time log.
+    """
+    if doc.docstatus != 0:
+        return
+
+    last_log = doc.time_logs[-1] if doc.time_logs else None
+    if last_log and last_log.custom_pause_reason == "Material Return":
+        doc.status = "Material Return"
+
 
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
@@ -713,6 +731,78 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # AVI
     _create_job_card_downtime(job_card, pause_reason)
     # AVI
+    frappe.db.commit()
+
+
+MATERIAL_RETURN_REASON = "Material Return"
+
+
+@frappe.whitelist()
+def material_return_stop_job(args: dict[str, Any] | str) -> None:
+    """
+    Operator signals a Material Return: the machine broke / job cannot continue, so
+    whatever was produced so far stays on the Job Card and the remaining transferred
+    raw material has to be returned to store.
+
+    This:
+      - records the produced qty so far on the closing time log (if a row is open),
+      - tags that time log with the "Material Return" pause reason,
+      - sets the Job Card status to "Material Return" (the Store Display surfaces this).
+
+    Unlike pause_job_with_reason, this works even when there is no open time log
+    (job never started, or 0 qty produced) so material can be returned at any point.
+    Store then manually creates the Manufacture Stock Entry for the produced qty and
+    the return Stock Entry for the leftover raw material.
+    """
+    import json
+
+    if isinstance(args, str):
+        args = json.loads(args)
+
+    job_card_id = args.get("job_card_id")
+    completed_qty = flt(args.get("completed_qty") or 0)
+
+    if not job_card_id:
+        frappe.throw("Job Card ID is required")
+
+    job_card = frappe.get_doc("Job Card", job_card_id)
+
+    if job_card.docstatus != 0:
+        frappe.throw("Material Return can only be done on a draft Job Card.")
+
+    open_row_name = next((tl.name for tl in job_card.time_logs if not tl.to_time), None)
+
+    if open_row_name:
+        # Job is running: close the open time log via core, then tag it.
+        from erpnext.manufacturing.doctype.job_card.job_card import make_time_log
+
+        close_args = dict(args)
+        close_args["status"] = "On Hold"
+        make_time_log(close_args)
+        job_card.reload()
+
+        row = next((tl for tl in job_card.time_logs if tl.name == open_row_name), None)
+        if row:
+            row.custom_pause_reason = MATERIAL_RETURN_REASON
+            if completed_qty > 0:
+                row.completed_qty = completed_qty
+    else:
+        # Job not running (Open / already paused / 0 qty). Append a zero-duration
+        # marker time log so the "Material Return" reason is recorded.
+        now = now_datetime()
+        job_card.append(
+            "time_logs",
+            {
+                "from_time": now,
+                "to_time": now,
+                "completed_qty": completed_qty if completed_qty > 0 else 0,
+                "operation": job_card.operation,
+                "custom_pause_reason": MATERIAL_RETURN_REASON,
+            },
+        )
+
+    job_card.status = MATERIAL_RETURN_REASON
+    job_card.save(ignore_permissions=True)
     frappe.db.commit()
 
 

@@ -51,6 +51,9 @@ def get_store_display_data():
 		manufactured_qty = flt(jc.get("manufactured_qty"))
 		wo_received_qty = flt(wo.wo_received_qty)
 		balance_counting_qty = manufactured_qty - wo_received_qty
+		# FG produced on the floor but not yet receipted via a Manufacture Stock Entry,
+		# i.e. the qty the Store Incharge still needs to confirm/receive into stock.
+		balance_to_confirm = max(manufactured_qty - wo_received_qty, 0)
 
 		# planned_end_date is carried onto the WO from the Production Plan (at creation
 		# and preserved on submit), so read it directly here.
@@ -79,6 +82,7 @@ def get_store_display_data():
 				"material_issued_qty": sum(flt(r.transferred_qty) for r in rm),
 				"manufactured_qty": manufactured_qty,
 				"balance_counting_qty": balance_counting_qty,
+				"balance_to_confirm": balance_to_confirm,
 				"scrap_qty": flt(jc.get("scrap_qty")),
 				"scrap_rec_qty": flt(jc.get("scrap_rec_qty")),
 				"jo_status": jo_status,
