@@ -342,6 +342,10 @@ class CustomProductionPlan(ProductionPlan):
             po.company = self.company
             po.supplier = supplier
             po.is_subcontracted = 0
+            # In House - Vendor: item is manufactured in our premises (Work Order),
+            # but the vendor is paid for the labor/process via a Service PO.
+            # This flag drives the "Service PO" naming series (see purchase_order.autoname).
+            po.custom_service_po = 1
 
             # Get schedule date from first item
             first_item = item_list[0]
