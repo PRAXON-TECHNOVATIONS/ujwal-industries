@@ -42,7 +42,7 @@ app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
-	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.3",
+	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.4",
 	"/assets/ujwal_industries/js/rate_visibility.js?V=0.1.2",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
