@@ -437,23 +437,35 @@ class CustomProductionPlan(ProductionPlan):
                 else:
                     workstation_list.append(ws)
 
-            if workstation_list:
+            if workstation_list and wo.operations:
+                # The PP custom_workstation only overrides the FIRST operation (the
+                # sending/Blanking step). All later operations keep the machines that
+                # come from their own BOM Operation rows. If custom_workstation lists
+                # multiple machines, the first operation is split in parallel across
+                # them (time divided), while the rest are left untouched.
                 final_operation = []
                 row_count = len(workstation_list)
                 idx = 1
 
-                for operation_row in wo.operations:
-                    base_time = flt(operation_row.time_in_mins)
-                    split_time = base_time if operation_row.fixed_time else base_time / row_count
-                    op_dict = operation_row.as_dict()
+                first_op = wo.operations[0]
+                base_time = flt(first_op.time_in_mins)
+                split_time = base_time if first_op.fixed_time else base_time / row_count
+                first_op_dict = first_op.as_dict()
 
-                    for workstation in workstation_list:
-                        temp = op_dict.copy()
-                        temp['workstation'] = workstation
-                        temp['time_in_mins'] = split_time
-                        temp['idx'] = idx
-                        idx += 1
-                        final_operation.append(temp)
+                for workstation in workstation_list:
+                    temp = first_op_dict.copy()
+                    temp['workstation'] = workstation
+                    temp['time_in_mins'] = split_time
+                    temp['idx'] = idx
+                    idx += 1
+                    final_operation.append(temp)
+
+                # Keep operations 2..N exactly as built from the BOM (machine + time).
+                for operation_row in wo.operations[1:]:
+                    rec = operation_row.as_dict()
+                    rec['idx'] = idx
+                    idx += 1
+                    final_operation.append(rec)
 
                 wo.operations = []
                 for rec in final_operation:
