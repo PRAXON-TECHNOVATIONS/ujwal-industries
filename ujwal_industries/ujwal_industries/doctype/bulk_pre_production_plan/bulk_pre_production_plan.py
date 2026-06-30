@@ -5043,6 +5043,10 @@ def create_production_plans_document(bulk_pp_name) :
 				})
 		
 		for j in so_details.get('mr'):
+			# Skip RM rows that need nothing to be requested (already in stock).
+			# A zero-qty row serves no purpose and Production Plan rejects it on submit.
+			if flt(j.get('qty')) <= 0:
+				continue
 			warehouse = ''
 			item_doc = frappe.get_doc("Item", j.get('item_code'))
 			if item_doc.item_defaults:
@@ -5186,6 +5190,10 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				})
 		
 		for j in so_details.get('mr'):
+			# Skip RM rows that need nothing to be requested (already in stock).
+			# A zero-qty row serves no purpose and Production Plan rejects it on submit.
+			if flt(j.get('qty')) <= 0:
+				continue
 			warehouse = ''
 			item_doc = frappe.get_doc("Item", j.get('item_code'))
 			if item_doc.item_defaults:
@@ -5391,6 +5399,10 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 						})
 
 				for mr_data in so_details.get("mr") or []:
+					# Skip RM rows that need nothing to be requested (already in stock).
+					# A zero-qty row serves no purpose and Production Plan rejects it on submit.
+					if flt(mr_data.get("qty")) <= 0:
+						continue
 					warehouse = mr_data.get("warehouse") or ""
 					if not warehouse and mr_data.get("item_code"):
 						item_doc = frappe.get_doc("Item", mr_data.get("item_code"))

@@ -119,7 +119,7 @@
 
 		// Insert the extra columns right after the subject (Customer Name) column so
 		// the order becomes: Customer Name -> Item Code -> Item Name -> standard fields.
-		let $anchor = $headerLeft.find("> .list-row-col").first();
+		let $anchor = $headerLeft.children(".list-row-col").first();
 		SALES_ORDER_COLUMNS.forEach((column) => {
 			if ($headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`).length) {
 				$anchor = $headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`);
@@ -141,18 +141,25 @@
 	}
 
 	function add_sales_order_row_columns(listview, salesOrder, values) {
-		const $matched = listview.$result
-			.find(".list-row-container [data-name], .list-row[data-name]")
+		// The row's data-name lives on .list-row-checkbox and is URL-encoded, so match
+		// against both the raw and encoded name, then walk up to the .list-row.
+		const encoded = encodeURIComponent(salesOrder);
+		const $checkbox = listview.$result
+			.find(".list-row-container [data-name]")
 			.filter(function () {
-				return $(this).attr("data-name") === salesOrder;
-			});
-		const $row = $matched.hasClass("list-row") ? $matched.first() : $matched.find(".list-row").first();
-		const $rowLeft = $row.find(".level-left");
+				const name = $(this).attr("data-name");
+				return name === salesOrder || name === encoded;
+			})
+			.first();
+		if (!$checkbox.length) return;
+
+		const $row = $checkbox.closest(".list-row");
+		const $rowLeft = $row.find(".level-left").first();
 		if (!$rowLeft.length) return;
 
 		// Mirror the header: insert after the subject column so rows line up by index
 		// with the header in align_list_view().
-		let $anchor = $rowLeft.find("> .list-row-col").first();
+		let $anchor = $rowLeft.children(".list-row-col").first();
 		SALES_ORDER_COLUMNS.forEach((column) => {
 			const value = values[column.key] || "";
 			const html = `<span class="ellipsis">${frappe.utils.escape_html(value)}</span>`;
