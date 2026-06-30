@@ -183,11 +183,18 @@ def make_material_return_stock_entry(work_order):
 
 	for item, remaining in leftovers:
 		target = item.source_warehouse or wo.source_warehouse
+		# Pull the stock UOM from the Item master. Without uom/stock_uom the row is
+		# returned to the client as mandatory-missing, since as_dict() doesn't trigger
+		# the Item fetch that normally fills these on a live form.
+		stock_uom = frappe.db.get_value("Item", item.item_code, "stock_uom")
 		se.append(
 			"items",
 			{
 				"item_code": item.item_code,
 				"qty": remaining,
+				"uom": stock_uom,
+				"stock_uom": stock_uom,
+				"conversion_factor": 1,
 				"s_warehouse": wo.wip_warehouse,
 				"t_warehouse": target,
 			},
