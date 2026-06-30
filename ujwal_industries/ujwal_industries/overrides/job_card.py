@@ -772,20 +772,32 @@ def material_return_stop_job(args: dict[str, Any] | str) -> None:
 
     open_row_name = next((tl.name for tl in job_card.time_logs if not tl.to_time), None)
 
+    # `completed_qty` from the prompt is the CUMULATIVE "Quantity Produced So Far".
+    # `total_completed_qty` is the sum of every time log's `completed_qty`, so the qty
+    # we record on the closing/marker row must be the delta over what other rows
+    # already carry, otherwise the produced qty gets double-counted.
+    precision = job_card.precision("total_completed_qty")
+    already_recorded = sum(
+        flt(tl.completed_qty) for tl in job_card.time_logs if tl.name != open_row_name
+    )
+    delta_qty = flt(completed_qty - already_recorded, precision) if completed_qty > 0 else 0
+    if delta_qty < 0:
+        delta_qty = 0
+
     if open_row_name:
         # Job is running: close the open time log via core, then tag it.
         from erpnext.manufacturing.doctype.job_card.job_card import make_time_log
 
         close_args = dict(args)
         close_args["status"] = "On Hold"
+        close_args["completed_qty"] = delta_qty
         make_time_log(close_args)
         job_card.reload()
 
         row = next((tl for tl in job_card.time_logs if tl.name == open_row_name), None)
         if row:
             row.custom_pause_reason = MATERIAL_RETURN_REASON
-            if completed_qty > 0:
-                row.completed_qty = completed_qty
+            row.completed_qty = delta_qty
     else:
         # Job not running (Open / already paused / 0 qty). Append a zero-duration
         # marker time log so the "Material Return" reason is recorded.
@@ -795,7 +807,7 @@ def material_return_stop_job(args: dict[str, Any] | str) -> None:
             {
                 "from_time": now,
                 "to_time": now,
-                "completed_qty": completed_qty if completed_qty > 0 else 0,
+                "completed_qty": delta_qty,
                 "operation": job_card.operation,
                 "custom_pause_reason": MATERIAL_RETURN_REASON,
             },
