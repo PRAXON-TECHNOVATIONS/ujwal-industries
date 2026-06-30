@@ -59,6 +59,7 @@ def update_work_order_set_work_order_operations(self):
 			operation,
 			description,
 			workstation,
+			custom_workstations_csv,
 			idx,
 			base_hour_rate as hour_rate,
 			time_in_mins,
@@ -84,11 +85,15 @@ def update_work_order_set_work_order_operations(self):
 	for d in operations:
 		d.time_in_mins = _calculate_operation_time(self.qty, d, parallel_row_counts.get(d.idx, 1))
 
+		# Fall back to the first machine in custom_workstations_csv when the BOM
+		# operation has no workstation set directly.
+		workstation = d.workstation or _first_csv_workstation(d.custom_workstations_csv)
+
 		# Append to operations table
 		self.append("operations", {
 			"operation": d.operation,
 			"description": d.description,
-			"workstation": d.workstation,
+			"workstation": workstation,
 			"hour_rate": d.hour_rate,
 			"time_in_mins": d.time_in_mins,
 			"status": d.status,
@@ -97,6 +102,31 @@ def update_work_order_set_work_order_operations(self):
 			"sequence_id": d.sequence_id,
 			"fixed_time": d.fixed_time,
 		})
+
+
+def _first_csv_workstation(csv_value):
+	"""
+	Return the first machine listed in a custom_workstations_csv string, or None.
+
+	The CSV may store the display form "ID-Name" (e.g. "UI/MC/13-2nd Bending"),
+	so resolve it to a valid Workstation name when possible.
+	"""
+	if not csv_value:
+		return None
+
+	first = next((ws.strip() for ws in csv_value.split(",") if ws.strip()), None)
+	if not first:
+		return None
+
+	if frappe.db.exists("Workstation", first):
+		return first
+
+	if "-" in first:
+		candidate = first.split("-", 1)[0].strip()
+		if frappe.db.exists("Workstation", candidate):
+			return candidate
+
+	return first
 
 
 def _get_parallel_row_counts(operations):
