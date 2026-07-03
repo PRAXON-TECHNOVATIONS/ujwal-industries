@@ -17,7 +17,6 @@ from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_to_datetime,
 	_subtract_minutes_from_datetime,
 	get_subcontract_lead_time,
-	get_supplier_lead_time,
 	_backward_schedule,
 	_get_effective_shift_config,
 	get_shift_config_for_shift_types,
@@ -28,6 +27,11 @@ from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_prev_working_date,
 	get_holiday_adjusted_date,
 )
+
+
+# Last-resort lead time (in days) for a raw-material / MR item when the item's own
+# "Lead Time in days" (tabItem.lead_time_days) is blank/0.
+DEFAULT_RM_LEAD_TIME_DAYS = 15
 
 
 @frappe.whitelist()
@@ -2101,9 +2105,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		if getattr(row, "item_code	", None)
 	})
 	grn_map = _fetch_grn_days_map(all_item_codes)         # item_code → grn_days
-	lead_map = _fetch_default_lead_time_map(              # item_code → lead_time_days
-		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)],
-		doc.company
+	# RM lead time comes solely from the Item's own "Lead Time in days" field.
+	item_lead_map = _fetch_item_lead_time_map(
+		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)]
 	)
 	target_warehouse_map = _get_item_default_warehouse_map(
 		list({
@@ -2554,14 +2558,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"lead_days":  0,
 					"start_date": "",
 					"end_date":   "",
-					"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+					"supplier":   getattr(mr, "custom_supplier", "") or "",
 					"supplier_list": mr_supplier_list,
 					"row_name":   mr.name,
 				})
 				continue
 
 			grn_days   = int(grn_map.get(item_code, 0))
-			lead_days  = int(lead_map.get(item_code, 0))
+			# RM lead time = item's own "Lead Time in days", else the default fallback.
+			lead_days  = _rm_lead_days(item_code, item_lead_map)
 			total_days = grn_days + lead_days
 
 			if deepest_sfg_batch0_start:
@@ -2596,7 +2601,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"lead_days":  lead_days,
 				"start_date": str(rm_start),
 				"end_date":   str(rm_end),
-				"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+				"supplier":   getattr(mr, "custom_supplier", "") or "",
 				"supplier_list": mr_supplier_list,
 				"row_name":   mr.name,
 			})
@@ -3065,9 +3070,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		if getattr(row, "item_code	", None)
 	})
 	grn_map = _fetch_grn_days_map(all_item_codes)         # item_code → grn_days
-	lead_map = _fetch_default_lead_time_map(              # item_code → lead_time_days
-		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)],
-		doc.company
+	# RM lead time comes solely from the Item's own "Lead Time in days" field.
+	item_lead_map = _fetch_item_lead_time_map(
+		[r.item_code for rows in so_map.values() for r in rows["mr"] if getattr(r, "item_code", None)]
 	)
 
 	
@@ -3444,14 +3449,15 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 					"lead_days":  0,
 					"start_date": "",
 					"end_date":   "",
-					"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+					"supplier":   getattr(mr, "custom_supplier", "") or "",
 					"supplier_list": mr_supplier_list,
 					"row_name":   mr.name,
 				})
 				continue
 
 			grn_days   = int(grn_map.get(item_code, 0))
-			lead_days  = int(lead_map.get(item_code, 0))
+			# RM lead time = item's own "Lead Time in days", else the default fallback.
+			lead_days  = _rm_lead_days(item_code, item_lead_map)
 			total_days = grn_days + lead_days
 
 			if deepest_sfg_batch0_start:
@@ -3486,7 +3492,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"lead_days":  lead_days,
 				"start_date": str(rm_start),
 				"end_date":   str(rm_end),
-				"supplier":   lead_map.get(f"__supplier_{item_code}", ""),
+				"supplier":   getattr(mr, "custom_supplier", "") or "",
 				"supplier_list": mr_supplier_list,
 				"row_name":   mr.name,
 			})
@@ -3896,6 +3902,28 @@ def _fetch_grn_days_map(item_codes: list[str]) -> dict[str, int]:
 		{"items": item_codes}, as_dict=True
 	)
 	return {r.name: cint(r.grn_days) for r in rows}
+
+
+def _fetch_item_lead_time_map(item_codes: list[str]) -> dict[str, int]:
+	"""Returns {item_code: lead_time_days} from the Item's own Purchasing
+	'Lead Time in days' field (tabItem.lead_time_days). This is the sole source
+	of RM/MR lead time — the subcontracting-supplier table is intentionally not
+	consulted for raw materials."""
+	if not item_codes:
+		return {}
+	rows = frappe.db.sql(
+		"SELECT name, COALESCE(lead_time_days, 0) AS lead_time_days "
+		"FROM `tabItem` WHERE name IN %(items)s",
+		{"items": item_codes}, as_dict=True
+	)
+	return {r.name: cint(r.lead_time_days) for r in rows}
+
+
+def _rm_lead_days(item_code: str, item_lead_map: dict) -> int:
+	"""RM lead time = the item's own 'Lead Time in days', else the default
+	fallback when it is blank/0. Never derived from a supplier."""
+	item_lead = cint((item_lead_map or {}).get(item_code, 0))
+	return item_lead if item_lead > 0 else DEFAULT_RM_LEAD_TIME_DAYS
 
 
 def _fetch_default_lead_time_map(item_codes: list[str], company: str) -> dict[str, int]:
@@ -4833,17 +4861,14 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 		if not earliest_sfg_schedule:
 			continue
 
-		# Populate supplier
-		if not mr_row.custom_supplier:
-			default_supplier = get_default_supplier_for_item(mr_row.item_code, doc.company)
-			if default_supplier:
-				mr_row.custom_supplier = default_supplier
+		# Supplier is manual/info-only for RM (it just flows to the MR later) — do
+		# not auto-fill it and it must not affect scheduling. Keep whatever the
+		# user set on the row.
 
-		# Get supplier lead time + GRN processing days
-		lead_time_days = 0
-		if mr_row.custom_supplier:
-			lt_result = get_supplier_lead_time(mr_row.item_code, mr_row.custom_supplier, doc.company)
-			lead_time_days = lt_result.get("lead_time_days", 0)
+		# RM lead time = the item's own "Lead Time in days" field, else the default
+		# fallback. The subcontracting-supplier table is intentionally not consulted.
+		_item_lead = cint(frappe.db.get_value("Item", mr_row.item_code, "lead_time_days") or 0)
+		lead_time_days = _item_lead if _item_lead > 0 else DEFAULT_RM_LEAD_TIME_DAYS
 		grn_days_mr = mr_grn_days_map.get(mr_row.item_code, 0)
 		mr_row.custom_lead_days = lead_time_days
 		mr_row.custom_grn_days = grn_days_mr
@@ -5111,6 +5136,14 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 	so_data = json.loads(bulk_pp.custom_batch_schedule)
 	created_plans = []
 
+	# Authoritative RM supplier comes from the saved BPP child rows (custom_supplier),
+	# keyed by (sales_order, item_code). This is more reliable than the batch-schedule
+	# JSON, which can lag behind a just-picked supplier.
+	mr_supplier_by_key = {
+		(row.sales_order, row.item_code): (row.custom_supplier or "")
+		for row in bulk_pp.mr_items
+	}
+
 	for so_name in sales_orders:
 		if so_name not in so_data:
 			continue
@@ -5198,6 +5231,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 			item_doc = frappe.get_doc("Item", j.get('item_code'))
 			if item_doc.item_defaults:
 					warehouse = item_doc.item_defaults[0].get('default_warehouse')
+			rm_supplier = mr_supplier_by_key.get((i, j.get('item_code'))) or j.get('supplier') or ""
 			pp_doc.append('mr_items',{
 				'item_code' :  j.get('item_code'),
 				'item_name' :  j.get('item_name'),
@@ -5205,7 +5239,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				'custom_start_date' :  j.get('start_date'),
 				'schedule_date' :  j.get('end_date'),
 				'quantity' :  j.get('qty'),
-				'custom_supplier' :  j.get('supplier'),
+				'custom_supplier' :  rm_supplier,
 			})
 		_run_machine_availability_check_for_production_plan(pp_doc)
 		pp_doc.save()

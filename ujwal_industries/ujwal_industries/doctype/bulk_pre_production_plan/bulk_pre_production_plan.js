@@ -67,6 +67,15 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		}, 200);
 	},
 
+	// When the doc becomes dirty the primary button turns into "Save". Clear any
+	// greyed-out styling we applied to the "Submit" button so Save stays clickable.
+	// Run once now and again after Frappe finishes repainting the primary button.
+	dirty: function (frm) {
+		reset_bulk_pp_submit_button_styles(frm);
+		setTimeout(() => reset_bulk_pp_submit_button_styles(frm), 100);
+		setTimeout(() => reset_bulk_pp_submit_button_styles(frm), 400);
+	},
+
 	refresh: function (frm) {
 
 		cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function (i, item) {
@@ -607,18 +616,32 @@ function update_bulk_pp_submit_button(frm) {
 function reset_bulk_pp_submit_button_styles(frm) {
 	if (!frm.page || !frm.page.wrapper) return;
 
-	frm.page.wrapper.find('.bpp-submit-disabled')
-		.prop('disabled', false)
-		.removeClass('bpp-submit-disabled')
-		.removeAttr('title')
-		.css({
-			'background-color': '',
-			'border-color': '',
-			'color': '',
-			'cursor': '',
-			'box-shadow': '',
-			'opacity': ''
-		});
+	const clear = ($btn) => {
+		$btn.prop('disabled', false)
+			.removeClass('bpp-submit-disabled')
+			.removeAttr('title')
+			.css({
+				'background-color': '',
+				'border-color': '',
+				'color': '',
+				'cursor': '',
+				'box-shadow': '',
+				'opacity': ''
+			});
+	};
+
+	const $wrapper = frm.page.wrapper;
+
+	// 1) Any button we previously greyed out.
+	clear($wrapper.find('.bpp-submit-disabled'));
+
+	// 2) Safety net: if Frappe re-rendered the primary button into a fresh "Save"
+	//    element that inherited stale styling, clear it by its live label too.
+	$wrapper.find('.page-actions button').each(function () {
+		const label = ($(this).attr('data-label') || '').replace(/%20/g, ' ').trim();
+		const text = ($(this).text() || '').trim();
+		if (label === 'Save' || text === __('Save')) clear($(this));
+	});
 }
 
 
@@ -762,6 +785,9 @@ const _AG_ASSETS = [
 
 // Grid instance registry keyed by SO name (so we can destroy/recreate on tab switch)
 let _grids = {};
+// Remembers the last SO tab the user was on, so a save/reload keeps that tab active
+// instead of snapping back to the first one.
+let _active_so = null;
 let _ag_loaded = false;
 let _bom_options_cache = {};
 let _bom_recalc_inflight = false;
@@ -828,25 +854,45 @@ function setup_production_tabs(frm) {
 		</div>`;
 
 	// ── SO tabs ──────────────────────────────────────────────────────────────
+	// Keep the previously-selected SO active across re-renders (e.g. after a save).
+	// Fall back to the first SO if the remembered one is no longer present.
+	if (!_active_so || !so_list.some(s => s.so_name === _active_so)) {
+		_active_so = so_list[0].so_name;
+	}
 	let tabs_li = '';
 	let tabs_content = '';
 	so_list.forEach((so_data, idx) => {
-		const active = idx === 0 ? 'active' : '';
+		const active = so_data.so_name === _active_so ? 'active' : '';
 		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
 		const isMerged = so_row.merged == 1;
+		const ppCreated = !!so_row.custom_pp_created;
 		const del_date = frappe.format(so_row.delivery_date, { fieldtype: 'Date' });
+
+		// Background / border priority: PP created (green) > merged (amber) > default.
+		let bg = '';
+		let border = '';
+		if (ppCreated) {
+			bg = '#DCFCE7';
+			border = '1px solid #16A34A';
+		} else if (isMerged) {
+			bg = '#FEF3C7';
+			border = '1px solid #F59E0B';
+		}
+
+		const nameColor = active ? '#1E3A5F' : (ppCreated ? '#15803D' : '#64748B');
+
 		tabs_li += `
-    
 			<li class="nav-item">
 				<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
-					href="#bpp-so-${idx}" role="tab"
+					href="javascript:void(0)" data-target="#bpp-so-${idx}" role="tab"
+					data-pp-created="${ppCreated ? 1 : 0}" data-merged="${isMerged ? 1 : 0}"
+					title="${ppCreated ? 'Production Plan already created for this Sales Order' : 'Production Plan not yet created'}"
 					style="padding:8px 18px; font-size:12px; cursor:pointer;
-					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};
-					background:${isMerged ? '#FEF3C7' : ''};
-					border:${isMerged ? '1px solid #F59E0B' : ''};"
-
-					<i class="fa ${so_row.custom_pp_created ? 'fa-check-circle' : 'fa-file-text-o'}" 
-						style="margin-right:4px; font-size:11px; color:${so_row.custom_pp_created ? '#16A34A' : 'inherit'};"></i>
+					border-radius:6px 6px 0 0; font-weight:600; color:${nameColor};
+					background:${bg};
+					border:${border};">
+					<i class="fa ${ppCreated ? 'fa-check-circle' : 'fa-file-text-o'}"
+						style="margin-right:4px; font-size:11px; color:${ppCreated ? '#16A34A' : 'inherit'};"></i>
 					${so_data.so_name}
 					<span style="display:block; font-size:10px; font-weight:400; color:#94A3B8; margin-top:1px;">
 						${so_row.customer || ''} · ${del_date}
@@ -876,12 +922,23 @@ function setup_production_tabs(frm) {
 	// Tab click
 	html_field.$wrapper.find('#bppTabs .nav-link').on('click', function (e) {
 		e.preventDefault();
-		html_field.$wrapper.find('#bppTabs .nav-link').removeClass('active')
-			.css({ color: '#64748B', borderBottom: 'none', background: 'transparent' });
+		// Reset every tab to its own resting background/colour based on PP-created / merged state.
+		html_field.$wrapper.find('#bppTabs .nav-link').removeClass('active').each(function () {
+			const $t = $(this);
+			const isPP = $t.attr('data-pp-created') === '1';
+			const isMrg = $t.attr('data-merged') === '1';
+			$t.css({
+				color: isPP ? '#15803D' : '#64748B',
+				borderBottom: 'none',
+				background: isPP ? '#DCFCE7' : (isMrg ? '#FEF3C7' : 'transparent'),
+			});
+		});
 		html_field.$wrapper.find('.tab-pane').removeClass('show active');
 		$(this).addClass('active')
 			.css({ color: '#1E3A5F', borderBottom: '2px solid #2563EB', background: '#EFF6FF' });
-		const target = $(this).attr('href');
+		// Remember this SO so it stays selected across save/reload re-renders.
+		_active_so = $(this).attr('data-so');
+		const target = $(this).attr('data-target');
 		html_field.$wrapper.find(target).addClass('show active');
 	});
 
@@ -3847,6 +3904,7 @@ function _find_so_for_row(schedule, row_name) {
 	for (const [so, data] of Object.entries(schedule)) {
 		if ((data.sfg_chain || []).some(s => s.row_name === row_name)) return so;
 		if ((data.fg || []).some(f => f.row_name === row_name)) return so;
+		if ((data.mr || []).some(m => m.row_name === row_name)) return so;
 	}
 	return null;
 }
@@ -3857,7 +3915,10 @@ function _sync_parallel_schedule_override(frm, row_name, row_type, patch = {}) {
 		const schedule = JSON.parse(frm.doc.custom_batch_schedule);
 		const so_name = _find_so_for_row(schedule, row_name);
 		if (!so_name || !schedule[so_name]) return;
-		const collection = row_type === 'fg' ? (schedule[so_name].fg || []) : (schedule[so_name].sfg_chain || []);
+		let collection;
+		if (row_type === 'fg') collection = schedule[so_name].fg || [];
+		else if (row_type === 'mr') collection = schedule[so_name].mr || [];
+		else collection = schedule[so_name].sfg_chain || [];
 		const row = collection.find(item => item.row_name === row_name);
 		if (!row) return;
 		Object.assign(row, patch || {});
@@ -4299,6 +4360,10 @@ function _shift_display_html(csv_value) {
 }
 
 function _get_supplier_options(txt, allowed_codes) {
+    // allowed_codes is intentionally ignored: the supplier is a free manual pick,
+    // and the row's `supplier_list` holds display labels ("NAME - Full Name"), not
+    // bare Supplier names — using it as an `in` filter matched nothing and made the
+    // search appear broken. Always search the full Supplier list instead.
     const args = {
         doctype: 'Supplier',
         fields: ['name', 'custom_supplier_names'],
@@ -4309,9 +4374,6 @@ function _get_supplier_options(txt, allowed_codes) {
             ['name', 'like', `%${txt}%`],
             ['custom_supplier_names', 'like', `%${txt}%`]
         ];
-    }
-    if (allowed_codes && allowed_codes.length) {
-        args.filters = [['name', 'in', allowed_codes]];
     }
     return frappe.call({ method: 'frappe.client.get_list', args })
         .then(res => (res.message || []).map(s => ({
@@ -5881,9 +5943,12 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			const fieldname = p.colDef.field;
 			if (!fieldname) return;
 
+			// Parallel/consolidated RM rows come from the computed schedule and do
+			// not carry `sales_order`; use the section's `so_name` for the lookup.
+			const _row_so = p.data.sales_order || so_name;
 			const mr_row = (frm.doc.mr_items || []).find(r =>
 				r.item_code === p.data.item_code &&
-				r.sales_order === p.data.sales_order
+				r.sales_order === _row_so
 			);
 
 			if (!mr_row) {
@@ -5891,20 +5956,33 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				return;
 			}
 
-			const db_field = _par ? 'supplier' : 'custom_supplier';
+			// The MR child doctype only has `custom_supplier` (no `supplier` field),
+			// so always persist there regardless of the grid's display column name.
+			const db_field = 'custom_supplier';
 
 			if (fieldname === 'supplier' || fieldname === 'custom_supplier') {
 				frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
 					_mark_form_dirty(frm);
 				});
+				// Parallel/Consolidated grids re-render from the stored batch-schedule
+				// JSON, so mirror the supplier there too — otherwise it reverts on reload.
+				if (_par) {
+					_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier: p.newValue || '' });
+				}
 				// Fetch and update supplier name in the grid cell
 				if (p.newValue) {
 					frappe.db.get_value('Supplier', p.newValue, 'custom_supplier_names').then(r => {
 						p.data.supplier_name = r.message?.custom_supplier_names || p.newValue;
+						if (_par) {
+							_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier_name: p.data.supplier_name });
+						}
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
 					});
 				} else {
 					p.data.supplier_name = '';
+					if (_par) {
+						_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier_name: '' });
+					}
 					p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
 				}
 				return;
