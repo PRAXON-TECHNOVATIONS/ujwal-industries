@@ -4,8 +4,8 @@ from frappe.utils import add_days, nowdate
 
 @frappe.whitelist()
 def get_machine_production_data():
-	"""Return active job cards (planned within -inf..today+3) grouped by workstation/machine."""
-	window_end = add_days(nowdate(), 3)
+	"""Return active job cards (planned within -inf..today+7) grouped by workstation/machine."""
+	window_end = add_days(nowdate(), 7)
 
 	rows = frappe.db.sql(
 		"""
