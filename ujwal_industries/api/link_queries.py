@@ -15,8 +15,23 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 	extra_values = []
 	if isinstance(filters, dict):
 		for field, value in filters.items():
-			extra_where += f" AND `tab{doctype}`.`{field}` = %s"
-			extra_values.append(value)
+			if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[0], str):
+				operator, operand = value
+				operator = operator.upper()
+				if operator == "!=" and operand == "":
+					extra_where += f" AND `tab{doctype}`.`{field}` IS NOT NULL AND `tab{doctype}`.`{field}` != ''"
+				elif operator in ("=", "!=", ">", "<", ">=", "<=", "LIKE"):
+					extra_where += f" AND `tab{doctype}`.`{field}` {operator} %s"
+					extra_values.append(operand)
+				elif operator == "IN" and isinstance(operand, (list, tuple)):
+					placeholders = ", ".join(["%s"] * len(operand))
+					extra_where += f" AND `tab{doctype}`.`{field}` IN ({placeholders})"
+					extra_values.extend(operand)
+				else:
+					frappe.throw(f"Unsupported filter operator: {operator}")
+			else:
+				extra_where += f" AND `tab{doctype}`.`{field}` = %s"
+				extra_values.append(value)
 
 	sql = f"""
 		SELECT
@@ -48,8 +63,23 @@ def customer_query(doctype, txt, searchfield, start, page_len, filters):
 	extra_values = []
 	if isinstance(filters, dict):
 		for field, value in filters.items():
-			extra_where += f" AND `tabCustomer`.`{field}` = %s"
-			extra_values.append(value)
+			if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[0], str):
+				operator, operand = value
+				operator = operator.upper()
+				if operator == "!=" and operand == "":
+					extra_where += f" AND `tabCustomer`.`{field}` IS NOT NULL AND `tabCustomer`.`{field}` != ''"
+				elif operator in ("=", "!=", ">", "<", ">=", "<=", "LIKE"):
+					extra_where += f" AND `tabCustomer`.`{field}` {operator} %s"
+					extra_values.append(operand)
+				elif operator == "IN" and isinstance(operand, (list, tuple)):
+					placeholders = ", ".join(["%s"] * len(operand))
+					extra_where += f" AND `tabCustomer`.`{field}` IN ({placeholders})"
+					extra_values.extend(operand)
+				else:
+					frappe.throw(f"Unsupported filter operator: {operator}")
+			else:
+				extra_where += f" AND `tabCustomer`.`{field}` = %s"
+				extra_values.append(value)
 
 	sql = f"""
 		SELECT
