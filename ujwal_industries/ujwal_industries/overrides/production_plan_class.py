@@ -146,10 +146,10 @@ class CustomProductionPlan(ProductionPlan):
         for _key, item in items_data.items():
             # Check if this FG item is marked for subcontracting
             # Note: get_production_items() returns 'production_item', not 'item_code'
-            item_code = item.get("production_item")
+            production_plan_item = item.get("production_plan_item")
             fg_row = None
             for po_item in self.po_items:
-                if po_item.item_code == item_code:
+                if po_item.name == production_plan_item:
                     fg_row = po_item
                     break
 

@@ -36,7 +36,11 @@ def _sync_delivery_note_row(item):
 
 
 def sync_sales_order_position_numbers(doc, method=None):
-	_set_position_numbers(doc)
+	# Auto-numbering disabled: Pos. NO. (custom_po_no) is now manually editable
+	# on Sales Order so users can insert/renumber rows (e.g. 10, 20, 40).
+	# To revert to auto sequential numbering (10, 20, 30, ...), uncomment the
+	# line below and set custom_po_no's read_only back to 1 on Sales Order Item.
+	# _set_position_numbers(doc)
 
 	for item in doc.get("items", []):
 		position_number = item.get(POSITION_FIELDNAME)
