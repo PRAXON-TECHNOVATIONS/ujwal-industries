@@ -2,11 +2,18 @@ const POSITION_FIELDNAME = 'custom_po_no';
 const ITEMS_FIELDNAME = 'items';
 const SALES_ORDER_ITEM_DOCTYPE = 'Sales Order Item';
 
+// Auto-numbering disabled: Pos. NO. (custom_po_no) is now manually editable
+// on Sales Order so users can insert/renumber rows (e.g. 10, 20, 40).
+// To revert to auto sequential numbering (10, 20, 30, ...), uncomment the
+// ujwal_set_so_position_numbers() calls below and the read_only line in
+// ujwal_configure_so_position_number_field(), and restore custom_po_no's
+// read_only property to 1 on Sales Order Item.
+
 frappe.ui.form.on('Sales Order', {
 	setup: function (frm) {
 		ujwal_patch_so_update_child_items();
 		ujwal_configure_so_position_number_field(frm);
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 	refresh: function (frm) {
 		ujwal_configure_so_position_number_field(frm);
@@ -16,25 +23,25 @@ frappe.ui.form.on('Sales Order', {
 		ujwal_style_so_pending_rows(frm);
 	},
 	validate: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 	items_add: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 	items_remove: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 });
 
 frappe.ui.form.on(SALES_ORDER_ITEM_DOCTYPE, {
 	items_add: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 	items_move: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 	items_remove: function (frm) {
-		ujwal_set_so_position_numbers(frm);
+		// ujwal_set_so_position_numbers(frm);
 	},
 });
 
@@ -46,7 +53,7 @@ function ujwal_configure_so_position_number_field(frm) {
 
 	items_grid.update_docfield_property(POSITION_FIELDNAME, 'hidden', 0);
 	items_grid.update_docfield_property(POSITION_FIELDNAME, 'in_list_view', 1);
-	items_grid.update_docfield_property(POSITION_FIELDNAME, 'read_only', 1);
+	// items_grid.update_docfield_property(POSITION_FIELDNAME, 'read_only', 1);
 	frm.refresh_field(ITEMS_FIELDNAME);
 }
 
@@ -104,6 +111,7 @@ function ujwal_so_update_items_dialog(opts) {
 		rate: d.rate,
 		uom: d.uom,
 		conversion_factor: d.conversion_factor,
+		[POSITION_FIELDNAME]: d[POSITION_FIELDNAME],
 	}));
 
 	const table_fields = [
@@ -141,6 +149,13 @@ function ujwal_so_update_items_dialog(opts) {
 			in_list_view: 1,
 			label: __('Rate'),
 			precision: get_precision('rate'),
+		},
+		{
+			fieldtype: 'Data',
+			fieldname: POSITION_FIELDNAME,
+			in_list_view: 1,
+			label: __('Pos. NO.'),
+			reqd: 1,
 		},
 	];
 
