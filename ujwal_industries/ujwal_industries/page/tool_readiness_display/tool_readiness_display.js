@@ -18,11 +18,10 @@ function statusCfg(s) {
 	return STATUS_CFG[s] || { color: '#ffffff', bg: '#4b5563', border: '#1f2937' };
 }
 
-// Remaining-days severity band: <=7 urgent (red), 8-14 warning (yellow), >14 fine (green).
+// Remaining-days severity band: 1-7 urgent (red), everything else fine (green).
 function daysCfg(d) {
 	if (d === null || d === undefined) return { color: '#6b7280', bg: '#f3f4f6', label: '—' };
 	if (d <= 7) return { color: '#ffffff', bg: '#b91c1c', label: `${d}d` };
-	if (d <= 14) return { color: '#3f2d00', bg: '#eab308', label: `${d}d` };
 	return { color: '#ffffff', bg: '#15803d', label: `${d}d` };
 }
 
@@ -140,7 +139,7 @@ class ToolReadinessDisplay {
 			<col style="width:110px">
 			<col style="width:220px">
 			<col style="width:190px">
-			<col style="width:140px">
+			<col style="width:90px">
 		</colgroup>`;
 
 		const thead = `
@@ -152,7 +151,7 @@ class ToolReadinessDisplay {
 			<th>PP Start Date</th>
 			<th>Tool Name</th>
 			<th>Current Tool Status</th>
-			<th>Remaining Days</th>
+			<th>Production Remaining Days</th>
 		</tr></thead>`;
 
 		const tbody = pageRows
@@ -296,7 +295,7 @@ class ToolReadinessDisplay {
 	border-radius: 8px;
 }
 .trd-table {
-	min-width: 1200px;
+	min-width: 1100px;
 	width: 100%;
 	table-layout: fixed;
 	border-collapse: collapse;

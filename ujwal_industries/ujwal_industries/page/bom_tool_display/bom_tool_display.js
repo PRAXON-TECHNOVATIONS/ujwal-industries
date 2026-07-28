@@ -1,7 +1,7 @@
 frappe.pages['bom_tool_display'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: 'BOM Tool Display',
+		title: 'Tool Status Report',
 		single_column: true,
 	});
 
@@ -149,6 +149,11 @@ class BomToolDisplay {
 		$w.find('.page-actions, .custom-actions').css('margin-top', '0');
 		$w.find('.page-head-content').css({ 'margin-bottom': '0', 'padding-bottom': '0' });
 		$w.find('.standard-sidebar-section, .page-form').css('display', 'none');
+		$w.find('.page-body').css({ 'padding-top': '0', 'margin-top': '0' });
+		$w.find('.layout-main, .layout-main-section, .layout-main-section-wrapper').css({
+			'padding-top': '0',
+			'margin-top': '0',
+		});
 	}
 
 	_load() {
@@ -259,7 +264,7 @@ class BomToolDisplay {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 12px;
-	padding: 8px 20px;
+	padding: 2px 20px 6px;
 	position: relative;
 	z-index: 20;
 }
