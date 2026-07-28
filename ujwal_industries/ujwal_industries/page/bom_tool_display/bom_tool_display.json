@@ -9,9 +9,9 @@
  "module": "Ujwal Industries",
  "name": "bom_tool_display",
  "owner": "Administrator",
- "page_name": "BOM Tool Display",
+ "page_name": "Tool Status Report",
  "roles": [],
  "standard": "No",
  "system_page": 0,
- "title": "BOM Tool Display"
+ "title": "Tool Status Report"
 }
