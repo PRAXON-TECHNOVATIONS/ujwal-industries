@@ -198,6 +198,9 @@ doc_events = {
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
 	},
+	"Workstation": {
+		"validate": "ujwal_industries.ujwal_industries.overrides.workstation.calculate_day_cost"
+	},
 
 	"Customer": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.customer.autoname"

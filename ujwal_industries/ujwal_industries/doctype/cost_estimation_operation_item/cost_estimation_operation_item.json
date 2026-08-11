@@ -1,48 +1,44 @@
 {
  "actions": [],
- "creation": "2026-07-09 00:00:00.000000",
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
   "operation",
   "workstation",
-  "source_bom",
-  "source_item",
+  "machine_name",
   "column_break_1",
-  "time_in_mins",
-  "hour_rate",
-  "machine_cost"
+  "time_per_pc_min",
+  "shift_rate_per_min",
+  "rate_per_pc"
  ],
  "fields": [
   {
+   "columns": 2,
    "fieldname": "operation",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Operation",
-   "read_only": 1
+   "options": "Operation",
+   "reqd": 1
   },
   {
+   "columns": 2,
    "fieldname": "workstation",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Workstation",
+   "label": "Machine",
    "options": "Workstation",
-   "read_only": 1
+   "reqd": 1
   },
   {
-   "fieldname": "source_bom",
-   "fieldtype": "Link",
+   "columns": 2,
+   "fieldname": "machine_name",
+   "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Source BOM",
-   "options": "BOM",
-   "read_only": 1
-  },
-  {
-   "fieldname": "source_item",
-   "fieldtype": "Link",
-   "label": "Source Item",
-   "options": "Item",
+   "label": "Machine Name",
    "read_only": 1
   },
   {
@@ -50,32 +46,38 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "time_in_mins",
+   "columns": 2,
+   "fieldname": "time_per_pc_min",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Time (Mins)"
+   "label": "Per Min / Pc"
   },
   {
-   "fieldname": "hour_rate",
+   "columns": 2,
+   "fetch_from": "workstation.custom_cost_per_min",
+   "fetch_if_empty": 0,
+   "fieldname": "shift_rate_per_min",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Hour Rate"
+   "label": "Shift Rate per Min"
   },
   {
-   "fieldname": "machine_cost",
+   "columns": 2,
+   "fieldname": "rate_per_pc",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Machine Cost",
+   "label": "Rate per Pc",
    "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-07-09 00:00:00.000000",
+ "modified": "2026-08-11 00:00:00",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
- "name": "Cost Estimation Machine Item",
+ "name": "Cost Estimation Operation Item",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",

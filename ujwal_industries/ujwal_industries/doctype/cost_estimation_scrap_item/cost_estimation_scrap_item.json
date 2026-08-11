@@ -1,79 +1,62 @@
 {
  "actions": [],
- "creation": "2026-07-14 00:00:00.000000",
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "item_code",
-  "item_name",
-  "source_bom",
-  "source_item",
+  "scrap_description",
+  "scrap_rate_per_kg",
+  "scrap_wt_per_pc",
   "column_break_1",
-  "qty",
-  "rate",
-  "amount"
+  "scrap_price_per_pc"
  ],
  "fields": [
   {
-   "fieldname": "item_code",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Item Code",
-   "options": "Item"
-  },
-  {
-   "fetch_from": "item_code.item_name",
-   "fieldname": "item_name",
+   "columns": 3,
+   "fieldname": "scrap_description",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Item Name",
-   "read_only": 1
+   "label": "Scrap Description",
+   "reqd": 1
   },
   {
-   "fieldname": "source_bom",
-   "fieldtype": "Link",
+   "columns": 2,
+   "fieldname": "scrap_rate_per_kg",
+   "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Source BOM",
-   "options": "BOM"
+   "label": "Scrap Rate / Kg"
   },
   {
-   "fieldname": "source_item",
-   "fieldtype": "Link",
-   "label": "Source Item",
-   "options": "Item"
+   "columns": 2,
+   "fieldname": "scrap_wt_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Scrap Wt / Pc (Kg)",
+   "precision": "4"
   },
   {
    "fieldname": "column_break_1",
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "qty",
-   "fieldtype": "Float",
-   "in_list_view": 1,
-   "label": "Qty"
-  },
-  {
-   "fieldname": "rate",
+   "columns": 2,
+   "fieldname": "scrap_price_per_pc",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Rate"
-  },
-  {
-   "fieldname": "amount",
-   "fieldtype": "Currency",
-   "in_list_view": 1,
-   "label": "Amount",
+   "label": "Scrap Price / Pc",
    "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-07-14 00:00:00.000000",
+ "modified": "2026-08-11 00:00:00",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Cost Estimation Scrap Item",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",
