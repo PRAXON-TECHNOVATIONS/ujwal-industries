@@ -76,6 +76,34 @@ function update_status_indicator(frm) {
 	frm.page.set_indicator(status, color);
 }
 
+// ─── Cost Estimation: day-cost roll-up ───────────────────────────────────────
+
+frappe.ui.form.on("Workstation", {
+	custom_machine_emi_per_day: calculate_workstation_day_cost,
+	custom_wages_per_day: calculate_workstation_day_cost,
+	custom_electricity_per_day: calculate_workstation_day_cost,
+	custom_factory_expenses_per_day: calculate_workstation_day_cost,
+	custom_finance_cost_per_day: calculate_workstation_day_cost,
+	custom_admin_cost_per_day: calculate_workstation_day_cost,
+	custom_selling_dist_cost_per_day: calculate_workstation_day_cost,
+	custom_shift_hours: calculate_workstation_day_cost,
+});
+
+function calculate_workstation_day_cost(frm) {
+	const total = flt(frm.doc.custom_machine_emi_per_day)
+		+ flt(frm.doc.custom_wages_per_day)
+		+ flt(frm.doc.custom_electricity_per_day)
+		+ flt(frm.doc.custom_factory_expenses_per_day)
+		+ flt(frm.doc.custom_finance_cost_per_day)
+		+ flt(frm.doc.custom_admin_cost_per_day)
+		+ flt(frm.doc.custom_selling_dist_cost_per_day);
+
+	frm.set_value("custom_total_cost_per_day", total);
+
+	const shift_hours = flt(frm.doc.custom_shift_hours);
+	frm.set_value("custom_cost_per_min", shift_hours ? total / 60 / shift_hours : 0);
+}
+
 // ─── Operator management patch on WorkstationDashboard ──────────────────────
 
 (function patch_workstation_dashboard() {

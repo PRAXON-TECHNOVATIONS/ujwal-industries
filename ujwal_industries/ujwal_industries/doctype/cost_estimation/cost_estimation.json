@@ -1,57 +1,34 @@
 {
  "actions": [],
- "autoname": "CEST-.YYYY.-.#####",
- "creation": "2026-07-09 00:00:00",
+ "allow_rename": 1,
+ "autoname": "CE-.####",
+ "creation": "2026-08-11 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "opportunity",
   "item",
   "item_name",
-  "bom",
+  "part_no",
   "column_break_hdr1",
   "company",
-  "currency",
-  "qty",
   "estimation_date",
-  "valid_till",
-  "amended_from",
-  "rm_tab",
-  "total_rm_cost",
-  "scrap_recovery",
-  "column_break_rm1",
-  "net_rm_cost",
-  "section_break_dykh",
+  "qty",
+  "rm_section",
   "rm_items",
+  "total_gross_rm_cost_per_pc",
+  "column_break_rm1",
   "scrap_items",
-  "machine_tab",
-  "total_machine_cost",
-  "column_break_mach1",
-  "tree_total_machine_cost",
-  "machine_items",
-  "labour_tab",
-  "total_labour_cost",
-  "column_break_lab1",
-  "tree_total_labour_cost",
-  "labour_items",
-  "overhead_tab",
-  "total_overhead_cost",
-  "column_break_ovh1",
-  "tree_total_overhead_cost",
-  "overhead_items",
-  "summary_tab",
-  "subtotal_cost",
-  "column_break_sum1",
-  "total_estimated_cost",
-  "cost_per_unit"
+  "total_scrap_price_per_pc",
+  "section_break_rm2",
+  "net_rm_cost_per_pc",
+  "operations_tab",
+  "operation_items",
+  "total_labour_cost_per_pc",
+  "summary_section",
+  "total_cost_per_pc",
+  "amended_from"
  ],
  "fields": [
-  {
-   "fieldname": "opportunity",
-   "fieldtype": "Link",
-   "label": "Opportunity",
-   "options": "Opportunity"
-  },
   {
    "fieldname": "item",
    "fieldtype": "Link",
@@ -64,16 +41,15 @@
    "fetch_from": "item.item_name",
    "fieldname": "item_name",
    "fieldtype": "Data",
-   "label": "Item Name",
+   "label": "Part Name",
    "read_only": 1
   },
   {
-   "fieldname": "bom",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "BOM",
-   "options": "BOM",
-   "reqd": 1
+   "fetch_from": "item.item_code",
+   "fieldname": "part_no",
+   "fieldtype": "Data",
+   "label": "Part No",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_hdr1",
@@ -82,78 +58,43 @@
   {
    "fieldname": "company",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Company",
    "options": "Company",
-   "reqd": 1
-  },
-  {
-   "fieldname": "currency",
-   "fieldtype": "Link",
-   "label": "Currency",
-   "options": "Currency"
-  },
-  {
-   "default": "1",
-   "fieldname": "qty",
-   "fieldtype": "Float",
-   "label": "Quantity",
    "reqd": 1
   },
   {
    "default": "Today",
    "fieldname": "estimation_date",
    "fieldtype": "Date",
-   "in_list_view": 1,
    "label": "Estimation Date",
    "reqd": 1
   },
   {
-   "fieldname": "valid_till",
-   "fieldtype": "Date",
-   "label": "Valid Till"
+   "default": "1",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Quantity"
   },
   {
-   "fieldname": "amended_from",
-   "fieldtype": "Link",
-   "label": "Amended From",
-   "no_copy": 1,
-   "options": "Cost Estimation",
-   "print_hide": 1,
-   "read_only": 1
-  },
-  {
-   "fieldname": "rm_tab",
-   "fieldtype": "Tab Break",
+   "fieldname": "rm_section",
+   "fieldtype": "Section Break",
    "label": "Raw Material"
   },
   {
-   "fieldname": "total_rm_cost",
-   "fieldtype": "Currency",
-   "label": "Total RM Cost",
-   "read_only": 1
+   "fieldname": "rm_items",
+   "fieldtype": "Table",
+   "label": "RM Items",
+   "options": "Cost Estimation RM Item"
   },
   {
-   "fieldname": "scrap_recovery",
+   "fieldname": "total_gross_rm_cost_per_pc",
    "fieldtype": "Currency",
-   "label": "Scrap Recovery",
+   "label": "Total Gross RM Cost / Pc",
    "read_only": 1
   },
   {
    "fieldname": "column_break_rm1",
    "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "net_rm_cost",
-   "fieldtype": "Currency",
-   "label": "Net RM Cost",
-   "read_only": 1
-  },
-  {
-   "fieldname": "rm_items",
-   "fieldtype": "Table",
-   "label": "Raw Material Items",
-   "options": "Cost Estimation RM Item"
   },
   {
    "fieldname": "scrap_items",
@@ -162,125 +103,71 @@
    "options": "Cost Estimation Scrap Item"
   },
   {
-   "fieldname": "machine_tab",
+   "fieldname": "total_scrap_price_per_pc",
+   "fieldtype": "Currency",
+   "label": "Total Scrap Price / Pc",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_rm2",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "net_rm_cost_per_pc",
+   "fieldtype": "Currency",
+   "label": "Net RM Cost / Pc",
+   "read_only": 1,
+   "bold": 1
+  },
+  {
+   "fieldname": "operations_tab",
    "fieldtype": "Tab Break",
-   "label": "Machine & Power"
+   "label": "Operations"
   },
   {
-   "fieldname": "total_machine_cost",
-   "fieldtype": "Currency",
-   "label": "Total Machine Cost (Top Level)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_mach1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "tree_total_machine_cost",
-   "fieldtype": "Currency",
-   "label": "Total Machine Cost (All Levels)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "machine_items",
+   "fieldname": "operation_items",
    "fieldtype": "Table",
-   "label": "Machine Items",
-   "options": "Cost Estimation Machine Item"
+   "label": "Operations",
+   "options": "Cost Estimation Operation Item"
   },
   {
-   "fieldname": "labour_tab",
-   "fieldtype": "Tab Break",
-   "label": "Labour"
-  },
-  {
-   "fieldname": "total_labour_cost",
+   "fieldname": "total_labour_cost_per_pc",
    "fieldtype": "Currency",
-   "label": "Total Labour Cost (Top Level)",
+   "label": "Total Labour Cost / Pc",
    "read_only": 1
   },
   {
-   "fieldname": "column_break_lab1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "tree_total_labour_cost",
-   "fieldtype": "Currency",
-   "label": "Total Labour Cost (All Levels)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "labour_items",
-   "fieldtype": "Table",
-   "label": "Labour Items",
-   "options": "Cost Estimation Labour Item"
-  },
-  {
-   "fieldname": "overhead_tab",
-   "fieldtype": "Tab Break",
-   "label": "Overheads"
-  },
-  {
-   "fieldname": "total_overhead_cost",
-   "fieldtype": "Currency",
-   "label": "Total Overhead Cost (Top Level)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_ovh1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "tree_total_overhead_cost",
-   "fieldtype": "Currency",
-   "label": "Total Overhead Cost (All Levels)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "overhead_items",
-   "fieldtype": "Table",
-   "label": "Overhead Items",
-   "options": "Cost Estimation Overhead Item"
-  },
-  {
-   "fieldname": "summary_tab",
-   "fieldtype": "Tab Break",
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
    "label": "Summary"
   },
   {
-   "fieldname": "subtotal_cost",
+   "fieldname": "total_cost_per_pc",
    "fieldtype": "Currency",
-   "label": "Subtotal (RM + Machine + Labour)",
-   "read_only": 1
+   "label": "Total Cost / Pc",
+   "read_only": 1,
+   "bold": 1
   },
   {
-   "fieldname": "column_break_sum1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "total_estimated_cost",
-   "fieldtype": "Currency",
-   "label": "Total Estimated Cost",
-   "read_only": 1
-  },
-  {
-   "fieldname": "cost_per_unit",
-   "fieldtype": "Currency",
-   "label": "Cost Per Piece",
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_break_dykh",
-   "fieldtype": "Section Break"
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Cost Estimation",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
   }
  ],
+ "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-07-14 16:07:47.309286",
+ "modified": "2026-08-11 00:00:00",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Cost Estimation",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {
@@ -298,11 +185,36 @@
    "share": 1,
    "submit": 1,
    "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing User",
+   "select": 1,
+   "share": 1,
+   "write": 1
   }
  ],
  "row_format": "Dynamic",
+ "search_fields": "item, part_no",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "title_field": "item_name"
 }
