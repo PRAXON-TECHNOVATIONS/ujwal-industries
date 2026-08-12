@@ -57,16 +57,18 @@
    "fetch_from": "workstation.custom_cost_per_min",
    "fetch_if_empty": 0,
    "fieldname": "shift_rate_per_min",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Shift Rate per Min"
+   "label": "Shift Rate per Min",
+   "precision": "4"
   },
   {
    "columns": 2,
    "fieldname": "rate_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Rate per Pc",
+   "precision": "2",
    "read_only": 1
   }
  ],

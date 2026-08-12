@@ -16,17 +16,19 @@
   {
    "columns": 3,
    "fieldname": "scrap_description",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Scrap Description",
+   "label": "Scrap Item",
+   "options": "Item",
    "reqd": 1
   },
   {
    "columns": 2,
    "fieldname": "scrap_rate_per_kg",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Scrap Rate / Kg"
+   "label": "Scrap Rate / Kg",
+   "precision": "2"
   },
   {
    "columns": 2,
@@ -43,9 +45,10 @@
   {
    "columns": 2,
    "fieldname": "scrap_price_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Scrap Price / Pc",
+   "precision": "2",
    "read_only": 1
   }
  ],

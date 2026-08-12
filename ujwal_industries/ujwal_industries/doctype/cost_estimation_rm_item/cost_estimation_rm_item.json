@@ -16,17 +16,19 @@
   {
    "columns": 3,
    "fieldname": "rm_used",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "label": "RM Used",
+   "options": "Item",
    "reqd": 1
   },
   {
    "columns": 2,
    "fieldname": "rm_rate_per_kg",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "RM Rate / Kg"
+   "label": "RM Rate / Kg",
+   "precision": "2"
   },
   {
    "columns": 2,
@@ -43,9 +45,10 @@
   {
    "columns": 2,
    "fieldname": "gross_rm_cost_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Gross RM Cost / Pc",
+   "precision": "2",
    "read_only": 1
   }
  ],
