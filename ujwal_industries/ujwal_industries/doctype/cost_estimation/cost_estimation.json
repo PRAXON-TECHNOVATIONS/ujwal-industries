@@ -16,7 +16,7 @@
   "rm_section",
   "rm_items",
   "total_gross_rm_cost_per_pc",
-  "column_break_rm1",
+  "scrap_section",
   "scrap_items",
   "total_scrap_price_per_pc",
   "section_break_rm2",
@@ -88,13 +88,15 @@
   },
   {
    "fieldname": "total_gross_rm_cost_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "label": "Total Gross RM Cost / Pc",
+   "precision": "2",
    "read_only": 1
   },
   {
-   "fieldname": "column_break_rm1",
-   "fieldtype": "Column Break"
+   "fieldname": "scrap_section",
+   "fieldtype": "Section Break",
+   "label": "Scrap"
   },
   {
    "fieldname": "scrap_items",
@@ -104,8 +106,9 @@
   },
   {
    "fieldname": "total_scrap_price_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "label": "Total Scrap Price / Pc",
+   "precision": "2",
    "read_only": 1
   },
   {
@@ -114,8 +117,9 @@
   },
   {
    "fieldname": "net_rm_cost_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "label": "Net RM Cost / Pc",
+   "precision": "2",
    "read_only": 1,
    "bold": 1
   },
@@ -132,8 +136,9 @@
   },
   {
    "fieldname": "total_labour_cost_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "label": "Total Labour Cost / Pc",
+   "precision": "2",
    "read_only": 1
   },
   {
@@ -143,8 +148,9 @@
   },
   {
    "fieldname": "total_cost_per_pc",
-   "fieldtype": "Currency",
+   "fieldtype": "Float",
    "label": "Total Cost / Pc",
+   "precision": "2",
    "read_only": 1,
    "bold": 1
   },
