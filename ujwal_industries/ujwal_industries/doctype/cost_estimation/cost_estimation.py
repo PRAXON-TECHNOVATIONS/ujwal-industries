@@ -14,6 +14,7 @@ class CostEstimation(Document):
 		self.calculate_operations_cost()
 		self.calculate_other_costs()
 		self.calculate_totals()
+		self.set_summary_html()
 
 	def calculate_rm_cost(self):
 		total_gross_rm_cost = 0.0
@@ -75,3 +76,41 @@ class CostEstimation(Document):
 			self.profit_amount = base_for_pct * flt(self.profit_pct) / 100
 
 		self.total_component_cost = flt(self.total_cost_per_pc) + flt(self.profit_amount)
+		self.total_component_cost_for_qty = self.total_component_cost * flt(self.qty)
+
+	def set_summary_html(self):
+		rows = [
+			("Total Gross RM Cost / Pc", self.total_gross_rm_cost_per_pc),
+			("Total Scrap Price / Pc", -flt(self.total_scrap_price_per_pc)),
+			("Net RM Cost / Pc", self.net_rm_cost_per_pc, True),
+			("Total Labour (Operations) Cost / Pc", self.total_labour_cost_per_pc, True),
+			("Inventory Carrying Cost / Pc", self.inventory_carrying_cost),
+			("Packing & Forwarding Cost / Pc", self.packing_forwarding_cost),
+			("Rejection Cost / Pc", self.rejection_cost),
+			("Total Cost / Pc", self.total_cost_per_pc, True),
+			("Profit Amount / Pc", self.profit_amount),
+			("Total Component Cost / Pc", self.total_component_cost, True),
+			(f"Total Component Cost (Qty: {flt(self.qty)})", self.total_component_cost_for_qty, True),
+		]
+
+		row_html = ""
+		for row in rows:
+			label, value = row[0], row[1]
+			is_total = len(row) > 2 and row[2]
+			style = (
+				"font-weight:600;border-top:1px solid var(--border-color);"
+				if is_total
+				else "color:var(--text-muted);"
+			)
+			row_html += f"""
+				<tr style="{style}">
+					<td style="padding:6px 12px;">{label}</td>
+					<td style="padding:6px 12px;text-align:right;">{flt(value):.3f}</td>
+				</tr>
+			"""
+
+		self.summary_html = f"""
+			<table style="width:100%;border-collapse:collapse;max-width:480px;">
+				{row_html}
+			</table>
+		"""

@@ -5,6 +5,7 @@ frappe.ui.form.on("Cost Estimation", {
 	refresh: function (frm) {
 		calculate_rm_totals(frm);
 	},
+	qty: calculate_totals,
 	inventory_carrying_pct: calculate_other_costs,
 	packing_forwarding_pct: calculate_other_costs,
 	rejection_pct: calculate_other_costs,
@@ -172,4 +173,49 @@ function calculate_totals(frm) {
 
 	frm.doc.total_component_cost = flt(frm.doc.total_cost_per_pc) + flt(frm.doc.profit_amount);
 	frm.refresh_field("total_component_cost");
+
+	frm.doc.total_component_cost_for_qty = flt(frm.doc.total_component_cost) * flt(frm.doc.qty);
+	frm.refresh_field("total_component_cost_for_qty");
+
+	render_summary(frm);
+}
+
+function render_summary(frm) {
+	const rows = [
+		["Total Gross RM Cost / Pc", frm.doc.total_gross_rm_cost_per_pc],
+		["Total Scrap Price / Pc", -flt(frm.doc.total_scrap_price_per_pc)],
+		["Net RM Cost / Pc", frm.doc.net_rm_cost_per_pc, true],
+		["Total Labour (Operations) Cost / Pc", frm.doc.total_labour_cost_per_pc, true],
+		["Inventory Carrying Cost / Pc", frm.doc.inventory_carrying_cost],
+		["Packing & Forwarding Cost / Pc", frm.doc.packing_forwarding_cost],
+		["Rejection Cost / Pc", frm.doc.rejection_cost],
+		["Total Cost / Pc", frm.doc.total_cost_per_pc, true],
+		["Profit Amount / Pc", frm.doc.profit_amount],
+		["Total Component Cost / Pc", frm.doc.total_component_cost, true],
+		[`Total Component Cost (Qty: ${flt(frm.doc.qty)})`, frm.doc.total_component_cost_for_qty, true],
+	];
+
+	const row_html = rows
+		.map(([label, value, is_total]) => {
+			const style = is_total
+				? "font-weight:600;border-top:1px solid var(--border-color);"
+				: "color:var(--text-muted);";
+			return `
+				<tr style="${style}">
+					<td style="padding:6px 12px;">${label}</td>
+					<td style="padding:6px 12px;text-align:right;">${flt(value).toFixed(3)}</td>
+				</tr>
+			`;
+		})
+		.join("");
+
+	frm.doc.summary_html = `
+		<table style="width:100%;border-collapse:collapse;max-width:480px;">
+			${row_html}
+		</table>
+	`;
+
+	if (frm.fields_dict.summary_html) {
+		frm.fields_dict.summary_html.$wrapper.html(frm.doc.summary_html);
+	}
 }

@@ -28,7 +28,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "RM Rate / Kg",
-   "precision": "2",
+   "precision": "3",
    "description": "Auto-fetched from the item's last purchase rate when RM Used is picked. Editable."
   },
   {
@@ -37,7 +37,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Gross Wt / Pc (Kg)",
-   "precision": "4"
+   "precision": "3"
   },
   {
    "fieldname": "column_break_1",
@@ -49,7 +49,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Gross RM Cost / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   }
  ],
