@@ -39,6 +39,9 @@
   "profit_pct",
   "profit_amount",
   "total_component_cost",
+  "total_component_cost_for_qty",
+  "summary_tab",
+  "summary_html",
   "amended_from"
  ],
  "fields": [
@@ -86,7 +89,8 @@
    "default": "1",
    "fieldname": "qty",
    "fieldtype": "Float",
-   "label": "Quantity"
+   "label": "Quantity",
+   "precision": "3"
   },
   {
    "fieldname": "rm_section",
@@ -103,7 +107,7 @@
    "fieldname": "total_gross_rm_cost_per_pc",
    "fieldtype": "Float",
    "label": "Total Gross RM Cost / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
@@ -121,7 +125,7 @@
    "fieldname": "total_scrap_price_per_pc",
    "fieldtype": "Float",
    "label": "Total Scrap Price / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
@@ -132,7 +136,7 @@
    "fieldname": "net_rm_cost_per_pc",
    "fieldtype": "Float",
    "label": "Net RM Cost / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1,
    "bold": 1
   },
@@ -151,7 +155,7 @@
    "fieldname": "total_labour_cost_per_pc",
    "fieldtype": "Float",
    "label": "Total Labour Cost / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
@@ -185,21 +189,21 @@
    "fieldname": "inventory_carrying_cost",
    "fieldtype": "Float",
    "label": "Inventory Carrying Cost",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
    "fieldname": "packing_forwarding_cost",
    "fieldtype": "Float",
    "label": "Packing & Forwarding Cost",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
    "fieldname": "rejection_cost",
    "fieldtype": "Float",
    "label": "Rejection Cost",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   },
   {
@@ -211,7 +215,7 @@
    "fieldname": "total_cost_per_pc",
    "fieldtype": "Float",
    "label": "Total Cost / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1,
    "bold": 1,
    "description": "Net RM Cost + Total Labour Cost + Inventory Carrying + Packing & Forwarding + Rejection"
@@ -238,7 +242,7 @@
    "fieldname": "profit_amount",
    "fieldtype": "Float",
    "label": "Profit Amount",
-   "precision": "2",
+   "precision": "3",
    "read_only_depends_on": "eval:doc.profit_mode == 'Percentage'",
    "description": "Auto-computed when Profit Mode is Percentage. Type directly when Flat Amount."
   },
@@ -246,10 +250,29 @@
    "fieldname": "total_component_cost",
    "fieldtype": "Float",
    "label": "Total Component Cost",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1,
    "bold": 1,
    "description": "Total Cost / Pc + Profit Amount"
+  },
+  {
+   "fieldname": "total_component_cost_for_qty",
+   "fieldtype": "Float",
+   "label": "Total Component Cost (for Qty)",
+   "precision": "3",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Total Component Cost × Quantity"
+  },
+  {
+   "fieldname": "summary_tab",
+   "fieldtype": "Tab Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "summary_html",
+   "fieldtype": "HTML",
+   "label": "Cost Summary"
   },
   {
    "fieldname": "amended_from",

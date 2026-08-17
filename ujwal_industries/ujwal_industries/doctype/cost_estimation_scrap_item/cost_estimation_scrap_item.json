@@ -28,7 +28,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Scrap Rate / Kg",
-   "precision": "2"
+   "precision": "3"
   },
   {
    "columns": 2,
@@ -36,7 +36,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Scrap Wt / Pc (Kg)",
-   "precision": "4"
+   "precision": "3"
   },
   {
    "fieldname": "column_break_1",
@@ -48,7 +48,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Scrap Price / Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only": 1
   }
  ],

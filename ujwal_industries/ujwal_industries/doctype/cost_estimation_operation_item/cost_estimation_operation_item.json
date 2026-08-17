@@ -60,7 +60,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Shift Rate per Min",
-   "precision": "4"
+   "precision": "3"
   },
   {
    "columns": 2,
@@ -68,7 +68,7 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Rate per Pc",
-   "precision": "2",
+   "precision": "3",
    "read_only_depends_on": "eval:doc.workstation",
    "description": "Auto-computed from Machine. If no Machine is set, type the rate directly (e.g. subcontractor's quoted rate)."
   }

@@ -15,7 +15,7 @@ def create_fields():
             "fieldname": "custom_machine_emi_per_day",
             "fieldtype": "Float",
             "label": "Machine EMI per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_cost_estimation_tab",
         },
         {
@@ -23,7 +23,7 @@ def create_fields():
             "fieldname": "custom_wages_per_day",
             "fieldtype": "Float",
             "label": "Wages per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_machine_emi_per_day",
         },
         {
@@ -31,7 +31,7 @@ def create_fields():
             "fieldname": "custom_electricity_per_day",
             "fieldtype": "Float",
             "label": "Electricity Charges per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_wages_per_day",
         },
         {
@@ -45,7 +45,7 @@ def create_fields():
             "fieldname": "custom_factory_expenses_per_day",
             "fieldtype": "Float",
             "label": "Factory Expenses per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_cost_column_break_1",
         },
         {
@@ -53,7 +53,7 @@ def create_fields():
             "fieldname": "custom_finance_cost_per_day",
             "fieldtype": "Float",
             "label": "Finance Cost per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_factory_expenses_per_day",
         },
         {
@@ -61,7 +61,7 @@ def create_fields():
             "fieldname": "custom_admin_cost_per_day",
             "fieldtype": "Float",
             "label": "Admin Cost per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_finance_cost_per_day",
         },
         {
@@ -69,7 +69,7 @@ def create_fields():
             "fieldname": "custom_selling_dist_cost_per_day",
             "fieldtype": "Float",
             "label": "Selling & Distribution Cost per Day",
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_admin_cost_per_day",
         },
         {
@@ -84,7 +84,7 @@ def create_fields():
             "fieldtype": "Float",
             "label": "Total Cost per Day",
             "read_only": 1,
-            "precision": "2",
+            "precision": "3",
             "insert_after": "custom_cost_section_break_1",
             "description": "Sum of EMI, wages, electricity, factory, finance, admin and selling costs per day.",
         },
@@ -93,6 +93,7 @@ def create_fields():
             "fieldname": "custom_shift_hours",
             "fieldtype": "Float",
             "label": "Shift Hours",
+            "precision": "3",
             "default": "8",
             "insert_after": "custom_total_cost_per_day",
         },
@@ -108,7 +109,7 @@ def create_fields():
             "fieldtype": "Float",
             "label": "Cost per Min (Shift Rate)",
             "read_only": 1,
-            "precision": "4",
+            "precision": "3",
             "insert_after": "custom_cost_column_break_2",
             "description": "Total Cost per Day / 60 / Shift Hours. Used as the default Shift Rate per Min on Cost Estimation.",
         },
