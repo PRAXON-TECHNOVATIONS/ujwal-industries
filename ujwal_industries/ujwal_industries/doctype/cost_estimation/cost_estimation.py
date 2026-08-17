@@ -41,7 +41,7 @@ class CostEstimation(Document):
 				row.machine_name = frappe.db.get_value("Asset", asset, "asset_name") if asset else None
 
 			row.rate_per_pc = math.ceil(
-				flt(row.time_per_pc_min) * flt(row.shift_rate_per_min) * 100
+				flt(row.shift_rate_per_min) / flt(row.time_per_pc_min) * 100
 			) / 100
 			total_labour_cost += flt(row.rate_per_pc)
 
