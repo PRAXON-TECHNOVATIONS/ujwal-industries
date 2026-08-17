@@ -31,7 +31,7 @@
    "in_list_view": 1,
    "label": "Machine",
    "options": "Workstation",
-   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine — type Rate / Pc directly instead."
+   "reqd": 1
   },
   {
    "columns": 2,
@@ -69,8 +69,7 @@
    "in_list_view": 1,
    "label": "Rate per Pc",
    "precision": "2",
-   "read_only_depends_on": "eval:doc.workstation",
-   "description": "Auto-computed from Machine. If no Machine is set, type the rate directly (e.g. subcontractor's quoted rate)."
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

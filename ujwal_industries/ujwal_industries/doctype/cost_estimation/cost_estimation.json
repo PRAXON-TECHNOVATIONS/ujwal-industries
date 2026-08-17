@@ -24,21 +24,8 @@
   "operations_tab",
   "operation_items",
   "total_labour_cost_per_pc",
-  "other_costs_tab",
-  "inventory_carrying_pct",
-  "packing_forwarding_pct",
-  "rejection_pct",
-  "column_break_oc1",
-  "inventory_carrying_cost",
-  "packing_forwarding_cost",
-  "rejection_cost",
   "summary_section",
   "total_cost_per_pc",
-  "column_break_sum1",
-  "profit_mode",
-  "profit_pct",
-  "profit_amount",
-  "total_component_cost",
   "amended_from"
  ],
  "fields": [
@@ -155,54 +142,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "other_costs_tab",
-   "fieldtype": "Tab Break",
-   "label": "Other Costs"
-  },
-  {
-   "fieldname": "inventory_carrying_pct",
-   "fieldtype": "Percent",
-   "label": "Inventory Carrying %",
-   "description": "% of RM rate × Gross Wt"
-  },
-  {
-   "fieldname": "packing_forwarding_pct",
-   "fieldtype": "Percent",
-   "label": "Packing & Forwarding %",
-   "description": "% of (Net RM Cost + Total Labour Cost)"
-  },
-  {
-   "fieldname": "rejection_pct",
-   "fieldtype": "Percent",
-   "label": "Rejection %",
-   "description": "% of (Net RM Cost + Total Labour Cost)"
-  },
-  {
-   "fieldname": "column_break_oc1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "inventory_carrying_cost",
-   "fieldtype": "Float",
-   "label": "Inventory Carrying Cost",
-   "precision": "2",
-   "read_only": 1
-  },
-  {
-   "fieldname": "packing_forwarding_cost",
-   "fieldtype": "Float",
-   "label": "Packing & Forwarding Cost",
-   "precision": "2",
-   "read_only": 1
-  },
-  {
-   "fieldname": "rejection_cost",
-   "fieldtype": "Float",
-   "label": "Rejection Cost",
-   "precision": "2",
-   "read_only": 1
-  },
-  {
    "fieldname": "summary_section",
    "fieldtype": "Section Break",
    "label": "Summary"
@@ -213,43 +152,7 @@
    "label": "Total Cost / Pc",
    "precision": "2",
    "read_only": 1,
-   "bold": 1,
-   "description": "Net RM Cost + Total Labour Cost + Inventory Carrying + Packing & Forwarding + Rejection"
-  },
-  {
-   "fieldname": "column_break_sum1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "Percentage",
-   "fieldname": "profit_mode",
-   "fieldtype": "Select",
-   "label": "Profit Mode",
-   "options": "Percentage\nFlat Amount"
-  },
-  {
-   "depends_on": "eval:doc.profit_mode == 'Percentage'",
-   "fieldname": "profit_pct",
-   "fieldtype": "Percent",
-   "label": "Profit %",
-   "description": "% of (Net RM Cost + Total Labour Cost)"
-  },
-  {
-   "fieldname": "profit_amount",
-   "fieldtype": "Float",
-   "label": "Profit Amount",
-   "precision": "2",
-   "read_only_depends_on": "eval:doc.profit_mode == 'Percentage'",
-   "description": "Auto-computed when Profit Mode is Percentage. Type directly when Flat Amount."
-  },
-  {
-   "fieldname": "total_component_cost",
-   "fieldtype": "Float",
-   "label": "Total Component Cost",
-   "precision": "2",
-   "read_only": 1,
-   "bold": 1,
-   "description": "Total Cost / Pc + Profit Amount"
+   "bold": 1
   },
   {
    "fieldname": "amended_from",
