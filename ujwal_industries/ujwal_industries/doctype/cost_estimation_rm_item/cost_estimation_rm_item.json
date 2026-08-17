@@ -28,7 +28,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "RM Rate / Kg",
-   "precision": "2"
+   "precision": "2",
+   "description": "Auto-fetched from the item's last purchase rate when RM Used is picked. Editable."
   },
   {
    "columns": 2,
