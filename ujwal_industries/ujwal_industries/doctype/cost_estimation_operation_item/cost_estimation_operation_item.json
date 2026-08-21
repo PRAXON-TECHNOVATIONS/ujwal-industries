@@ -9,7 +9,6 @@
   "operation",
   "workstation",
   "machine_name",
-  "column_break_1",
   "time_per_pc_min",
   "shift_rate_per_min",
   "rate_per_pc"
@@ -25,13 +24,13 @@
    "reqd": 1
   },
   {
-   "columns": 2,
+   "columns": 1,
+   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine \u2014 type Rate / Pc directly instead.",
    "fieldname": "workstation",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Machine",
-   "options": "Workstation",
-   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine — type Rate / Pc directly instead."
+   "options": "Workstation"
   },
   {
    "columns": 2,
@@ -40,10 +39,6 @@
    "in_list_view": 1,
    "label": "Machine Name",
    "read_only": 1
-  },
-  {
-   "fieldname": "column_break_1",
-   "fieldtype": "Column Break"
   },
   {
    "columns": 2,
@@ -55,7 +50,6 @@
   {
    "columns": 2,
    "fetch_from": "workstation.custom_cost_per_min",
-   "fetch_if_empty": 0,
    "fieldname": "shift_rate_per_min",
    "fieldtype": "Float",
    "in_list_view": 1,
@@ -63,20 +57,19 @@
    "precision": "3"
   },
   {
-   "columns": 2,
+   "columns": 1,
+   "description": "Auto-computed from Machine when empty. Always editable — type your own rate to override (e.g. while the Machine's cost data isn't set up yet, or for a subcontractor's quoted rate).",
    "fieldname": "rate_per_pc",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Rate per Pc",
-   "precision": "3",
-   "read_only_depends_on": "eval:doc.workstation",
-   "description": "Auto-computed from Machine. If no Machine is set, type the rate directly (e.g. subcontractor's quoted rate)."
+   "precision": "3"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-11 00:00:00",
+ "modified": "2026-08-20 12:44:24.984405",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Cost Estimation Operation Item",
