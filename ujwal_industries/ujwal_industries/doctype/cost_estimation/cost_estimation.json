@@ -13,6 +13,7 @@
   "company",
   "estimation_date",
   "qty",
+  "bom",
   "rm_section",
   "rm_items",
   "total_gross_rm_cost_per_pc",
@@ -91,6 +92,13 @@
    "fieldtype": "Float",
    "label": "Quantity",
    "precision": "3"
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "BOM",
+   "options": "BOM",
+   "description": "Optional. Pick a BOM for this item and use \"Pull from BOM\" to pre-fill RM, Scrap and Operations below — all rows stay editable after pulling."
   },
   {
    "fieldname": "rm_section",
