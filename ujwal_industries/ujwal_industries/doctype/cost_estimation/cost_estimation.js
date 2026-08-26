@@ -8,46 +8,43 @@ frappe.ui.form.on("Cost Estimation", {
 				filters: {
 					item: frm.doc.item,
 					docstatus: 1,
+					is_active: 1,
 				},
 			};
 		});
 	},
 	refresh: function (frm) {
 		calculate_rm_totals(frm);
-
-		if (frm.doc.bom && !frm.is_new()) {
-			frm.add_custom_button(__("Pull from BOM"), function () {
-				const has_existing_rows =
-					(frm.doc.rm_items || []).length ||
-					(frm.doc.scrap_items || []).length ||
-					(frm.doc.operation_items || []).length;
-
-				const do_pull = function () {
-					frappe.dom.freeze(__("Pulling from BOM..."));
-					frm.call("pull_from_bom")
-						.then(() => frm.reload_doc())
-						.then(() => {
-							frappe.show_alert({
-								message: __("Pulled RM, Scrap and Operations from {0}", [frm.doc.bom]),
-								indicator: "green",
-							});
-						})
-						.finally(() => frappe.dom.unfreeze());
-				};
-
-				if (has_existing_rows) {
-					frappe.confirm(
-						__("This will replace the current RM, Scrap and Operations rows with data from {0}. Continue?", [frm.doc.bom]),
-						do_pull
-					);
-				} else {
-					do_pull();
-				}
-			});
-		}
 	},
 	item: function (frm) {
-		frm.set_value("bom", null);
+		if (!frm.doc.item) {
+			frm.set_value("bom", "");
+			return;
+		}
+		// Link fields can fire their change event more than once for a
+		// single pick in some interaction paths — guard against firing two
+		// overlapping fetches for the same item.
+		const item_at_trigger = frm.doc.item;
+		if (frm._fetching_bom_for === item_at_trigger) {
+			return;
+		}
+		frm._fetching_bom_for = item_at_trigger;
+
+		frappe.db.get_value(
+			"BOM",
+			{ item: frm.doc.item, is_default: 1, docstatus: 1 },
+			"name"
+		).then(({ message }) => {
+			if (message && message.name) {
+				frm.set_value("bom", message.name);
+				return fetch_and_apply_bom(frm, message.name);
+			}
+			frm.set_value("bom", "");
+		}).finally(() => {
+			if (frm._fetching_bom_for === item_at_trigger) {
+				frm._fetching_bom_for = null;
+			}
+		});
 	},
 	qty: calculate_totals,
 	inventory_carrying_pct: calculate_other_costs,
@@ -57,6 +54,47 @@ frappe.ui.form.on("Cost Estimation", {
 	profit_pct: calculate_totals,
 	profit_amount: calculate_totals,
 });
+
+function fetch_and_apply_bom(frm, bom) {
+	return frappe.call({
+		method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_bom_explosion",
+		args: { bom: bom, item: frm.doc.item, company: frm.doc.company },
+		freeze: true,
+		freeze_message: __("Fetching from BOM..."),
+	}).then(({ message }) => {
+		if (!message) return;
+
+		frm.clear_table("rm_items");
+		(message.rm_items || []).forEach((row) => frm.add_child("rm_items", row));
+
+		frm.clear_table("scrap_items");
+		(message.scrap_items || []).forEach((row) => frm.add_child("scrap_items", row));
+
+		frm.clear_table("operation_items");
+		(message.operation_items || []).forEach((row) => {
+			const child = frm.add_child("operation_items", row);
+			if (child.workstation && flt(child.time_per_pc_min)) {
+				child.rate_per_pc =
+					Math.ceil((flt(child.shift_rate_per_min) / flt(child.time_per_pc_min)) * 100) / 100;
+			}
+		});
+
+		// Keep this in sync with what the server considers "already
+		// pulled" — otherwise the first Save would re-explode again and
+		// wipe out any edits made in the meantime.
+		frm.doc.last_pulled_bom = bom;
+
+		frm.refresh_field("rm_items");
+		frm.refresh_field("scrap_items");
+		frm.refresh_field("operation_items");
+		calculate_rm_totals(frm);
+
+		frappe.show_alert({
+			message: __("Fetched RM, Scrap and Operations from {0}", [bom]),
+			indicator: "green",
+		});
+	});
+}
 
 frappe.ui.form.on("Cost Estimation RM Item", {
 	rm_used: function (frm, cdt, cdn) {
@@ -183,11 +221,16 @@ function calculate_rm_totals(frm) {
 
 function calculate_operation_row(frm, cdt, cdn) {
 	const row = locals[cdt][cdn];
-	// Only auto-fill Rate per Pc while it's still empty — once a value is
-	// present (auto-computed earlier, or typed by hand), leave it alone so a
-	// manual override isn't silently overwritten by an unrelated input edit.
-	if (row.workstation && !flt(row.rate_per_pc) && flt(row.time_per_pc_min)) {
-		row.rate_per_pc = Math.ceil((flt(row.shift_rate_per_min) / flt(row.time_per_pc_min)) * 100) / 100;
+	// Triggered by editing Per Min/Pc or Shift Rate per Min — editing an
+	// input is a deliberate signal to recalculate, so always recompute here
+	// (this overwrites a manual Rate per Pc override, which is expected:
+	// the user just changed what it's computed from). A direct edit to
+	// Rate per Pc itself goes through a separate handler that doesn't call
+	// this function, so that kind of override is untouched by this path.
+	if (row.workstation) {
+		row.rate_per_pc = flt(row.time_per_pc_min)
+			? Math.ceil((flt(row.shift_rate_per_min) / flt(row.time_per_pc_min)) * 100) / 100
+			: 0;
 	}
 	frm.refresh_field("operation_items");
 	calculate_other_costs(frm);

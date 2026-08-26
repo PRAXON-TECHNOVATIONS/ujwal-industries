@@ -5,6 +5,27 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+
+def sync_subcontract_cost_to_boms(doc: Document, method: str | None = None) -> None:
+    """Whenever an Item's subcontract data is saved, refresh
+    custom_subcontract_operation_cost (and cascade to parent BOMs) on every
+    active, submitted BOM for this item — so BOM's Total Cost reflects the
+    item's current default Subcontract rate without anyone needing to
+    manually revisit each BOM. Cheap and idempotent, so this just always
+    re-syncs rather than trying to detect exactly what changed."""
+    if not doc.get("custom_subcontracting_suppliers"):
+        return
+
+    from ujwal_industries.ujwal_industries.overrides.bom_subcontract_cost import (
+        refresh_subcontract_operation_cost,
+    )
+
+    bom_names = frappe.get_all(
+        "BOM", filters={"item": doc.name, "docstatus": 1, "is_active": 1}, pluck="name"
+    )
+    for bom_name in bom_names:
+        refresh_subcontract_operation_cost(bom_name)
+
 def validate_subcontracting_suppliers(doc: Document, method: str | None = None) -> None:
     """
     Validate Item Subcontracting Supplier table.
