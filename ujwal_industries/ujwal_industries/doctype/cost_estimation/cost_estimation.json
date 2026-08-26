@@ -14,6 +14,7 @@
   "estimation_date",
   "qty",
   "bom",
+  "last_pulled_bom",
   "rm_section",
   "rm_items",
   "total_gross_rm_cost_per_pc",
@@ -98,7 +99,18 @@
    "fieldtype": "Link",
    "label": "BOM",
    "options": "BOM",
-   "description": "Optional. Pick a BOM for this item and use \"Pull from BOM\" to pre-fill RM, Scrap and Operations below — all rows stay editable after pulling."
+   "description": "Auto-set to the item's default BOM when you pick an Item, and RM/Scrap/Operations fill in immediately. Switch to a different active BOM here if needed — on Save, RM/Scrap/Operations will be refreshed from it."
+  },
+  {
+   "fieldname": "last_pulled_bom",
+   "fieldtype": "Data",
+   "label": "Last Pulled BOM",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — tracks which BOM the RM/Scrap/Operations tables were last generated from, so Save only re-pulls when the BOM field has actually changed."
   },
   {
    "fieldname": "rm_section",

@@ -36,7 +36,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Scrap Wt / Pc (Kg)",
-   "precision": "3"
+   "precision": "6",
+   "description": "Shown to 6 decimals — component weights per piece are often a small fraction of a kg, and 3 decimals hides too much to visually verify Rate × Weight = Cost."
   },
   {
    "fieldname": "column_break_1",

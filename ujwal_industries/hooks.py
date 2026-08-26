@@ -194,6 +194,7 @@ doc_events = {
 	"Item": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname",
+		"on_update": "ujwal_industries.ujwal_industries.overrides.item.sync_subcontract_cost_to_boms",
 	},
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
@@ -310,7 +311,8 @@ doc_events = {
 		"validate": [
       					"ujwal_industries.overrides.bom.validate_bom",
       					# "ujwal_industries.overrides.bom.validate_change_bom_value",
-					],			
+						"ujwal_industries.ujwal_industries.overrides.bom_subcontract_cost.set_subcontract_operation_cost",
+					],
 		"autoname": "ujwal_industries.overrides.bom.autoname",
 		"before_save": "ujwal_industries.overrides.bom.before_save",
 		"after_insert": "ujwal_industries.overrides.bom.after_insert",
