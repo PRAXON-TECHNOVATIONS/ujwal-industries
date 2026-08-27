@@ -80,8 +80,8 @@ function update_status_indicator(frm) {
 
 frappe.ui.form.on("Workstation", {
 	custom_machine_emi_per_day: calculate_workstation_day_cost,
-	custom_wages_per_day: calculate_workstation_day_cost,
-	custom_electricity_per_day: calculate_workstation_day_cost,
+	custom_wages_per_shift: calculate_workstation_day_cost,
+	custom_electricity_per_shift: calculate_workstation_day_cost,
 	custom_factory_expenses_per_day: calculate_workstation_day_cost,
 	custom_finance_cost_per_day: calculate_workstation_day_cost,
 	custom_admin_cost_per_day: calculate_workstation_day_cost,
@@ -91,8 +91,8 @@ frappe.ui.form.on("Workstation", {
 
 function calculate_workstation_day_cost(frm) {
 	const total = flt(frm.doc.custom_machine_emi_per_day)
-		+ flt(frm.doc.custom_wages_per_day)
-		+ flt(frm.doc.custom_electricity_per_day)
+		+ flt(frm.doc.custom_wages_per_shift)
+		+ flt(frm.doc.custom_electricity_per_shift)
 		+ flt(frm.doc.custom_factory_expenses_per_day)
 		+ flt(frm.doc.custom_finance_cost_per_day)
 		+ flt(frm.doc.custom_admin_cost_per_day)

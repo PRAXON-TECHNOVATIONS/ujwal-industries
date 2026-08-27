@@ -7,8 +7,78 @@ frappe.ui.form.on('Purchase Order', {
 		ujwal_add_po_approval_buttons(frm);
 		ujwal_show_po_pending_approval_note(frm);
 		ujwal_style_po_pending_rows(frm);
+		ujwal_fetch_subcontract_po_rates_for_all_rows(frm);
 	},
 });
+
+frappe.ui.form.on('Purchase Order Item', {
+	fg_item(frm, cdt, cdn) {
+		// Re-picking the finished good is a deliberate reset — fetch fresh
+		// even if this row's rate was locked from a manual edit before.
+		frappe.model.set_value(cdt, cdn, 'custom_subcontract_rate_locked', 0);
+		ujwal_fetch_subcontract_po_rate(frm, cdt, cdn);
+	},
+
+	rate(frm, cdt, cdn) {
+		// Only lock on rate edits the USER made — our own fetch sets a guard
+		// flag around its own writes so it doesn't lock itself out. Persisted
+		// so it survives save/reload, otherwise reopening a draft PO would
+		// re-fetch and clobber a rate someone deliberately typed in.
+		let row = locals[cdt][cdn];
+		if (row.__subcontract_setting_rate) return;
+		frappe.model.set_value(cdt, cdn, 'custom_subcontract_rate_locked', 1);
+	},
+});
+
+function ujwal_fetch_subcontract_po_rate(frm, cdt, cdn) {
+	// Subcontracting POs only — the "Job Work" service row's rate should be
+	// the finished item's own single-operation Rate/Pc from its default
+	// Subcontract row (Item master → Subcontracting Suppliers), the same rate
+	// Cost Estimation itself pulls in. This is deliberately NOT the
+	// cumulative annexure logic used on the Send to Subcontractor Stock
+	// Entry — a subcontracting PO only pays for the one operation it orders.
+	//
+	// Once a user has typed their own rate on this row
+	// (custom_subcontract_rate_locked), this never runs again for it.
+	let row = locals[cdt][cdn];
+	if (!frm.doc.is_subcontracted || !row.fg_item) return;
+	if (row.custom_subcontract_rate_locked) return;
+
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_subcontract_po_rate',
+		args: {
+			fg_item: row.fg_item,
+			company: frm.doc.company,
+		},
+		callback(r) {
+			if (!r.message) return;
+			let current = locals[cdt] && locals[cdt][cdn];
+			if (!current || current.custom_subcontract_rate_locked) return;
+
+			current.__subcontract_setting_rate = true;
+			frappe.model.set_value(cdt, cdn, 'rate', r.message.rate).then(() => {
+				current.__subcontract_setting_rate = false;
+			});
+		},
+	});
+}
+
+function ujwal_fetch_subcontract_po_rates_for_all_rows(frm) {
+	// fg_item rows brought in via "Get Items From" (Production Plan, Material
+	// Request, etc.) arrive through a server-side mapper, which doesn't fire
+	// the per-row fg_item trigger above — so on load/refresh, sweep every row
+	// once and fetch its rate directly. ujwal_fetch_subcontract_po_rate itself
+	// skips any row already locked by a manual edit.
+	if (!frm.doc.__islocal && frm.doc.docstatus !== 0) return;
+	if (!frm.doc.is_subcontracted || !frm.doc.items || !frm.doc.items.length) return;
+
+	frm.doc.items.forEach((row) => {
+		if (row.fg_item && !row.__subcontract_rate_fetched) {
+			row.__subcontract_rate_fetched = true;
+			ujwal_fetch_subcontract_po_rate(frm, row.doctype, row.name);
+		}
+	});
+}
 
 function ujwal_patch_po_update_child_items() {
 	if (erpnext.utils.__ujwal_po_patched) return;
@@ -210,6 +280,27 @@ function ujwal_po_update_items_dialog(opts) {
 						default_bom: ['!=', ''],
 					},
 				}),
+				onchange: function () {
+					const me = this;
+					if (!me.value) return;
+
+					frappe.call({
+						method: 'ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_subcontract_po_rate',
+						args: {
+							fg_item: me.value,
+							company: frm.doc.company,
+						},
+						callback: function (r) {
+							if (!r.message) return;
+
+							const row = dialog.fields_dict.trans_items.df.data.find((doc) => doc.idx == me.doc.idx);
+							if (row) {
+								row.rate = r.message.rate;
+								dialog.fields_dict.trans_items.grid.refresh();
+							}
+						},
+					});
+				},
 			},
 			{
 				fieldtype: 'Float',

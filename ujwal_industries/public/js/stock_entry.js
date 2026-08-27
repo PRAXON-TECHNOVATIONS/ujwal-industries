@@ -67,7 +67,21 @@ frappe.ui.form.on("Stock Entry Detail", {
     },
 
     subcontracted_item(frm, cdt, cdn) {
+        // Re-picking the item is a deliberate reset — fetch fresh even if
+        // this row's rate was locked from a manual edit before.
+        frappe.model.set_value(cdt, cdn, "custom_annexure_rate_locked", 0);
         fetch_annexure_rate(frm, cdt, cdn);
+    },
+
+    basic_rate(frm, cdt, cdn) {
+        // Only lock on rate edits the USER made — our own fetch sets a guard
+        // flag around its own writes so it doesn't lock itself out. This
+        // flag is persisted (custom field) so it survives save/reload —
+        // otherwise reopening the doc would re-fetch and clobber a rate the
+        // user had deliberately typed in during a previous session.
+        let row = locals[cdt][cdn];
+        if (row.__annexure_setting_rate) return;
+        frappe.model.set_value(cdt, cdn, "custom_annexure_rate_locked", 1);
     },
 
     qty(frm, cdt, cdn) {
@@ -89,8 +103,15 @@ function fetch_annexure_rate(frm, cdt, cdn) {
     // master → Subcontracting Suppliers) says which Operation this shipment
     // is for; the per-piece rate is Net RM Cost/Pc + every operation before
     // that one, from the item's latest submitted Cost Estimation.
+    //
+    // Once a user has typed their own rate on this row (custom_annexure_rate_locked),
+    // this never runs again for it — an auto-fetch has no business silently
+    // overwriting a rate someone deliberately corrected, on this save or any
+    // later reopen. Re-picking the item clears the lock, since that's a
+    // deliberate reset.
     let row = locals[cdt][cdn];
     if (frm.doc.purpose !== "Send to Subcontractor" || !row.subcontracted_item) return;
+    if (row.custom_annexure_rate_locked) return;
 
     frappe.call({
         method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_subcontract_annexure_rate",
@@ -101,21 +122,14 @@ function fetch_annexure_rate(frm, cdt, cdn) {
         },
         callback(r) {
             if (!r.message) return;
-            let rate = r.message.rate;
+            let current = locals[cdt] && locals[cdt][cdn];
+            if (!current || current.custom_annexure_rate_locked) return;
+
+            current.__annexure_setting_rate = true;
             frappe.model.set_value(cdt, cdn, "set_basic_rate_manually", 1);
-            frappe.model.set_value(cdt, cdn, "basic_rate", rate);
-            // ERPNext's own qty/conversion_factor handlers kick off an async
-            // get_incoming_rate call (valuation-based) that overwrites
-            // basic_rate whenever a row's qty is set — including when rows
-            // are bulk-inserted by the Get Items From mapper, which races
-            // with this fetch. Re-assert after it's had time to land, same
-            // defensive pattern as the existing qty() handler in this file.
-            setTimeout(() => {
-                let current = locals[cdt] && locals[cdt][cdn];
-                if (current && current.basic_rate !== rate) {
-                    frappe.model.set_value(cdt, cdn, "basic_rate", rate);
-                }
-            }, 1200);
+            frappe.model.set_value(cdt, cdn, "basic_rate", r.message.rate).then(() => {
+                current.__annexure_setting_rate = false;
+            });
         }
     });
 }
@@ -124,11 +138,8 @@ function fetch_annexure_rates_for_all_rows(frm) {
     // Rows brought in via "Get Items From" → Subcontracting Order arrive
     // through a server-side mapper, which doesn't fire the per-row
     // subcontracted_item trigger above — so on load/refresh, sweep every row
-    // and fetch its rate directly. Runs for every such row regardless of
-    // whatever basic_rate is currently sitting there (including 0 or a stale
-    // valuation-rate fallback ERPNext may have already written in) — only
-    // skipped once the row is already flagged as manually rate-set AND has a
-    // rate, meaning a user has knowingly overridden it since.
+    // once per browser session and fetch its rate directly. fetch_annexure_rate
+    // itself skips any row already locked by a manual edit.
     if (!frm.doc.__islocal && frm.doc.docstatus !== 0) return;
     if (frm.doc.purpose !== "Send to Subcontractor" || !frm.doc.items || !frm.doc.items.length) return;
 
