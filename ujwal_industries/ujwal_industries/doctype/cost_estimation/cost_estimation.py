@@ -246,6 +246,22 @@ def get_subcontract_annexure_rate(item_code, company=None, subcontracting_order=
 	return {"rate": cumulative, "cost_estimation": ce_name, "operation": target_operation}
 
 
+@frappe.whitelist()
+def get_subcontract_po_rate(fg_item, company=None):
+	"""Per-piece service rate to show on a subcontracting Purchase Order row
+	for `fg_item` (the finished item coming back from the subcontractor, e.g.
+	200632 for Case Hardening, 200633 for Plating) — just that one operation's
+	own Rate/Pc, straight off the item's default Subcontract row (Item master
+	→ Subcontracting Suppliers), the same rate Cost Estimation itself pulls in.
+	Unlike the Stock Entry annexure rate, this is NOT cumulative — a
+	subcontracting PO only ever pays for the single operation it's ordering.
+	Returns None if fg_item has no subcontract row."""
+	row = get_subcontract_operation_row(fg_item, company=company)
+	if not row:
+		return None
+	return {"rate": flt(row["rate_per_pc"]), "operation": row["operation"]}
+
+
 def _fmt(value):
 	return f"₹{flt(value):,.3f}"
 

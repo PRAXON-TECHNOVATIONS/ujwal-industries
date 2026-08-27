@@ -16,8 +16,8 @@ def calculate_day_cost(doc: Document, method: str | None = None) -> None:
     Min, used as the default Shift Rate per Min on Cost Estimation."""
     doc.custom_total_cost_per_day = (
         flt(doc.custom_machine_emi_per_day)
-        + flt(doc.custom_wages_per_day)
-        + flt(doc.custom_electricity_per_day)
+        + flt(doc.custom_wages_per_shift)
+        + flt(doc.custom_electricity_per_shift)
         + flt(doc.custom_factory_expenses_per_day)
         + flt(doc.custom_finance_cost_per_day)
         + flt(doc.custom_admin_cost_per_day)
