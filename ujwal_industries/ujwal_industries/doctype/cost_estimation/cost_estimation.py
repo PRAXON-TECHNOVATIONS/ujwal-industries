@@ -13,6 +13,10 @@ def get_last_purchase_rate(item_code):
 	return flt(frappe.db.get_value("Item", item_code, "last_purchase_rate"))
 
 
+def get_item_name(item_code):
+	return frappe.db.get_value("Item", item_code, "item_name")
+
+
 def get_last_sales_rate(item_code):
 	rate = frappe.db.get_value(
 		"Sales Invoice Item",
@@ -78,6 +82,35 @@ def first_workstation_from_csv(csv_value):
 	return csv_value.split(",")[0].strip()
 
 
+def compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities=None):
+	"""Rate/Pc = Shift Rate per Min ÷ Per Min/Pc, then divided by the tool's
+	No of Cavities when one strike of the tool makes more than one piece
+	(e.g. a 10-cavity mould makes 10 pcs per cycle, so machine time is shared
+	across all 10). A missing or zero cavity count means no tool is in use
+	for this operation, so the rate is left undivided."""
+	if not flt(time_per_pc_min):
+		return 0
+	rate = math.ceil(flt(shift_rate_per_min) / flt(time_per_pc_min) * 100) / 100
+	cavities = flt(no_of_cavities)
+	if cavities:
+		rate = math.ceil(rate / cavities * 100) / 100
+	return rate
+
+
+def get_default_tool_for_operation(bom_doc, operation):
+	"""BOM's Tool Details table (custom_tool_details) can list several tools
+	against the same Operation (e.g. alternate moulds) — only the one marked
+	Is Default is the one this estimate should cost against. Returns None if
+	no row is marked default for this operation, so the caller doesn't divide
+	by a tool that isn't actually in use."""
+	if not operation:
+		return None
+	for row in bom_doc.get("custom_tool_details") or []:
+		if row.operation == operation and row.is_default and row.tool:
+			return row.tool
+	return None
+
+
 def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 	"""Walk this BOM and every sub-assembly BOM beneath it, returning
 	flattened RM/Scrap/Operation rows (plain dicts, not appended to any
@@ -87,29 +120,46 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 	operation that turns whatever its own BOM tree produces INTO that item,
 	so it's added right after that tree is walked — Operations land in real
 	process order (raw material's operations first, each subcontract step
-	right after the tree beneath it, working up)."""
+	right after the tree beneath it, working up).
+
+	Every operation row is also tagged with `item` (the item the operation is
+	performed on) and `parent_item` (the assembly item whose BOM consumes
+	that item — blank for the top-level item itself), so the Summary can
+	render Operations as a nested BOM tree instead of a flat list. Alongside
+	that, `item_tree_edges` records an (item, parent_item) pair for EVERY
+	item visited by the walk — including ones with no operations of their
+	own (pure-container assemblies, e.g. one that only exists to group other
+	sub-assemblies) — so the full nesting structure can still be
+	reconstructed even where operation rows alone would leave a gap."""
 	rm_items = []
 	scrap_items = []
 	operation_items = []
+	item_tree_edges = []
 
-	def _walk(bom_name, per_pc_qty):
+	def _walk(bom_name, per_pc_qty, parent_item=None):
 		bom = frappe.get_doc("BOM", bom_name)
 		batch_qty = flt(bom.quantity) or 1
+		this_item = bom.item
+		item_tree_edges.append((this_item, parent_item))
 
 		for row in bom.items:
 			row_qty_per_pc = flt(row.stock_qty) * per_pc_qty / batch_qty
 			if row.bom_no:
-				_walk(row.bom_no, row_qty_per_pc)
+				_walk(row.bom_no, row_qty_per_pc, parent_item=this_item)
 			else:
 				rm_items.append(
 					{
 						"rm_used": row.item_code,
+						"item_name": get_item_name(row.item_code),
 						"rm_rate_per_kg": get_last_purchase_rate(row.item_code),
 						"gross_wt_per_pc": row_qty_per_pc,
+						"bom": bom_name,
 					}
 				)
 			subcontract_row = get_subcontract_operation_row(row.item_code, company=company)
 			if subcontract_row:
+				subcontract_row["item"] = row.item_code
+				subcontract_row["parent_item"] = this_item
 				operation_items.append(subcontract_row)
 
 		for row in bom.scrap_items:
@@ -117,8 +167,10 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 			scrap_items.append(
 				{
 					"scrap_description": row.item_code,
+					"item_name": get_item_name(row.item_code),
 					"scrap_rate_per_kg": get_last_sales_rate(row.item_code),
 					"scrap_wt_per_pc": scrap_wt_per_pc,
+					"bom": bom_name,
 				}
 			)
 
@@ -140,6 +192,8 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 			workstation = row.workstation or first_workstation_from_csv(row.custom_workstations_csv)
 
 			operation_row = {
+				"item": this_item,
+				"parent_item": parent_item,
 				"operation": row.operation,
 				"workstation": workstation,
 				"time_per_pc_min": time_per_pc_min,
@@ -152,10 +206,23 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 				operation_row["machine_name"] = (
 					frappe.db.get_value("Asset", asset, "asset_name") if asset else None
 				)
+
+			tool = get_default_tool_for_operation(bom, row.operation)
+			if tool:
+				operation_row["tool"] = tool
+				operation_row["no_of_cavities"] = frappe.db.get_value(
+					"Asset", tool, "custom_no_of_cavities"
+				)
+
 			operation_items.append(operation_row)
 
 	_walk(bom_name, per_pc_qty)
-	return {"rm_items": rm_items, "scrap_items": scrap_items, "operation_items": operation_items}
+	return {
+		"rm_items": rm_items,
+		"scrap_items": scrap_items,
+		"operation_items": operation_items,
+		"item_tree_edges": item_tree_edges,
+	}
 
 
 @frappe.whitelist()
@@ -173,6 +240,8 @@ def get_bom_explosion(bom, item=None, company=None):
 		# thing that happens to it, after everything the BOM tree produces.
 		trailing = get_subcontract_operation_row(item, company=company)
 		if trailing:
+			trailing["item"] = item
+			trailing["parent_item"] = None
 			data["operation_items"].append(trailing)
 	return data
 
@@ -280,8 +349,12 @@ def _row(label, value, muted=False, is_total=False):
 	"""
 
 
-def _details_row(summary_label, summary_value, child_rows_html, bold=False):
-	classes = "ce-row ce-row--parent" + (" ce-row--bold" if bold else "")
+def _details_row(summary_label, summary_value, child_rows_html, bold=False, item_node=False):
+	classes = "ce-row ce-row--parent"
+	if bold:
+		classes += " ce-row--bold"
+	if item_node:
+		classes += " ce-row--item-node"
 	return f"""
 		<details class="ce-node">
 			<summary class="{classes}">
@@ -304,13 +377,15 @@ CE_SUMMARY_STYLE = """
 		}
 		.ce-summary-tree .ce-row {
 			display: flex; align-items: center; justify-content: space-between;
-			padding: 11px 20px; gap: 16px;
+			padding: 11px 20px; gap: 16px; min-width: 0;
 		}
 		.ce-summary-tree .ce-row__label {
 			color: var(--text-color); min-width: 0; overflow: hidden; text-overflow: ellipsis;
-			white-space: nowrap; display: flex; align-items: center;
+			white-space: nowrap; display: flex; align-items: center; flex: 1 1 auto;
 		}
-		.ce-summary-tree .ce-row__value { color: var(--text-color); white-space: nowrap; font-weight: 500; flex-shrink: 0; }
+		.ce-summary-tree .ce-row__value {
+			color: var(--text-color); white-space: nowrap; font-weight: 500; flex: 0 0 auto;
+		}
 		.ce-summary-tree .ce-row--muted .ce-row__label,
 		.ce-summary-tree .ce-row--muted .ce-row__value { color: var(--text-muted); font-weight: 400; }
 		.ce-summary-tree .ce-row--bold .ce-row__label,
@@ -325,13 +400,24 @@ CE_SUMMARY_STYLE = """
 		.ce-summary-tree .ce-row--parent { cursor: pointer; list-style: none; }
 		.ce-summary-tree .ce-row--parent::-webkit-details-marker { display: none; }
 		.ce-summary-tree .ce-row--parent:hover { background: var(--control-bg); }
+		/* Item/group nodes (a rollup of everything nested inside them) get an
+		   accent color + bold weight so they read as a subtotal at a glance,
+		   distinct from a plain (muted) single-operation cost line. */
+		.ce-summary-tree .ce-row--item-node .ce-row__label,
+		.ce-summary-tree .ce-row--item-node .ce-row__value {
+			color: var(--blue-600, #2490ef); font-weight: 600;
+		}
 		.ce-summary-tree .ce-caret {
 			display: inline-block; width: 14px; flex-shrink: 0; margin-right: 8px;
 			color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease;
 		}
 		.ce-summary-tree details[open] > summary .ce-caret { transform: rotate(90deg); }
+		/* Each nesting level narrows the row (margin-right grows with depth
+		   too, not just margin-left) so a row's ₹ value sits close to its own
+		   label at that depth, instead of every row's value lining up flush
+		   against the outermost card edge regardless of how deep it is. */
 		.ce-summary-tree .ce-node__children {
-			margin: 0 20px 10px 34px; padding-left: 16px;
+			margin: 0 14px 10px 26px; padding-left: 14px;
 			border-left: 2px solid var(--border-color);
 		}
 		.ce-summary-tree .ce-node__children .ce-row { padding: 7px 10px; }
@@ -350,14 +436,145 @@ CE_SUMMARY_STYLE = """
 """
 
 
+def _operation_leaf_row(r):
+	return _row(
+		f"{r.operation or '—'} — {r.machine_name or r.workstation or 'no machine'}  "
+		f"({flt(r.shift_rate_per_min):.3f} ÷ {flt(r.time_per_pc_min):.3f} pc/min"
+		f"{f' ÷ {flt(r.no_of_cavities):.0f} cav' if flt(r.no_of_cavities) else ''})",
+		r.rate_per_pc,
+		muted=True,
+	)
+
+
+def build_operation_tree_html(operation_items, item_tree_edges=None):
+	"""Renders Operations as a nested BOM tree — one expandable node per item,
+	holding that item's own operation rows plus (nested inside) the node of
+	every item its BOM consumes, mirroring explode_bom_tree's walk. Rows
+	with no `item` tagged (e.g. typed in by hand, not pulled from a BOM) are
+	shown as a flat, untitled group so manual entries aren't silently
+	dropped.
+
+	`item_tree_edges` — (item, parent_item) pairs for EVERY item the BOM walk
+	visited, from explode_bom_tree/CostEstimation.item_tree_json — is the
+	source of truth for parent linkage, since a pure-container assembly (one
+	with sub-items that have operations but none of its own) never appears
+	as an `item` on any operation row and so can't otherwise be placed in
+	the tree correctly. Falls back to each row's own `parent_item` for any
+	item missing from the edges (e.g. older records saved before this field
+	existed, or hand-typed rows)."""
+	untagged = [r for r in operation_items if not r.item]
+	tagged = [r for r in operation_items if r.item]
+
+	if not tagged and not untagged:
+		return _row("No operation rows", 0, muted=True)
+
+	item_parent = {}
+	for item, parent in item_tree_edges or []:
+		if item and item not in item_parent:
+			item_parent[item] = parent
+
+	rows_by_item = {}
+	item_order = []
+	for r in tagged:
+		if r.item not in rows_by_item:
+			rows_by_item[r.item] = []
+			item_order.append(r.item)
+		rows_by_item[r.item].append(r)
+		if r.item not in item_parent:
+			item_parent[r.item] = r.parent_item
+
+	# A pure-container assembly (sub-items have operations, it has none of
+	# its own) is known only from item_tree_edges, never from a row's own
+	# `item` — add it to item_order so it gets a node in the tree instead of
+	# its children being orphaned to root.
+	for item in list(item_parent):
+		if item not in rows_by_item:
+			rows_by_item[item] = []
+			item_order.append(item)
+
+	children_by_parent = {}
+	for item in item_order:
+		children_by_parent.setdefault(item_parent.get(item) or None, []).append(item)
+
+	# Root items are ones with no parent_item, or whose parent_item is
+	# nowhere in this tree (e.g. a subcontract-only estimate) — treat both
+	# as top of the tree so nothing silently disappears.
+	known_items = set(item_order)
+	roots = [
+		item
+		for item in item_order
+		if not item_parent.get(item) or item_parent[item] not in known_items
+	]
+	# Preserve walk order and avoid duplicates if the same item appears twice.
+	seen = set()
+	roots = [i for i in roots if not (i in seen or seen.add(i))]
+
+	item_names = {
+		d.name: d.item_name
+		for d in frappe.get_all("Item", filters={"name": ["in", item_order]}, fields=["name", "item_name"])
+	}
+
+	def item_label(item):
+		name = item_names.get(item)
+		return f"{item} — {name}" if name and name != item else item
+
+	def item_subtotal(item, visited):
+		if item in visited:
+			return 0.0
+		visited.add(item)
+		total = sum(flt(r.rate_per_pc) for r in rows_by_item.get(item, []))
+		for child in children_by_parent.get(item, []):
+			total += item_subtotal(child, visited)
+		return total
+
+	# A pure-RM item (e.g. a raw sheet/strip consumed further down the tree,
+	# with no operation performed on it and no sub-items of its own with
+	# operations) contributes nothing to labour cost and would only be an
+	# empty, always-zero node here — RM cost is already shown in its own
+	# section above, so prune these rather than duplicate/clutter. An
+	# assembly (SFG/FG) with operation-bearing children is always kept, even
+	# when it has no operation of its own — only truly empty branches drop.
+	def has_operations(item, visited):
+		if item in visited:
+			return False
+		visited.add(item)
+		if rows_by_item.get(item):
+			return True
+		return any(has_operations(child, set(visited)) for child in children_by_parent.get(item, []))
+
+	def render_item_node(item, visited):
+		if item in visited or not has_operations(item, set()):
+			return ""
+		visited.add(item)
+		own_rows = "".join(_operation_leaf_row(r) for r in rows_by_item.get(item, []))
+		child_nodes = "".join(
+			render_item_node(child, visited) for child in children_by_parent.get(item, [])
+		)
+		return _details_row(item_label(item), item_subtotal(item, set()), own_rows + child_nodes, item_node=True)
+
+	visited = set()
+	tree_html = "".join(render_item_node(item, visited) for item in roots)
+
+	untagged_html = ""
+	if untagged:
+		untagged_html = "".join(_operation_leaf_row(r) for r in untagged)
+
+	return tree_html + untagged_html
+
+
 def build_summary_tree_html(doc):
 	"""Nested, expandable (<details>/<summary>) breakdown of every cost line
 	on the estimate — click a subtotal (Gross RM Cost, Operations Cost, etc.)
 	to see exactly which item/operation rows it's made of and at what
 	rate/qty, without cluttering the collapsed view."""
+	def _rm_scrap_label(item_code, item_name, bom, wt, rate):
+		name_part = f" — {item_name}" if item_name and item_name != item_code else ""
+		bom_part = f"  [{bom}]" if bom else ""
+		return f"{item_code or '—'}{name_part}{bom_part}  ({flt(wt):.3f} kg × {flt(rate):.3f})"
+
 	rm_child_rows = "".join(
 		_row(
-			f"{r.rm_used or '—'}  ({flt(r.gross_wt_per_pc):.3f} kg × {flt(r.rm_rate_per_kg):.3f})",
+			_rm_scrap_label(r.rm_used, r.item_name, r.bom, r.gross_wt_per_pc, r.rm_rate_per_kg),
 			r.gross_rm_cost_per_pc,
 			muted=True,
 		)
@@ -366,22 +583,15 @@ def build_summary_tree_html(doc):
 
 	scrap_child_rows = "".join(
 		_row(
-			f"{r.scrap_description or '—'}  ({flt(r.scrap_wt_per_pc):.3f} kg × {flt(r.scrap_rate_per_kg):.3f})",
+			_rm_scrap_label(r.scrap_description, r.item_name, r.bom, r.scrap_wt_per_pc, r.scrap_rate_per_kg),
 			r.scrap_price_per_pc,
 			muted=True,
 		)
 		for r in doc.scrap_items
 	) or _row("No scrap rows", 0, muted=True)
 
-	op_child_rows = "".join(
-		_row(
-			f"{r.operation or '—'} — {r.machine_name or r.workstation or 'no machine'}  "
-			f"({flt(r.shift_rate_per_min):.3f} ÷ {flt(r.time_per_pc_min):.3f} pc/min)",
-			r.rate_per_pc,
-			muted=True,
-		)
-		for r in doc.operation_items
-	) or _row("No operation rows", 0, muted=True)
+	item_tree_edges = frappe.parse_json(doc.item_tree_json) if doc.item_tree_json else []
+	op_child_rows = build_operation_tree_html(doc.operation_items, item_tree_edges)
 
 	other_cost_rows = "".join(
 		[
@@ -461,6 +671,8 @@ class CostEstimation(Document):
 		if self.item:
 			trailing = get_subcontract_operation_row(self.item, company=self.company)
 			if trailing:
+				trailing["item"] = self.item
+				trailing["parent_item"] = None
 				data["operation_items"].append(trailing)
 
 		self.rm_items = []
@@ -476,6 +688,7 @@ class CostEstimation(Document):
 			self.append("operation_items", row)
 
 		self.last_pulled_bom = self.bom
+		self.item_tree_json = frappe.as_json(data["item_tree_edges"])
 
 	def calculate_rm_cost(self):
 		total_gross_rm_cost = 0.0
@@ -510,7 +723,9 @@ class CostEstimation(Document):
 				# calculation, later saves leave it alone so a manual override
 				# survives.
 				if not row.rate_per_pc and flt(row.time_per_pc_min):
-					row.rate_per_pc = math.ceil(flt(row.shift_rate_per_min) / flt(row.time_per_pc_min) * 100) / 100
+					row.rate_per_pc = compute_rate_per_pc(
+						row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities
+					)
 			# else: no machine (e.g. subcontracted Plating) — rate_per_pc is typed directly, left as-is
 
 			total_labour_cost += flt(row.rate_per_pc)

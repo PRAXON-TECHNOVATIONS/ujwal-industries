@@ -15,6 +15,7 @@ frappe.ui.form.on("Cost Estimation", {
 	},
 	refresh: function (frm) {
 		calculate_rm_totals(frm);
+		reset_stale_grid_columns(frm);
 	},
 	item: function (frm) {
 		if (!frm.doc.item) {
@@ -55,6 +56,70 @@ frappe.ui.form.on("Cost Estimation", {
 	profit_amount: calculate_totals,
 });
 
+const GRID_CHILD_DOCTYPES = [
+	"Cost Estimation Operation Item",
+	"Cost Estimation RM Item",
+	"Cost Estimation Scrap Item",
+];
+
+function reset_stale_grid_columns(frm) {
+	// Runs once per page load (not once per refresh() call) — the fix below
+	// itself triggers frm.refresh() to redraw the grids with the corrected
+	// layout, so without this guard that redraw would re-enter this
+	// function and could loop if the save round-trip is ever slow to land
+	// in frappe.model.user_settings.
+	if (frm._grid_columns_checked) return;
+	frm._grid_columns_checked = true;
+
+	// A user's grid column layout (which fields show, in what order) is
+	// saved per child-table doctype in "User Settings" → GridView and, once
+	// saved, REPLACES the doctype's own in_list_view defaults entirely
+	// (frappe/public/js/frappe/form/grid.js: setup_user_defined_columns) —
+	// it does not merge in fields added to the doctype after that save. So
+	// a layout saved before `item`/`tool`/`no_of_cavities` (Operations) or
+	// `item_name`/`bom` (RM/Scrap) existed permanently hides them for that
+	// user, even though the doctype itself already marks them
+	// in_list_view=1. Detect a saved layout that's missing a field the
+	// doctype currently wants shown, and clear just that one entry so the
+	// grid falls back to (and re-saves, next time the user reorders columns)
+	// the current default column set.
+	// Work on our own copy — grid_view_settings is the live cache object
+	// (frappe.model.user_settings[frm.doctype].GridView), and mutating it in
+	// place before frappe.model.user_settings.update() re-fetches/overwrites
+	// it would make `changed` detection unreliable on a second call.
+	const grid_view_settings = Object.assign({}, frappe.get_user_settings(frm.doctype, "GridView") || {});
+	let changed = false;
+
+	GRID_CHILD_DOCTYPES.forEach((child_doctype) => {
+		const saved_columns = grid_view_settings[child_doctype];
+		if (!saved_columns || !saved_columns.length) return;
+
+		const saved_fieldnames = new Set(saved_columns.map((c) => c.fieldname));
+		const meta = frappe.get_meta(child_doctype);
+		if (!meta) return;
+
+		const expected_fieldnames = meta.fields.filter((f) => f.in_list_view).map((f) => f.fieldname);
+		const is_stale = expected_fieldnames.some((fieldname) => !saved_fieldnames.has(fieldname));
+
+		if (is_stale) {
+			delete grid_view_settings[child_doctype];
+			changed = true;
+		}
+	});
+
+	if (changed) {
+		// save() merges into the existing GridView object (via $.extend),
+		// which would leave the just-deleted key present — go through
+		// update() directly so the full corrected object actually replaces
+		// what's cached and saved server-side.
+		const full_settings = Object.assign({}, frappe.model.user_settings[frm.doctype] || {});
+		full_settings.GridView = grid_view_settings;
+		frappe.model.user_settings.update(frm.doctype, full_settings).then(() => {
+			frm.refresh();
+		});
+	}
+}
+
 function fetch_and_apply_bom(frm, bom) {
 	return frappe.call({
 		method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_bom_explosion",
@@ -74,8 +139,11 @@ function fetch_and_apply_bom(frm, bom) {
 		(message.operation_items || []).forEach((row) => {
 			const child = frm.add_child("operation_items", row);
 			if (child.workstation && flt(child.time_per_pc_min)) {
-				child.rate_per_pc =
-					Math.ceil((flt(child.shift_rate_per_min) / flt(child.time_per_pc_min)) * 100) / 100;
+				child.rate_per_pc = compute_rate_per_pc(
+					child.shift_rate_per_min,
+					child.time_per_pc_min,
+					child.no_of_cavities
+				);
 			}
 		});
 
@@ -83,6 +151,7 @@ function fetch_and_apply_bom(frm, bom) {
 		// pulled" — otherwise the first Save would re-explode again and
 		// wipe out any edits made in the meantime.
 		frm.doc.last_pulled_bom = bom;
+		frm.doc.item_tree_json = JSON.stringify(message.item_tree_edges || []);
 
 		frm.refresh_field("rm_items");
 		frm.refresh_field("scrap_items");
@@ -102,10 +171,11 @@ frappe.ui.form.on("Cost Estimation RM Item", {
 		if (!row.rm_used) {
 			return;
 		}
-		frappe.db.get_value("Item", row.rm_used, "last_purchase_rate").then(({ message }) => {
+		frappe.db.get_value("Item", row.rm_used, ["last_purchase_rate", "item_name"]).then(({ message }) => {
 			if (message.last_purchase_rate) {
 				row.rm_rate_per_kg = message.last_purchase_rate;
 			}
+			row.item_name = message.item_name;
 			frm.refresh_field("rm_items");
 			calculate_rm_row(frm, cdt, cdn);
 		});
@@ -123,6 +193,10 @@ frappe.ui.form.on("Cost Estimation Scrap Item", {
 		if (!row.scrap_description) {
 			return;
 		}
+		frappe.db.get_value("Item", row.scrap_description, "item_name").then(({ message }) => {
+			row.item_name = message.item_name;
+			frm.refresh_field("scrap_items");
+		});
 		frappe.call({
 			method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_last_sales_rate_api",
 			args: { item_code: row.scrap_description },
@@ -144,6 +218,7 @@ frappe.ui.form.on("Cost Estimation Scrap Item", {
 frappe.ui.form.on("Cost Estimation Operation Item", {
 	time_per_pc_min: calculate_operation_row,
 	shift_rate_per_min: calculate_operation_row,
+	no_of_cavities: calculate_operation_row,
 	rate_per_pc: function (frm) {
 		// Rate per Pc is always user-editable — a direct edit here is a
 		// manual override, just re-sum totals with whatever was typed.
@@ -165,9 +240,7 @@ frappe.ui.form.on("Cost Estimation Operation Item", {
 			// Switching to a different machine is a deliberate "start over"
 			// for this row — recompute Rate per Pc fresh even if it already
 			// had a value (from the previous machine, or a manual override).
-			row.rate_per_pc = flt(row.time_per_pc_min)
-				? Math.ceil((flt(row.shift_rate_per_min) / flt(row.time_per_pc_min)) * 100) / 100
-				: 0;
+			row.rate_per_pc = compute_rate_per_pc(row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities);
 			if (message.custom_asset_name) {
 				frappe.db.get_value("Asset", message.custom_asset_name, "asset_name").then(({ message: asset }) => {
 					row.machine_name = asset.asset_name;
@@ -178,10 +251,39 @@ frappe.ui.form.on("Cost Estimation Operation Item", {
 			calculate_other_costs(frm);
 		});
 	},
+	tool: function (frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.tool) {
+			row.no_of_cavities = 0;
+			frm.refresh_field("operation_items");
+			calculate_operation_row(frm, cdt, cdn);
+			return;
+		}
+		// Picking a different tool is a deliberate "start over" for cavity
+		// count — refetch even if the row already had one set.
+		frappe.db.get_value("Asset", row.tool, "custom_no_of_cavities").then(({ message }) => {
+			row.no_of_cavities = message.custom_no_of_cavities;
+			frm.refresh_field("operation_items");
+			calculate_operation_row(frm, cdt, cdn);
+		});
+	},
 	operation_items_remove: function (frm) {
 		calculate_totals(frm);
 	},
 });
+
+function compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities) {
+	// Mirrors compute_rate_per_pc in cost_estimation.py — keep both in sync.
+	if (!flt(time_per_pc_min)) {
+		return 0;
+	}
+	let rate = Math.ceil((flt(shift_rate_per_min) / flt(time_per_pc_min)) * 100) / 100;
+	const cavities = flt(no_of_cavities);
+	if (cavities) {
+		rate = Math.ceil((rate / cavities) * 100) / 100;
+	}
+	return rate;
+}
 
 function calculate_rm_row(frm, cdt, cdn) {
 	const row = locals[cdt][cdn];
@@ -221,16 +323,14 @@ function calculate_rm_totals(frm) {
 
 function calculate_operation_row(frm, cdt, cdn) {
 	const row = locals[cdt][cdn];
-	// Triggered by editing Per Min/Pc or Shift Rate per Min — editing an
-	// input is a deliberate signal to recalculate, so always recompute here
-	// (this overwrites a manual Rate per Pc override, which is expected:
-	// the user just changed what it's computed from). A direct edit to
-	// Rate per Pc itself goes through a separate handler that doesn't call
+	// Triggered by editing Per Min/Pc, Shift Rate per Min or No of Cavities —
+	// editing an input is a deliberate signal to recalculate, so always
+	// recompute here (this overwrites a manual Rate per Pc override, which is
+	// expected: the user just changed what it's computed from). A direct edit
+	// to Rate per Pc itself goes through a separate handler that doesn't call
 	// this function, so that kind of override is untouched by this path.
 	if (row.workstation) {
-		row.rate_per_pc = flt(row.time_per_pc_min)
-			? Math.ceil((flt(row.shift_rate_per_min) / flt(row.time_per_pc_min)) * 100) / 100
-			: 0;
+		row.rate_per_pc = compute_rate_per_pc(row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities);
 	}
 	frm.refresh_field("operation_items");
 	calculate_other_costs(frm);
@@ -299,13 +399,15 @@ const CE_SUMMARY_STYLE = `
 		}
 		.ce-summary-tree .ce-row {
 			display: flex; align-items: center; justify-content: space-between;
-			padding: 11px 20px; gap: 16px;
+			padding: 11px 20px; gap: 16px; min-width: 0;
 		}
 		.ce-summary-tree .ce-row__label {
 			color: var(--text-color); min-width: 0; overflow: hidden; text-overflow: ellipsis;
-			white-space: nowrap; display: flex; align-items: center;
+			white-space: nowrap; display: flex; align-items: center; flex: 1 1 auto;
 		}
-		.ce-summary-tree .ce-row__value { color: var(--text-color); white-space: nowrap; font-weight: 500; flex-shrink: 0; }
+		.ce-summary-tree .ce-row__value {
+			color: var(--text-color); white-space: nowrap; font-weight: 500; flex: 0 0 auto;
+		}
 		.ce-summary-tree .ce-row--muted .ce-row__label,
 		.ce-summary-tree .ce-row--muted .ce-row__value { color: var(--text-muted); font-weight: 400; }
 		.ce-summary-tree .ce-row--bold .ce-row__label,
@@ -320,13 +422,24 @@ const CE_SUMMARY_STYLE = `
 		.ce-summary-tree .ce-row--parent { cursor: pointer; list-style: none; }
 		.ce-summary-tree .ce-row--parent::-webkit-details-marker { display: none; }
 		.ce-summary-tree .ce-row--parent:hover { background: var(--control-bg); }
+		/* Item/group nodes (a rollup of everything nested inside them) get an
+		   accent color + bold weight so they read as a subtotal at a glance,
+		   distinct from a plain (muted) single-operation cost line. */
+		.ce-summary-tree .ce-row--item-node .ce-row__label,
+		.ce-summary-tree .ce-row--item-node .ce-row__value {
+			color: var(--blue-600, #2490ef); font-weight: 600;
+		}
 		.ce-summary-tree .ce-caret {
 			display: inline-block; width: 14px; flex-shrink: 0; margin-right: 8px;
 			color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease;
 		}
 		.ce-summary-tree details[open] > summary .ce-caret { transform: rotate(90deg); }
+		/* Each nesting level narrows the row (margin-right grows with depth
+		   too, not just margin-left) so a row's ₹ value sits close to its own
+		   label at that depth, instead of every row's value lining up flush
+		   against the outermost card edge regardless of how deep it is. */
 		.ce-summary-tree .ce-node__children {
-			margin: 0 20px 10px 34px; padding-left: 16px;
+			margin: 0 14px 10px 26px; padding-left: 14px;
 			border-left: 2px solid var(--border-color);
 		}
 		.ce-summary-tree .ce-node__children .ce-row { padding: 7px 10px; }
@@ -361,8 +474,10 @@ function summary_row(label, value, { bold = false, muted = false, is_total = fal
 	`;
 }
 
-function summary_details_row(summary_label, summary_value, child_rows_html, { bold = false } = {}) {
-	const classes = "ce-row ce-row--parent" + (bold ? " ce-row--bold" : "");
+function summary_details_row(summary_label, summary_value, child_rows_html, { bold = false, item_node = false } = {}) {
+	let classes = "ce-row ce-row--parent";
+	if (bold) classes += " ce-row--bold";
+	if (item_node) classes += " ce-row--item-node";
 	return `
 		<details class="ce-node">
 			<summary class="${classes}">
@@ -376,12 +491,153 @@ function summary_details_row(summary_label, summary_value, child_rows_html, { bo
 	`;
 }
 
+function operation_leaf_row(r) {
+	return summary_row(
+		`${r.operation || "—"} — ${r.machine_name || r.workstation || "no machine"}  ` +
+			`(${flt(r.shift_rate_per_min).toFixed(3)} ÷ ${flt(r.time_per_pc_min).toFixed(3)} pc/min` +
+			`${flt(r.no_of_cavities) ? ` ÷ ${flt(r.no_of_cavities).toFixed(0)} cav` : ""})`,
+		r.rate_per_pc,
+		{ muted: true }
+	);
+}
+
+function item_label(frm, item_code) {
+	if (!item_code) return "—";
+	frm._item_name_cache = frm._item_name_cache || {};
+	if (item_code in frm._item_name_cache) {
+		const name = frm._item_name_cache[item_code];
+		return name && name !== item_code ? `${item_code} — ${name}` : item_code;
+	}
+	// Not cached yet — kick off a fetch and re-render once it lands rather
+	// than blocking this render (render_summary must stay synchronous, it's
+	// called on every field change).
+	frm._item_name_cache[item_code] = null;
+	frappe.db.get_value("Item", item_code, "item_name").then(({ message }) => {
+		frm._item_name_cache[item_code] = (message && message.item_name) || item_code;
+		render_summary(frm);
+	});
+	return item_code;
+}
+
+function build_operation_tree_html(frm, operation_items, item_tree_edges) {
+	// Mirrors build_operation_tree_html in cost_estimation.py — keep both in
+	// sync. Renders Operations as a nested BOM tree — one expandable node per
+	// item, holding that item's own operation rows plus (nested inside) the
+	// node of every item its BOM consumes.
+	//
+	// item_tree_edges — [item, parent_item] pairs for EVERY item the BOM walk
+	// visited (from frm.doc.item_tree_json) — is the source of truth for
+	// parent linkage, since a pure-container assembly (sub-items have
+	// operations, it has none of its own) never appears as an `item` on any
+	// operation row and so can't otherwise be placed in the tree correctly.
+	// Falls back to each row's own `parent_item` for any item missing from
+	// the edges (e.g. older records saved before this field existed, or
+	// hand-typed rows).
+	const items = operation_items || [];
+	const untagged = items.filter((r) => !r.item);
+	const tagged = items.filter((r) => r.item);
+
+	if (!tagged.length && !untagged.length) {
+		return summary_row("No operation rows", 0, { muted: true });
+	}
+
+	const itemParent = {};
+	(item_tree_edges || []).forEach(([item, parent]) => {
+		if (item && !(item in itemParent)) itemParent[item] = parent || "";
+	});
+
+	const rowsByItem = {};
+	const itemOrder = [];
+	tagged.forEach((r) => {
+		if (!rowsByItem[r.item]) {
+			rowsByItem[r.item] = [];
+			itemOrder.push(r.item);
+		}
+		rowsByItem[r.item].push(r);
+		if (!(r.item in itemParent)) {
+			itemParent[r.item] = r.parent_item || "";
+		}
+	});
+
+	// A pure-container assembly is known only from item_tree_edges, never
+	// from a row's own `item` — add it to itemOrder so it gets a node in the
+	// tree instead of its children being orphaned to root.
+	Object.keys(itemParent).forEach((item) => {
+		if (!(item in rowsByItem)) {
+			rowsByItem[item] = [];
+			itemOrder.push(item);
+		}
+	});
+
+	const childrenByParent = {};
+	itemOrder.forEach((item) => {
+		const parent = itemParent[item] || "";
+		if (!childrenByParent[parent]) childrenByParent[parent] = [];
+		childrenByParent[parent].push(item);
+	});
+
+	const knownItems = new Set(itemOrder);
+	const rootSeen = new Set();
+	const roots = itemOrder.filter((item) => {
+		const parent = itemParent[item];
+		const isRoot = !parent || !knownItems.has(parent);
+		if (!isRoot || rootSeen.has(item)) return false;
+		rootSeen.add(item);
+		return true;
+	});
+
+	function itemSubtotal(item, visited) {
+		if (visited.has(item)) return 0;
+		visited.add(item);
+		let total = (rowsByItem[item] || []).reduce((sum, r) => sum + flt(r.rate_per_pc), 0);
+		(childrenByParent[item] || []).forEach((child) => {
+			total += itemSubtotal(child, visited);
+		});
+		return total;
+	}
+
+	// A pure-RM item (no operation performed on it, no sub-items of its own
+	// with operations) contributes nothing to labour cost and would only be
+	// an empty, always-zero node — RM cost already has its own section above,
+	// so prune these rather than duplicate/clutter. An assembly (SFG/FG) with
+	// operation-bearing children is always kept, even with no operation of
+	// its own — only truly empty branches drop.
+	function hasOperations(item, visited) {
+		if (visited.has(item)) return false;
+		visited.add(item);
+		if ((rowsByItem[item] || []).length) return true;
+		return (childrenByParent[item] || []).some((child) => hasOperations(child, new Set(visited)));
+	}
+
+	function renderItemNode(item, visited) {
+		if (visited.has(item) || !hasOperations(item, new Set())) return "";
+		visited.add(item);
+		const ownRows = (rowsByItem[item] || []).map(operation_leaf_row).join("");
+		const childNodes = (childrenByParent[item] || []).map((child) => renderItemNode(child, visited)).join("");
+		return summary_details_row(item_label(frm, item), itemSubtotal(item, new Set()), ownRows + childNodes, {
+			item_node: true,
+		});
+	}
+
+	const visited = new Set();
+	const treeHtml = roots.map((item) => renderItemNode(item, visited)).join("");
+	const untaggedHtml = untagged.map(operation_leaf_row).join("");
+
+	return treeHtml + untaggedHtml;
+}
+
+function rm_scrap_label(item_code, item_name, bom, wt, rate) {
+	const namePart = item_name && item_name !== item_code ? ` — ${item_name}` : "";
+	const bomPart = bom ? `  [${bom}]` : "";
+	return `${item_code || "—"}${namePart}${bomPart}  (${flt(wt).toFixed(3)} kg × ${flt(rate).toFixed(3)})`;
+}
+
 function render_summary(frm) {
 	const rm_child_rows =
 		(frm.doc.rm_items || [])
 			.map((r) =>
 				summary_row(
-					`${r.rm_used || "—"}  (${flt(r.gross_wt_per_pc).toFixed(3)} kg × ${flt(r.rm_rate_per_kg).toFixed(3)})`,
+					rm_scrap_label(r.rm_used, r.item_name, r.bom, r.gross_wt_per_pc, r.rm_rate_per_kg),
 					r.gross_rm_cost_per_pc,
 					{ muted: true }
 				)
@@ -392,24 +648,22 @@ function render_summary(frm) {
 		(frm.doc.scrap_items || [])
 			.map((r) =>
 				summary_row(
-					`${r.scrap_description || "—"}  (${flt(r.scrap_wt_per_pc).toFixed(3)} kg × ${flt(r.scrap_rate_per_kg).toFixed(3)})`,
+					rm_scrap_label(r.scrap_description, r.item_name, r.bom, r.scrap_wt_per_pc, r.scrap_rate_per_kg),
 					r.scrap_price_per_pc,
 					{ muted: true }
 				)
 			)
 			.join("") || summary_row("No scrap rows", 0, { muted: true });
 
-	const op_child_rows =
-		(frm.doc.operation_items || [])
-			.map((r) =>
-				summary_row(
-					`${r.operation || "—"} — ${r.machine_name || r.workstation || "no machine"}  ` +
-						`(${flt(r.shift_rate_per_min).toFixed(3)} ÷ ${flt(r.time_per_pc_min).toFixed(3)} pc/min)`,
-					r.rate_per_pc,
-					{ muted: true }
-				)
-			)
-			.join("") || summary_row("No operation rows", 0, { muted: true });
+	let item_tree_edges = [];
+	if (frm.doc.item_tree_json) {
+		try {
+			item_tree_edges = JSON.parse(frm.doc.item_tree_json);
+		} catch (e) {
+			item_tree_edges = [];
+		}
+	}
+	const op_child_rows = build_operation_tree_html(frm, frm.doc.operation_items, item_tree_edges);
 
 	const other_cost_rows = [
 		summary_row(
