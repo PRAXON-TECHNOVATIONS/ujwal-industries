@@ -7,6 +7,8 @@
  "engine": "InnoDB",
  "field_order": [
   "scrap_description",
+  "item_name",
+  "bom",
   "scrap_rate_per_kg",
   "scrap_wt_per_pc",
   "column_break_1",
@@ -21,6 +23,25 @@
    "label": "Scrap Item",
    "options": "Item",
    "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "scrap_description.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Source BOM",
+   "options": "BOM",
+   "read_only": 1,
+   "description": "The BOM this scrap row was pulled from — lets you trace which sub-assembly's BOM this scrap belongs to."
   },
   {
    "columns": 2,

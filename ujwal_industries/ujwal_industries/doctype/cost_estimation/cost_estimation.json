@@ -15,6 +15,7 @@
   "qty",
   "bom",
   "last_pulled_bom",
+  "item_tree_json",
   "rm_section",
   "rm_items",
   "total_gross_rm_cost_per_pc",
@@ -111,6 +112,17 @@
    "print_hide": 1,
    "report_hide": 1,
    "description": "Internal — tracks which BOM the RM/Scrap/Operations tables were last generated from, so Save only re-pulls when the BOM field has actually changed."
+  },
+  {
+   "fieldname": "item_tree_json",
+   "fieldtype": "Long Text",
+   "label": "Item Tree (JSON)",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — every (item, parent item) pair visited while pulling from the BOM, including items with no operations of their own. Lets the Summary render Operations as a full nested BOM tree even where operation rows alone would leave gaps (a pure-container assembly with no operations of its own)."
   },
   {
    "fieldname": "rm_section",

@@ -6,14 +6,35 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "item",
+  "parent_item",
   "operation",
   "workstation",
   "machine_name",
+  "tool",
+  "no_of_cavities",
   "time_per_pc_min",
   "shift_rate_per_min",
   "rate_per_pc"
  ],
  "fields": [
+  {
+   "columns": 2,
+   "description": "The item this operation is performed on — auto-filled from the BOM tree walk (the component's own item code for sub-assembly/subcontract steps, or the top-level item for its own BOM operations).",
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item"
+  },
+  {
+   "fieldname": "parent_item",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Parent Item",
+   "options": "Item",
+   "description": "The assembly item whose BOM consumes Item above — blank for the top-level item itself. Used to render the Summary's nested BOM tree; not shown in the grid."
+  },
   {
    "columns": 2,
    "fieldname": "operation",
@@ -25,7 +46,7 @@
   },
   {
    "columns": 1,
-   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine \u2014 type Rate / Pc directly instead.",
+   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine — type Rate / Pc directly instead.",
    "fieldname": "workstation",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -39,6 +60,23 @@
    "in_list_view": 1,
    "label": "Machine Name",
    "read_only": 1
+  },
+  {
+   "columns": 1,
+   "description": "Auto-filled from the BOM's default Tool for this Operation. Editable — pick a different tool if needed.",
+   "fieldname": "tool",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Tool",
+   "options": "Asset"
+  },
+  {
+   "columns": 1,
+   "description": "Pieces produced per cycle by the Tool above (e.g. mould cavities). Auto-fetched from the Tool, editable. Leave blank or 0 to skip dividing the rate.",
+   "fieldname": "no_of_cavities",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "No of Cavities"
   },
   {
    "columns": 2,
@@ -58,7 +96,7 @@
   },
   {
    "columns": 1,
-   "description": "Auto-computed from Machine when empty. Always editable — type your own rate to override (e.g. while the Machine's cost data isn't set up yet, or for a subcontractor's quoted rate).",
+   "description": "Auto-computed from Machine when empty. Always editable — type your own rate to override (e.g. while the Machine's cost data isn't set up yet, or for a subcontractor's quoted rate). When a Tool with No of Cavities is set, this is the per-cavity rate (total rate ÷ cavities).",
    "fieldname": "rate_per_pc",
    "fieldtype": "Float",
    "in_list_view": 1,
