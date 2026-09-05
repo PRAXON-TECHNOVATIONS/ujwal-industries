@@ -246,6 +246,136 @@ def get_bom_explosion(bom, item=None, company=None):
 	return data
 
 
+def _merge_bom_rows(existing_rows, fresh_rows, match_fields, preserve_fields):
+	"""Reconciles a child table against a fresh BOM pull instead of wiping
+	and replacing it outright: a row already present (by `match_fields`) is
+	kept and has every field except `preserve_fields` refreshed to the fresh
+	value — so a manually-typed rate survives, but anything that describes
+	the BOM's own structure (weight, cycle time, tool, machine, item name...)
+	catches up to what the BOM says now. A row with no match in the fresh
+	pull is dropped (the BOM no longer produces it), and a fresh row with no
+	match in existing is appended as new. Returns the new list of row dicts;
+	does not touch the document itself."""
+
+	def key(row):
+		return tuple(row.get(f) for f in match_fields)
+
+	existing_by_key = {}
+	for row in existing_rows:
+		existing_by_key.setdefault(key(row), []).append(row)
+
+	merged = []
+	for fresh_row in fresh_rows:
+		bucket = existing_by_key.get(key(fresh_row))
+		if bucket:
+			old_row = bucket.pop(0)
+			new_row = dict(fresh_row)
+			for f in preserve_fields:
+				if old_row.get(f):
+					new_row[f] = old_row.get(f)
+			merged.append(new_row)
+		else:
+			merged.append(dict(fresh_row))
+
+	return merged
+
+
+@frappe.whitelist()
+def sync_rm_items(cost_estimation):
+	"""Reconciles just the RM table against a fresh pull from the current
+	BOM — adds components the BOM now has that this estimate doesn't, drops
+	ones the BOM no longer has, and on a still-present row keeps whatever
+	Rate/Kg was typed in (a manual override or a prior fetched last-purchase
+	rate) while refreshing everything else (weight, item name, source BOM)
+	to match the BOM's current structure."""
+	doc = frappe.get_doc("Cost Estimation", cost_estimation)
+	if not doc.bom:
+		frappe.throw(_("Set a BOM before syncing."))
+
+	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company)
+	merged = _merge_bom_rows(
+		[row.as_dict() for row in doc.rm_items],
+		fresh["rm_items"],
+		match_fields=["rm_used", "bom"],
+		preserve_fields=["rm_rate_per_kg"],
+	)
+	doc.rm_items = []
+	for row in merged:
+		doc.append("rm_items", row)
+	doc.save()
+	return {"count": len(merged)}
+
+
+@frappe.whitelist()
+def sync_scrap_items(cost_estimation):
+	"""Same reconciliation as sync_rm_items, for the Scrap table — keeps a
+	manually set/overridden Scrap Rate/Kg on rows still produced by the BOM,
+	refreshes weight/item name/source BOM, adds new scrap the BOM now
+	produces, drops scrap it no longer does."""
+	doc = frappe.get_doc("Cost Estimation", cost_estimation)
+	if not doc.bom:
+		frappe.throw(_("Set a BOM before syncing."))
+
+	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company)
+	merged = _merge_bom_rows(
+		[row.as_dict() for row in doc.scrap_items],
+		fresh["scrap_items"],
+		match_fields=["scrap_description", "bom"],
+		preserve_fields=["scrap_rate_per_kg"],
+	)
+	doc.scrap_items = []
+	for row in merged:
+		doc.append("scrap_items", row)
+	doc.save()
+	return {"count": len(merged)}
+
+
+@frappe.whitelist()
+def sync_operation_items(cost_estimation):
+	"""Same reconciliation as sync_rm_items, for the Operations table —
+	matched by (item, operation) since that's what's stable across a BOM
+	edit, unlike workstation/tool/rate which can change. Keeps a manually
+	set/overridden Rate/Pc on rows still present in the BOM, refreshes
+	machine/tool/cavities/cycle time, adds operations newly in the BOM,
+	drops ones no longer there (including the top-level item's own trailing
+	subcontract step, re-derived fresh every sync)."""
+	doc = frappe.get_doc("Cost Estimation", cost_estimation)
+	if not doc.bom:
+		frappe.throw(_("Set a BOM before syncing."))
+
+	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company)
+	if doc.item:
+		trailing = get_subcontract_operation_row(doc.item, company=doc.company)
+		if trailing:
+			trailing["item"] = doc.item
+			trailing["parent_item"] = None
+			fresh["operation_items"].append(trailing)
+
+	merged = _merge_bom_rows(
+		[row.as_dict() for row in doc.operation_items],
+		fresh["operation_items"],
+		match_fields=["item", "operation"],
+		preserve_fields=["rate_per_pc"],
+	)
+	doc.operation_items = []
+	for row in merged:
+		doc.append("operation_items", row)
+	doc.item_tree_json = frappe.as_json(fresh["item_tree_edges"])
+	doc.save()
+	return {"count": len(merged)}
+
+
+@frappe.whitelist()
+def sync_all_tables(cost_estimation):
+	"""Runs all three table syncs in one call — RM/Scrap/Operations each
+	reconciled independently against the current BOM, same merge semantics
+	as the individual sync_*_items calls."""
+	rm = sync_rm_items(cost_estimation)
+	scrap = sync_scrap_items(cost_estimation)
+	operations = sync_operation_items(cost_estimation)
+	return {"rm": rm, "scrap": scrap, "operations": operations}
+
+
 def get_top_level_item_for_subcontract_order(subcontracting_order):
 	"""A Subcontracting Order is raised for an intermediate item (e.g. 200632,
 	Case Hardened) — but the ordered Operations sequence with that step's

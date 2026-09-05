@@ -16,6 +16,7 @@ frappe.ui.form.on("Cost Estimation", {
 	refresh: function (frm) {
 		calculate_rm_totals(frm);
 		reset_stale_grid_columns(frm);
+		add_sync_buttons(frm);
 	},
 	item: function (frm) {
 		if (!frm.doc.item) {
@@ -61,6 +62,34 @@ const GRID_CHILD_DOCTYPES = [
 	"Cost Estimation RM Item",
 	"Cost Estimation Scrap Item",
 ];
+
+function add_sync_buttons(frm) {
+	if (frm.is_new() || !frm.doc.bom) return;
+
+	function run_sync(method, label) {
+		frappe.call({
+			method: `ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.${method}`,
+			args: { cost_estimation: frm.doc.name },
+			freeze: true,
+			freeze_message: __("Syncing {0}...", [label]),
+		}).then(() => {
+			frappe.show_alert({ message: __("{0} synced with BOM", [label]), indicator: "green" });
+			frm.reload_doc();
+		});
+	}
+
+	// A single "Sync" group button with the combined sync as its own click
+	// target, and the 3 individual table syncs as items underneath it — per
+	// the user's ask for "3 buttons under a common sync button".
+	frm.add_custom_button(__("Sync All"), () => run_sync("sync_all_tables", __("All tables")), __("Sync"));
+	frm.add_custom_button(__("Sync RM"), () => run_sync("sync_rm_items", __("RM")), __("Sync"));
+	frm.add_custom_button(__("Sync Scrap"), () => run_sync("sync_scrap_items", __("Scrap")), __("Sync"));
+	frm.add_custom_button(
+		__("Sync Operations"),
+		() => run_sync("sync_operation_items", __("Operations")),
+		__("Sync")
+	);
+}
 
 function reset_stale_grid_columns(frm) {
 	// Runs once per page load (not once per refresh() call) — the fix below
