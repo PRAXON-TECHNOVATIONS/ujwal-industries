@@ -82,19 +82,60 @@ def first_workstation_from_csv(csv_value):
 	return csv_value.split(",")[0].strip()
 
 
-def compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities=None):
+def compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities=None, qty_multiplier=None):
 	"""Rate/Pc = Shift Rate per Min ÷ Per Min/Pc, then divided by the tool's
 	No of Cavities when one strike of the tool makes more than one piece
 	(e.g. a 10-cavity mould makes 10 pcs per cycle, so machine time is shared
 	across all 10). A missing or zero cavity count means no tool is in use
-	for this operation, so the rate is left undivided."""
+	for this operation, so the rate is left undivided.
+
+	The result is then multiplied by `qty_multiplier` (default 1, no
+	effect) — used for the opposite situation: a hand-assembly operation
+	that consumes several of ONE sub-component per parent unit (e.g. 700 of
+	one part, 100 of another going into the same assembly) isn't one action
+	regardless of quantity the way a machine cycle is, so its per-piece cost
+	is scaled UP by how many of that component are used, not divided down.
+	See explode_bom_tree's Assembly fan-out and Ujwal Industries Setting →
+	Assembly Operation Names."""
 	if not flt(time_per_pc_min):
 		return 0
 	rate = math.ceil(flt(shift_rate_per_min) / flt(time_per_pc_min) * 100) / 100
 	cavities = flt(no_of_cavities)
 	if cavities:
 		rate = math.ceil(rate / cavities * 100) / 100
+	multiplier = flt(qty_multiplier) or 1
+	if multiplier != 1:
+		rate = math.ceil(rate * multiplier * 100) / 100
 	return rate
+
+
+def compute_assembly_breakdown_rate(shift_rate_per_min, time_per_pc_min, no_of_cavities, breakdown):
+	"""For a single Assembly-type operation row that consumes several
+	manufactured sub-parts (breakdown = the parsed assembly_breakdown_json
+	list), the row's own Rate/Pc is the SUM of (this operation's per-cavity
+	base rate × each sub-part's own qty_multiplier) — the physical assembly
+	step is one action, but its cost still reflects putting in 700 of one
+	part and 100 of another, not treating them as equal. Uses
+	compute_rate_per_pc with qty_multiplier=1 to get the shared base rate
+	once, then applies each entry's multiplier to that same base — entries
+	don't each get their own ceil-per-100 rounding, only the final sum does,
+	so summing several small components doesn't compound rounding error the
+	way calling compute_rate_per_pc once per entry would."""
+	base_rate = compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities)
+	total = sum(base_rate * flt(entry.get("qty_multiplier")) for entry in breakdown or [])
+	return math.ceil(total * 100) / 100
+
+
+def get_assembly_operation_names():
+	"""BOM Operation names (from Ujwal Industries Setting) that mean 'put
+	several manufactured sub-parts together by hand, one at a time' rather
+	than 'one machine cycle produces one output' — e.g. Assembly. These get
+	fanned out per sub-component in explode_bom_tree instead of costed once
+	per parent unit, since assembling a unit that contains 700 of one
+	sub-part and 100 of another is 700+100 individual assembly actions, not
+	one action regardless of how many parts go in."""
+	raw = frappe.db.get_single_value("Ujwal Industries Setting", "assembly_operation_names") or ""
+	return {name.strip() for name in raw.split(",") if name.strip()}
 
 
 def get_default_tool_for_operation(bom_doc, operation):
@@ -135,6 +176,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 	scrap_items = []
 	operation_items = []
 	item_tree_edges = []
+	assembly_operation_names = get_assembly_operation_names()
 
 	def _walk(bom_name, per_pc_qty, parent_item=None):
 		bom = frappe.get_doc("BOM", bom_name)
@@ -214,7 +256,46 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 					"Asset", tool, "custom_no_of_cavities"
 				)
 
-			operation_items.append(operation_row)
+			if row.operation in assembly_operation_names:
+				# A hand-assembly step (e.g. "Assembly") isn't one action per
+				# parent unit like a machine cycle — its cost scales with how
+				# many manufactured sub-parts get put in, and a parent can
+				# consume several of one sub-part (e.g. 700 of 300675, 100 of
+				# 300676 into the same assembly). But it's still physically
+				# ONE assembly step, done once, at the end — not one step per
+				# sub-part — so this must stay a SINGLE row in the grid (and
+				# in the Summary tree) no matter how many sub-parts it costs
+				# across; only the underlying Rate/Pc reflects the summed
+				# per-component cost. Only components with their own BOM
+				# count (plain RM/fasteners aren't "assembled" as a discrete
+				# costed action).
+				sub_assembly_rows = [r for r in bom.items if r.bom_no]
+				if len(sub_assembly_rows) == 1:
+					# Exactly one sub-part — no breakdown needed, the existing
+					# single-number Qty Multiplier already says everything a
+					# breakdown would, just simpler.
+					sub_row = sub_assembly_rows[0]
+					operation_row["qty_multiplier"] = flt(sub_row.stock_qty) / batch_qty
+					operation_items.append(operation_row)
+				elif sub_assembly_rows:
+					operation_row["assembly_breakdown_json"] = frappe.as_json(
+						[
+							{
+								"item": sub_row.item_code,
+								"item_name": get_item_name(sub_row.item_code),
+								"qty_multiplier": flt(sub_row.stock_qty) / batch_qty,
+							}
+							for sub_row in sub_assembly_rows
+						]
+					)
+					operation_items.append(operation_row)
+				else:
+					# No sub-assembly components at this BOM level (e.g. a
+					# leaf assembly that's really just RM going together) —
+					# fall back to costing it once, same as a normal operation.
+					operation_items.append(operation_row)
+			else:
+				operation_items.append(operation_row)
 
 	_walk(bom_name, per_pc_qty)
 	return {
@@ -479,6 +560,17 @@ def _row(label, value, muted=False, is_total=False):
 	"""
 
 
+def _note_row(text):
+	"""A plain explanatory caption line with no ₹ value — for context text
+	inside an expanded breakdown (e.g. 'here's how this total was built up')
+	that would be misleading rendered as a ₹0.000 cost row via _row()."""
+	return f"""
+		<div class="ce-row ce-row--muted ce-row--note">
+			<span class="ce-row__label">{text}</span>
+		</div>
+	"""
+
+
 def _details_row(summary_label, summary_value, child_rows_html, bold=False, item_node=False):
 	classes = "ce-row ce-row--parent"
 	if bold:
@@ -520,6 +612,12 @@ CE_SUMMARY_STYLE = """
 		.ce-summary-tree .ce-row--muted .ce-row__value { color: var(--text-muted); font-weight: 400; }
 		.ce-summary-tree .ce-row--bold .ce-row__label,
 		.ce-summary-tree .ce-row--bold .ce-row__value { font-weight: 600; }
+		/* Plain caption line inside a breakdown (no ₹ value) — the
+		   explanatory sentence is longer than a normal row label, so let it
+		   wrap onto multiple lines instead of being ellipsis-truncated. */
+		.ce-summary-tree .ce-row--note .ce-row__label {
+			white-space: normal; font-style: italic; font-size: 12.5px; line-height: 1.4;
+		}
 		.ce-summary-tree .ce-row--total {
 			background: var(--control-bg); font-weight: 600;
 			border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);
@@ -567,13 +665,50 @@ CE_SUMMARY_STYLE = """
 
 
 def _operation_leaf_row(r):
-	return _row(
+	label = (
 		f"{r.operation or '—'} — {r.machine_name or r.workstation or 'no machine'}  "
 		f"({flt(r.shift_rate_per_min):.3f} ÷ {flt(r.time_per_pc_min):.3f} pc/min"
-		f"{f' ÷ {flt(r.no_of_cavities):.0f} cav' if flt(r.no_of_cavities) else ''})",
-		r.rate_per_pc,
-		muted=True,
+		f"{f' ÷ {flt(r.no_of_cavities):.0f} cav' if flt(r.no_of_cavities) else ''})"
 	)
+
+	if not r.assembly_breakdown_json:
+		return _row(label, r.rate_per_pc, muted=True)
+
+	# Single Assembly row costing several sub-parts — expand into the
+	# per-sub-part contributions so it's clear how the one row's Rate/Pc
+	# was built up, without turning it into several grid rows (the physical
+	# action is still one Assembly step, done once). The label itself flags
+	# "N components" so it's visibly different from a plain operation row
+	# BEFORE it's expanded, not just once opened — otherwise there's nothing
+	# to suggest clicking it reveals anything more than the usual one-line
+	# cost, since the collapsed row looks identical to a normal operation.
+	base_rate = compute_rate_per_pc(r.shift_rate_per_min, r.time_per_pc_min, r.no_of_cavities)
+	breakdown = frappe.parse_json(r.assembly_breakdown_json)
+	total_qty = sum(flt(entry.get("qty_multiplier")) for entry in breakdown)
+
+	label_with_hint = (
+		f"{label}  — {len(breakdown)} components, {total_qty:.0f} pcs assembled per unit "
+		f"(click to see per-part cost)"
+	)
+
+	explainer_row = _note_row(
+		f"One Assembly step, done once — its Rate/Pc ({_fmt(r.rate_per_pc)}) is this operation's "
+		f"per-piece rate ({flt(base_rate):.3f}/pc) × how many of each part go into one finished unit, summed:"
+	)
+
+	def _breakdown_entry_row(entry):
+		item = entry.get("item") or "—"
+		item_name = entry.get("item_name")
+		name_part = f" — {item_name}" if item_name and item_name != entry.get("item") else ""
+		qty = flt(entry.get("qty_multiplier"))
+		return _row(
+			f"{item}{name_part}: {qty:.0f} pcs × {flt(base_rate):.3f}/pc",
+			base_rate * qty,
+			muted=True,
+		)
+
+	breakdown_rows = explainer_row + "".join(_breakdown_entry_row(entry) for entry in breakdown)
+	return _details_row(label_with_hint, r.rate_per_pc, breakdown_rows)
 
 
 def build_operation_tree_html(operation_items, item_tree_edges=None):
@@ -853,9 +988,17 @@ class CostEstimation(Document):
 				# calculation, later saves leave it alone so a manual override
 				# survives.
 				if not row.rate_per_pc and flt(row.time_per_pc_min):
-					row.rate_per_pc = compute_rate_per_pc(
-						row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities
-					)
+					if row.assembly_breakdown_json:
+						row.rate_per_pc = compute_assembly_breakdown_rate(
+							row.shift_rate_per_min,
+							row.time_per_pc_min,
+							row.no_of_cavities,
+							frappe.parse_json(row.assembly_breakdown_json),
+						)
+					else:
+						row.rate_per_pc = compute_rate_per_pc(
+							row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities, row.qty_multiplier
+						)
 			# else: no machine (e.g. subcontracted Plating) — rate_per_pc is typed directly, left as-is
 
 			total_labour_cost += flt(row.rate_per_pc)

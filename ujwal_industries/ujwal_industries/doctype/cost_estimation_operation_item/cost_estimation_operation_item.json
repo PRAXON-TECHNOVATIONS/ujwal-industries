@@ -15,12 +15,14 @@
   "no_of_cavities",
   "time_per_pc_min",
   "shift_rate_per_min",
+  "qty_multiplier",
+  "assembly_breakdown_json",
   "rate_per_pc"
  ],
  "fields": [
   {
    "columns": 2,
-   "description": "The item this operation is performed on — auto-filled from the BOM tree walk (the component's own item code for sub-assembly/subcontract steps, or the top-level item for its own BOM operations).",
+   "description": "The item this operation is performed on \u2014 auto-filled from the BOM tree walk (the component's own item code for sub-assembly/subcontract steps, or the top-level item for its own BOM operations).",
    "fieldname": "item",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -28,12 +30,12 @@
    "options": "Item"
   },
   {
+   "description": "The assembly item whose BOM consumes Item above \u2014 blank for the top-level item itself. Used to render the Summary's nested BOM tree; not shown in the grid.",
    "fieldname": "parent_item",
    "fieldtype": "Link",
    "hidden": 1,
    "label": "Parent Item",
-   "options": "Item",
-   "description": "The assembly item whose BOM consumes Item above — blank for the top-level item itself. Used to render the Summary's nested BOM tree; not shown in the grid."
+   "options": "Item"
   },
   {
    "columns": 2,
@@ -46,7 +48,7 @@
   },
   {
    "columns": 1,
-   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine — type Rate / Pc directly instead.",
+   "description": "Leave blank for subcontracted operations (e.g. Plating) with no in-house machine \u2014 type Rate / Pc directly instead.",
    "fieldname": "workstation",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -63,7 +65,7 @@
   },
   {
    "columns": 1,
-   "description": "Auto-filled from the BOM's default Tool for this Operation. Editable — pick a different tool if needed.",
+   "description": "Auto-filled from the BOM's default Tool for this Operation. Editable \u2014 pick a different tool if needed.",
    "fieldname": "tool",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -87,7 +89,7 @@
   },
   {
    "columns": 2,
-   "fetch_from": "workstation.custom_cost_per_min",
+   "description": "Auto-filled from Machine when empty. Editable override \u2014 kept as-is on later saves once set, same as Rate per Pc (no fetch_from: that would silently re-overwrite a manual override with the Workstation's current value on every save).",
    "fieldname": "shift_rate_per_min",
    "fieldtype": "Float",
    "in_list_view": 1,
@@ -96,7 +98,27 @@
   },
   {
    "columns": 1,
-   "description": "Auto-computed from Machine when empty. Always editable — type your own rate to override (e.g. while the Machine's cost data isn't set up yet, or for a subcontractor's quoted rate). When a Tool with No of Cavities is set, this is the per-cavity rate (total rate ÷ cavities).",
+   "default": "1",
+   "description": "How many of THIS item go into one unit of the parent assembly. Only meaningful for a single-component operation \u2014 blank/unused when Assembly Breakdown (below) holds several components, since then it's a sum of several different quantities, not one number. Stays 1 (no effect) for a normal, non-Assembly operation.",
+   "fieldname": "qty_multiplier",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty Multiplier",
+   "precision": "3"
+  },
+  {
+   "description": "Internal \u2014 how this row's Rate/Pc was calculated when this Assembly-type operation (see Ujwal Industries Setting \u2192 Assembly Operation Names) consumes MULTIPLE manufactured sub-parts. A JSON list, one entry per sub-part: {\"item\": <item code>, \"item_name\": <item name>, \"qty_multiplier\": <how many of this item go into ONE finished unit>}. Rate/Pc = this operation's own per-cavity rate (Shift Rate \u00f7 Per Min/Pc) \u00d7 each entry's qty_multiplier, summed across all entries \u2014 shown as a click-to-expand breakdown under this row in the Summary tab. This still shows as ONE row in the grid (a single assembly step done once), not one row per sub-part, even though the cost sums several. Blank for a normal or single-sub-part operation, which uses Qty Multiplier directly instead.",
+   "fieldname": "assembly_breakdown_json",
+   "fieldtype": "Long Text",
+   "label": "Assembly Breakdown (JSON)",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1,
+   "report_hide": 1
+  },
+  {
+   "columns": 1,
+   "description": "Auto-computed from Machine when empty. Always editable \u2014 type your own rate to override (e.g. while the Machine's cost data isn't set up yet, or for a subcontractor's quoted rate). When a Tool with No of Cavities is set, this is the per-cavity rate (total rate \u00f7 cavities). For a multi-component Assembly operation, this is the SUM of that rate \u00d7 each component's own quantity \u2014 see the per-component breakdown by expanding this operation's row in the Summary tab, or the Assembly Breakdown (JSON) field for the raw numbers.",
    "fieldname": "rate_per_pc",
    "fieldtype": "Float",
    "in_list_view": 1,
@@ -107,7 +129,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-20 12:44:24.984405",
+ "modified": "2026-09-05 22:35:07.103448",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Cost Estimation Operation Item",

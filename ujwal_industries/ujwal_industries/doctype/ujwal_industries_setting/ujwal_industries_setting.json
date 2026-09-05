@@ -8,7 +8,9 @@
   "settings_section",
   "machine_conflict_validation",
   "create_work_order_and_material_request_on_submit",
-  "consider_spm_for_split"
+  "consider_spm_for_split",
+  "cost_estimation_section",
+  "assembly_operation_names"
  ],
  "fields": [
   {
@@ -36,6 +38,17 @@
    "fieldname": "consider_spm_for_split",
    "fieldtype": "Check",
    "label": "Consider SPM for Split"
+  },
+  {
+   "fieldname": "cost_estimation_section",
+   "fieldtype": "Section Break",
+   "label": "Cost Estimation"
+  },
+  {
+   "fieldname": "assembly_operation_names",
+   "fieldtype": "Small Text",
+   "label": "Assembly Operation Names",
+   "description": "Comma-separated BOM Operation names (e.g. \"Assembly, Sub Assembly\") that represent putting together multiple manufactured sub-parts by hand, one at a time — rather than one machine cycle producing one output. For these operations, Cost Estimation splits the single BOM Operation into one cost line per sub-assembly component it consumes (each with its own bom_no), multiplying that component's Rate/Pc by how many of it go into one unit of the parent assembly (its BOM Item quantity) — instead of costing the operation once per parent unit. Plain raw materials/fasteners with no BOM of their own are not fanned out this way."
   }
  ],
  "grid_page_length": 50,
