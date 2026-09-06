@@ -16,6 +16,7 @@ frappe.ui.form.on("Cost Estimation", {
 	refresh: function (frm) {
 		calculate_rm_totals(frm);
 		reset_stale_grid_columns(frm);
+		add_sync_buttons(frm);
 	},
 	item: function (frm) {
 		if (!frm.doc.item) {
@@ -61,6 +62,34 @@ const GRID_CHILD_DOCTYPES = [
 	"Cost Estimation RM Item",
 	"Cost Estimation Scrap Item",
 ];
+
+function add_sync_buttons(frm) {
+	if (frm.is_new() || !frm.doc.bom) return;
+
+	function run_sync(method, label) {
+		frappe.call({
+			method: `ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.${method}`,
+			args: { cost_estimation: frm.doc.name },
+			freeze: true,
+			freeze_message: __("Syncing {0}...", [label]),
+		}).then(() => {
+			frappe.show_alert({ message: __("{0} synced with BOM", [label]), indicator: "green" });
+			frm.reload_doc();
+		});
+	}
+
+	// A single "Sync" group button with the combined sync as its own click
+	// target, and the 3 individual table syncs as items underneath it — per
+	// the user's ask for "3 buttons under a common sync button".
+	frm.add_custom_button(__("Sync All"), () => run_sync("sync_all_tables", __("All tables")), __("Sync"));
+	frm.add_custom_button(__("Sync RM"), () => run_sync("sync_rm_items", __("RM")), __("Sync"));
+	frm.add_custom_button(__("Sync Scrap"), () => run_sync("sync_scrap_items", __("Scrap")), __("Sync"));
+	frm.add_custom_button(
+		__("Sync Operations"),
+		() => run_sync("sync_operation_items", __("Operations")),
+		__("Sync")
+	);
+}
 
 function reset_stale_grid_columns(frm) {
 	// Runs once per page load (not once per refresh() call) — the fix below
@@ -139,11 +168,7 @@ function fetch_and_apply_bom(frm, bom) {
 		(message.operation_items || []).forEach((row) => {
 			const child = frm.add_child("operation_items", row);
 			if (child.workstation && flt(child.time_per_pc_min)) {
-				child.rate_per_pc = compute_rate_per_pc(
-					child.shift_rate_per_min,
-					child.time_per_pc_min,
-					child.no_of_cavities
-				);
+				child.rate_per_pc = compute_operation_rate(child);
 			}
 		});
 
@@ -219,6 +244,7 @@ frappe.ui.form.on("Cost Estimation Operation Item", {
 	time_per_pc_min: calculate_operation_row,
 	shift_rate_per_min: calculate_operation_row,
 	no_of_cavities: calculate_operation_row,
+	qty_multiplier: calculate_operation_row,
 	rate_per_pc: function (frm) {
 		// Rate per Pc is always user-editable — a direct edit here is a
 		// manual override, just re-sum totals with whatever was typed.
@@ -240,7 +266,7 @@ frappe.ui.form.on("Cost Estimation Operation Item", {
 			// Switching to a different machine is a deliberate "start over"
 			// for this row — recompute Rate per Pc fresh even if it already
 			// had a value (from the previous machine, or a manual override).
-			row.rate_per_pc = compute_rate_per_pc(row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities);
+			row.rate_per_pc = compute_operation_rate(row);
 			if (message.custom_asset_name) {
 				frappe.db.get_value("Asset", message.custom_asset_name, "asset_name").then(({ message: asset }) => {
 					row.machine_name = asset.asset_name;
@@ -272,7 +298,7 @@ frappe.ui.form.on("Cost Estimation Operation Item", {
 	},
 });
 
-function compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities) {
+function compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities, qty_multiplier) {
 	// Mirrors compute_rate_per_pc in cost_estimation.py — keep both in sync.
 	if (!flt(time_per_pc_min)) {
 		return 0;
@@ -282,7 +308,42 @@ function compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities
 	if (cavities) {
 		rate = Math.ceil((rate / cavities) * 100) / 100;
 	}
+	const multiplier = flt(qty_multiplier) || 1;
+	if (multiplier !== 1) {
+		rate = Math.ceil(rate * multiplier * 100) / 100;
+	}
 	return rate;
+}
+
+function compute_assembly_breakdown_rate(shift_rate_per_min, time_per_pc_min, no_of_cavities, breakdown) {
+	// Mirrors compute_assembly_breakdown_rate in cost_estimation.py — keep
+	// both in sync. Sums (shared per-cavity base rate × each sub-part's own
+	// qty_multiplier) for a single Assembly row that consumes several
+	// manufactured sub-parts, rounding only the final sum.
+	const base_rate = compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities);
+	const total = (breakdown || []).reduce((sum, entry) => sum + base_rate * flt(entry.qty_multiplier), 0);
+	return Math.ceil(total * 100) / 100;
+}
+
+function compute_operation_rate(row) {
+	// Dispatches to whichever formula applies to this row — a multi-
+	// component Assembly row (assembly_breakdown_json set) sums per
+	// sub-part, everything else uses the single qty_multiplier formula.
+	if (row.assembly_breakdown_json) {
+		let breakdown = [];
+		try {
+			breakdown = JSON.parse(row.assembly_breakdown_json);
+		} catch (e) {
+			breakdown = [];
+		}
+		return compute_assembly_breakdown_rate(
+			row.shift_rate_per_min,
+			row.time_per_pc_min,
+			row.no_of_cavities,
+			breakdown
+		);
+	}
+	return compute_rate_per_pc(row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities, row.qty_multiplier);
 }
 
 function calculate_rm_row(frm, cdt, cdn) {
@@ -330,7 +391,7 @@ function calculate_operation_row(frm, cdt, cdn) {
 	// to Rate per Pc itself goes through a separate handler that doesn't call
 	// this function, so that kind of override is untouched by this path.
 	if (row.workstation) {
-		row.rate_per_pc = compute_rate_per_pc(row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities);
+		row.rate_per_pc = compute_operation_rate(row);
 	}
 	frm.refresh_field("operation_items");
 	calculate_other_costs(frm);
@@ -412,6 +473,12 @@ const CE_SUMMARY_STYLE = `
 		.ce-summary-tree .ce-row--muted .ce-row__value { color: var(--text-muted); font-weight: 400; }
 		.ce-summary-tree .ce-row--bold .ce-row__label,
 		.ce-summary-tree .ce-row--bold .ce-row__value { font-weight: 600; }
+		/* Plain caption line inside a breakdown (no ₹ value) — the
+		   explanatory sentence is longer than a normal row label, so let it
+		   wrap onto multiple lines instead of being ellipsis-truncated. */
+		.ce-summary-tree .ce-row--note .ce-row__label {
+			white-space: normal; font-style: italic; font-size: 12.5px; line-height: 1.4;
+		}
 		.ce-summary-tree .ce-row--total {
 			background: var(--control-bg); font-weight: 600;
 			border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);
@@ -474,6 +541,17 @@ function summary_row(label, value, { bold = false, muted = false, is_total = fal
 	`;
 }
 
+function note_row(text) {
+	// A plain explanatory caption line with no ₹ value — for context text
+	// inside an expanded breakdown that would be misleading rendered as a
+	// ₹0.000 cost row via summary_row().
+	return `
+		<div class="ce-row ce-row--muted ce-row--note">
+			<span class="ce-row__label">${text}</span>
+		</div>
+	`;
+}
+
 function summary_details_row(summary_label, summary_value, child_rows_html, { bold = false, item_node = false } = {}) {
 	let classes = "ce-row ce-row--parent";
 	if (bold) classes += " ce-row--bold";
@@ -492,13 +570,53 @@ function summary_details_row(summary_label, summary_value, child_rows_html, { bo
 }
 
 function operation_leaf_row(r) {
-	return summary_row(
+	const label =
 		`${r.operation || "—"} — ${r.machine_name || r.workstation || "no machine"}  ` +
-			`(${flt(r.shift_rate_per_min).toFixed(3)} ÷ ${flt(r.time_per_pc_min).toFixed(3)} pc/min` +
-			`${flt(r.no_of_cavities) ? ` ÷ ${flt(r.no_of_cavities).toFixed(0)} cav` : ""})`,
-		r.rate_per_pc,
-		{ muted: true }
+		`(${flt(r.shift_rate_per_min).toFixed(3)} ÷ ${flt(r.time_per_pc_min).toFixed(3)} pc/min` +
+		`${flt(r.no_of_cavities) ? ` ÷ ${flt(r.no_of_cavities).toFixed(0)} cav` : ""})`;
+
+	if (!r.assembly_breakdown_json) {
+		return summary_row(label, r.rate_per_pc, { muted: true });
+	}
+
+	// Single Assembly row costing several sub-parts — expand into the
+	// per-sub-part contributions so it's clear how the one row's Rate/Pc
+	// was built up, without turning it into several grid rows. The label
+	// itself flags "N components" so it's visibly different from a plain
+	// operation row BEFORE it's expanded, not just once opened.
+	let breakdown = [];
+	try {
+		breakdown = JSON.parse(r.assembly_breakdown_json);
+	} catch (e) {
+		breakdown = [];
+	}
+	const base_rate = compute_rate_per_pc(r.shift_rate_per_min, r.time_per_pc_min, r.no_of_cavities);
+	const total_qty = breakdown.reduce((sum, entry) => sum + flt(entry.qty_multiplier), 0);
+
+	const label_with_hint =
+		`${label}  — ${breakdown.length} components, ${total_qty.toFixed(0)} pcs assembled per unit ` +
+		`(click to see per-part cost)`;
+
+	const explainer_row = note_row(
+		`One Assembly step, done once — its Rate/Pc (${ce_fmt(r.rate_per_pc)}) is this operation's ` +
+			`per-piece rate (${flt(base_rate).toFixed(3)}/pc) × how many of each part go into one finished unit, summed:`
 	);
+
+	const breakdown_rows =
+		explainer_row +
+		breakdown
+			.map((entry) => {
+				const name_part =
+					entry.item_name && entry.item_name !== entry.item ? ` — ${entry.item_name}` : "";
+				const qty = flt(entry.qty_multiplier);
+				return summary_row(
+					`${entry.item || "—"}${name_part}: ${qty.toFixed(0)} pcs × ${flt(base_rate).toFixed(3)}/pc`,
+					base_rate * qty,
+					{ muted: true }
+				);
+			})
+			.join("");
+	return summary_details_row(label_with_hint, r.rate_per_pc, breakdown_rows);
 }
 
 function item_label(frm, item_code) {
