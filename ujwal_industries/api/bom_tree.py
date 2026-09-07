@@ -56,11 +56,53 @@ def get_children(parent=None, is_root=False, selected_boms=None, **filters):
 
 	from erpnext.manufacturing.doctype.bom.bom import get_children as erpnext_get_children
 	try:
-		return erpnext_get_children(parent=parent, is_root=is_root, **filters)
+		children = erpnext_get_children(parent=parent, is_root=is_root, **filters)
 	except StopIteration:
 		# StopIteration occurs when a BOM Item's item_code no longer exists in Item.
 		# Fall back to our crash-safe implementation for this BOM.
-		return _get_bom_children(parent)
+		children = _get_bom_children(parent)
+
+	return list(children or []) + _get_scrap_item_nodes(parent)
+
+
+def _get_scrap_item_nodes(parent_bom):
+	"""Scrap Items on a BOM, shown as non-expandable leaf nodes (like RM) so
+	empty BOMs show nothing extra and scrap is visually traceable per level."""
+	scrap_rows = frappe.get_all(
+		"BOM Scrap Item",
+		fields=["item_code", "item_name", "stock_qty", "stock_uom"],
+		filters={"parent": parent_bom},
+		order_by="idx",
+	)
+	if not scrap_rows:
+		return []
+
+	item_codes = list({d.item_code for d in scrap_rows if d.item_code})
+	item_map = {}
+	if item_codes:
+		rows = frappe.get_all(
+			"Item",
+			fields=["name", "image", "description"],
+			filters={"name": ["in", item_codes]},
+		)
+		item_map = {r.name: r for r in rows}
+
+	nodes = []
+	for row in scrap_rows:
+		item_data = item_map.get(row.item_code, {})
+		nodes.append(frappe._dict({
+			"value": "",
+			"item_code": row.item_code,
+			"item_name": row.item_name,
+			"qty": row.stock_qty,
+			"stock_qty": row.stock_qty,
+			"stock_uom": row.stock_uom,
+			"image": frappe.db.escape(item_data.get("image") or ""),
+			"description": item_data.get("description") or "",
+			"expandable": 0,
+			"is_scrap_item": 1,
+		}))
+	return nodes
 
 
 @frappe.whitelist()

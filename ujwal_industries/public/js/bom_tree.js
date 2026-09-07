@@ -1,5 +1,23 @@
 const bom_tree_settings = frappe.treeview_settings["BOM"] || {};
 const original_bom_onload = bom_tree_settings.onload;
+const original_bom_onrender = bom_tree_settings.onrender;
+const original_bom_get_label = bom_tree_settings.get_label;
+
+if (!document.getElementById("bom-tree-scrap-style")) {
+	$("<style>", {
+		id: "bom-tree-scrap-style",
+		html: `
+			.tree-node .tree-link.is-scrap-item .icon {
+				border: 1px dotted var(--text-muted, #8d99a6);
+				border-radius: 50%;
+				background: transparent !important;
+			}
+			.tree-node .tree-link.is-scrap-item .icon svg {
+				visibility: hidden;
+			}
+		`,
+	}).appendTo("head");
+}
 
 const DEFAULT_EXPORT_LABELS = new Set([
 	// BOM Item
@@ -512,6 +530,27 @@ function _apply_import(d, file_b64) {
 frappe.treeview_settings["BOM"] = $.extend({}, bom_tree_settings, {
 	get_tree_nodes: "ujwal_industries.api.bom_tree.get_children",
 	show_expand_all: false,
+	get_label(node) {
+		if (node.data.is_scrap_item) {
+			const escape = frappe.utils.escape_html;
+			let label = escape(node.data.item_code);
+			if (node.data.item_name && node.data.item_code !== node.data.item_name) {
+				label += `: ${escape(node.data.item_name)}`;
+			}
+			return `${label} <span class="badge badge-pill badge-light">${node.data.qty || 0} ${escape(
+				__(node.data.stock_uom)
+			)}</span>`;
+		}
+		return original_bom_get_label ? original_bom_get_label(node) : undefined;
+	},
+	onrender(node) {
+		if (original_bom_onrender) {
+			original_bom_onrender(node);
+		}
+		if (node.data.is_scrap_item) {
+			node.$tree_link.addClass("is-scrap-item");
+		}
+	},
 	onload(me) {
 		if (original_bom_onload) {
 			original_bom_onload(me);
