@@ -1,8 +1,6 @@
 # Copyright (c) 2026, Ujwal Industries and contributors
 # For license information, please see license.txt
 
-import math
-
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -99,13 +97,13 @@ def compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities=None
 	Assembly Operation Names."""
 	if not flt(time_per_pc_min):
 		return 0
-	rate = math.ceil(flt(shift_rate_per_min) / flt(time_per_pc_min) * 100) / 100
+	rate = flt(shift_rate_per_min) / flt(time_per_pc_min)
 	cavities = flt(no_of_cavities)
 	if cavities:
-		rate = math.ceil(rate / cavities * 100) / 100
+		rate = rate / cavities
 	multiplier = flt(qty_multiplier) or 1
 	if multiplier != 1:
-		rate = math.ceil(rate * multiplier * 100) / 100
+		rate = rate * multiplier
 	return rate
 
 
@@ -117,13 +115,10 @@ def compute_assembly_breakdown_rate(shift_rate_per_min, time_per_pc_min, no_of_c
 	step is one action, but its cost still reflects putting in 700 of one
 	part and 100 of another, not treating them as equal. Uses
 	compute_rate_per_pc with qty_multiplier=1 to get the shared base rate
-	once, then applies each entry's multiplier to that same base — entries
-	don't each get their own ceil-per-100 rounding, only the final sum does,
-	so summing several small components doesn't compound rounding error the
-	way calling compute_rate_per_pc once per entry would."""
+	once, then applies each entry's multiplier to that same base."""
 	base_rate = compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities)
 	total = sum(base_rate * flt(entry.get("qty_multiplier")) for entry in breakdown or [])
-	return math.ceil(total * 100) / 100
+	return total
 
 
 def get_assembly_operation_names():
@@ -152,7 +147,7 @@ def get_default_tool_for_operation(bom_doc, operation):
 	return None
 
 
-def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
+def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 	"""Walk this BOM and every sub-assembly BOM beneath it, returning
 	flattened RM/Scrap/Operation rows (plain dicts, not appended to any
 	document) scaled to `per_pc_qty` — how many units of *this* BOM's item
@@ -162,6 +157,25 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 	so it's added right after that tree is walked — Operations land in real
 	process order (raw material's operations first, each subcontract step
 	right after the tree beneath it, working up).
+
+	RM/Scrap weight is each row's OWN `stock_qty`, taken as-is from wherever
+	it sits in the tree — deliberately NOT multiplied by the consumption
+	ratio of any assembly level above it (see the "no intermediate-level
+	compounding" comment at the rm_items.append() call below for the full
+	rationale and a worked example). `estimate_qty` then scales that raw
+	weight to the estimate's own header Quantity, RELATIVE TO THE TOP-LEVEL
+	BOM's OWN reference batch size (`bom.quantity`) — e.g. if
+	BOM-300189-001's own quantity is 100 and item 100118's own row shows
+	2.21 Kg, then `estimate_qty=100` must reproduce 2.21 unchanged, and
+	`estimate_qty=200` must give 4.42 (2.21 * 200/100). This is applied only
+	to RM/Scrap, once, AFTER the walk — never threaded into the recursion
+	(which uses `per_pc_qty` only for Operations' cycle-time fallback,
+	unrelated to the estimate's own Quantity) — and never applied to
+	Operations, since machine cycle time per piece is intrinsic to the
+	operation and doesn't change with how many pieces this estimate happens
+	to be quoting. Pass None (the default) to skip scaling entirely, e.g.
+	for the plain per-1-piece pull used internally by `get_bom_explosion`'s
+	callers before a Quantity is known.
 
 	Every operation row is also tagged with `item` (the item the operation is
 	performed on) and `parent_item` (the assembly item whose BOM consumes
@@ -176,7 +190,6 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 	scrap_items = []
 	operation_items = []
 	item_tree_edges = []
-	assembly_operation_names = get_assembly_operation_names()
 
 	def _walk(bom_name, per_pc_qty, parent_item=None):
 		bom = frappe.get_doc("BOM", bom_name)
@@ -185,16 +198,33 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 		item_tree_edges.append((this_item, parent_item))
 
 		for row in bom.items:
-			row_qty_per_pc = flt(row.stock_qty) * per_pc_qty / batch_qty
 			if row.bom_no:
+				# per_pc_qty still threads through recursion for Operations'
+				# cycle-time fallback below (unaffected by this change) — but
+				# RM/Scrap no longer compound this ratio at all, see the
+				# gross_wt_per_pc/scrap_wt_per_pc comment below.
+				row_qty_per_pc = flt(row.stock_qty) * per_pc_qty / batch_qty
 				_walk(row.bom_no, row_qty_per_pc, parent_item=this_item)
 			else:
+				# gross_wt_per_pc is this row's OWN stock_qty, taken as-is —
+				# deliberately NOT multiplied by the consumption ratio of any
+				# assembly above it in the tree. E.g. item 100118 sits inside
+				# BOM-200122-001 (stock_qty=2.21 Kg there), which is itself
+				# consumed 1300-per-100 by the top BOM — but Cost Estimation
+				# does NOT multiply 2.21 by that 1300/100 ratio; it uses 2.21
+				# directly, exactly matching what the BOM tree view shows at
+				# item 100118's own row. Confirmed explicitly by the user
+				# after the tree's own qty field was corrected to 2.21 (see
+				# fix_bom_200122_item_qty patch) — only `estimate_qty` (the
+				# Cost Estimation header Quantity, applied once after the
+				# walk, see below) scales this number, never intermediate
+				# BOM levels' own consumption counts.
 				rm_items.append(
 					{
 						"rm_used": row.item_code,
 						"item_name": get_item_name(row.item_code),
 						"rm_rate_per_kg": get_last_purchase_rate(row.item_code),
-						"gross_wt_per_pc": row_qty_per_pc,
+						"gross_wt_per_pc": flt(row.stock_qty),
 						"bom": bom_name,
 					}
 				)
@@ -205,13 +235,14 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 				operation_items.append(subcontract_row)
 
 		for row in bom.scrap_items:
-			scrap_wt_per_pc = flt(row.stock_qty) * per_pc_qty / batch_qty
+			# Same "own row's stock_qty, no intermediate-level compounding"
+			# rule as RM above.
 			scrap_items.append(
 				{
 					"scrap_description": row.item_code,
 					"item_name": get_item_name(row.item_code),
 					"scrap_rate_per_kg": get_last_sales_rate(row.item_code),
-					"scrap_wt_per_pc": scrap_wt_per_pc,
+					"scrap_wt_per_pc": flt(row.stock_qty),
 					"bom": bom_name,
 				}
 			)
@@ -239,6 +270,16 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 				"operation": row.operation,
 				"workstation": workstation,
 				"time_per_pc_min": time_per_pc_min,
+				# How many of `this_item` are needed per ONE finished piece of
+				# the top-level item — per_pc_qty already IS this number by
+				# construction (it's threaded down through the recursion,
+				# see row_qty_per_pc above), so it's used as-is, applied here
+				# to every operation on this item, not just Assembly-named
+				# ones. At the top level per_pc_qty=1 (the item's own
+				# operations happen once per finished piece); at a nested
+				# level it's that item's own consumption count (e.g. 13 for
+				# an item the parent BOM uses 1300-per-100).
+				"qty_multiplier": flt(per_pc_qty),
 			}
 			if workstation:
 				operation_row["shift_rate_per_min"] = frappe.db.get_value(
@@ -256,48 +297,19 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 					"Asset", tool, "custom_no_of_cavities"
 				)
 
-			if row.operation in assembly_operation_names:
-				# A hand-assembly step (e.g. "Assembly") isn't one action per
-				# parent unit like a machine cycle — its cost scales with how
-				# many manufactured sub-parts get put in, and a parent can
-				# consume several of one sub-part (e.g. 700 of 300675, 100 of
-				# 300676 into the same assembly). But it's still physically
-				# ONE assembly step, done once, at the end — not one step per
-				# sub-part — so this must stay a SINGLE row in the grid (and
-				# in the Summary tree) no matter how many sub-parts it costs
-				# across; only the underlying Rate/Pc reflects the summed
-				# per-component cost. Only components with their own BOM
-				# count (plain RM/fasteners aren't "assembled" as a discrete
-				# costed action).
-				sub_assembly_rows = [r for r in bom.items if r.bom_no]
-				if len(sub_assembly_rows) == 1:
-					# Exactly one sub-part — no breakdown needed, the existing
-					# single-number Qty Multiplier already says everything a
-					# breakdown would, just simpler.
-					sub_row = sub_assembly_rows[0]
-					operation_row["qty_multiplier"] = flt(sub_row.stock_qty) / batch_qty
-					operation_items.append(operation_row)
-				elif sub_assembly_rows:
-					operation_row["assembly_breakdown_json"] = frappe.as_json(
-						[
-							{
-								"item": sub_row.item_code,
-								"item_name": get_item_name(sub_row.item_code),
-								"qty_multiplier": flt(sub_row.stock_qty) / batch_qty,
-							}
-							for sub_row in sub_assembly_rows
-						]
-					)
-					operation_items.append(operation_row)
-				else:
-					# No sub-assembly components at this BOM level (e.g. a
-					# leaf assembly that's really just RM going together) —
-					# fall back to costing it once, same as a normal operation.
-					operation_items.append(operation_row)
-			else:
-				operation_items.append(operation_row)
+			operation_items.append(operation_row)
 
 	_walk(bom_name, per_pc_qty)
+
+	if estimate_qty is not None:
+		top_bom_batch_qty = flt(frappe.db.get_value("BOM", bom_name, "quantity")) or 1
+		qty_multiplier = (flt(estimate_qty) or top_bom_batch_qty) / top_bom_batch_qty
+		if qty_multiplier != 1:
+			for row in rm_items:
+				row["gross_wt_per_pc"] = flt(row["gross_wt_per_pc"]) * qty_multiplier
+			for row in scrap_items:
+				row["scrap_wt_per_pc"] = flt(row["scrap_wt_per_pc"]) * qty_multiplier
+
 	return {
 		"rm_items": rm_items,
 		"scrap_items": scrap_items,
@@ -307,7 +319,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None):
 
 
 @frappe.whitelist()
-def get_bom_explosion(bom, item=None, company=None):
+def get_bom_explosion(bom, item=None, company=None, qty=1):
 	"""Stateless version of the BOM pull — callable before the Cost
 	Estimation document is even saved, so the browser can populate RM/Scrap/
 	Operations live as soon as an Item (and its default BOM) is picked, with
@@ -315,7 +327,7 @@ def get_bom_explosion(bom, item=None, company=None):
 	if not bom:
 		frappe.throw(_("BOM is required."))
 
-	data = explode_bom_tree(bom, per_pc_qty=1, company=company)
+	data = explode_bom_tree(bom, per_pc_qty=1, company=company, estimate_qty=flt(qty) or 1)
 	if item:
 		# The finished item's own subcontract step (if any) is the very last
 		# thing that happens to it, after everything the BOM tree produces.
@@ -373,7 +385,7 @@ def sync_rm_items(cost_estimation):
 	if not doc.bom:
 		frappe.throw(_("Set a BOM before syncing."))
 
-	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company)
+	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company, estimate_qty=flt(doc.qty) or 1)
 	merged = _merge_bom_rows(
 		[row.as_dict() for row in doc.rm_items],
 		fresh["rm_items"],
@@ -397,7 +409,7 @@ def sync_scrap_items(cost_estimation):
 	if not doc.bom:
 		frappe.throw(_("Set a BOM before syncing."))
 
-	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company)
+	fresh = explode_bom_tree(doc.bom, per_pc_qty=1, company=doc.company, estimate_qty=flt(doc.qty) or 1)
 	merged = _merge_bom_rows(
 		[row.as_dict() for row in doc.scrap_items],
 		fresh["scrap_items"],
@@ -665,10 +677,12 @@ CE_SUMMARY_STYLE = """
 
 
 def _operation_leaf_row(r):
+	qty_multiplier = flt(r.qty_multiplier)
 	label = (
 		f"{r.operation or '—'} — {r.machine_name or r.workstation or 'no machine'}  "
 		f"({flt(r.shift_rate_per_min):.3f} ÷ {flt(r.time_per_pc_min):.3f} pc/min"
-		f"{f' ÷ {flt(r.no_of_cavities):.0f} cav' if flt(r.no_of_cavities) else ''})"
+		f"{f' ÷ {flt(r.no_of_cavities):.0f} cav' if flt(r.no_of_cavities) else ''}"
+		f"{f' × {qty_multiplier:.3f} qty' if qty_multiplier and qty_multiplier != 1 else ''})"
 	)
 
 	if not r.assembly_breakdown_json:
@@ -916,13 +930,15 @@ def build_summary_tree_html(doc):
 
 class CostEstimation(Document):
 	def validate(self):
-		# Only re-explode the BOM tree when the BOM field doesn't match what
-		# it was last pulled from — i.e. the user picked a different BOM
-		# since the last save. A brand-new record whose tables were already
-		# populated by the live client-side fetch has last_pulled_bom set to
-		# match, so this correctly does nothing and preserves any edits made
-		# since. This is what replaces the old "Pull from BOM" button.
-		if self.bom and self.bom != self.last_pulled_bom:
+		# Re-explode the BOM tree when the BOM field doesn't match what it was
+		# last pulled from (user picked a different BOM), OR when Quantity has
+		# changed since the last pull (RM/Scrap weights scale with Quantity,
+		# see explode_bom_tree's qty_multiplier). A brand-new record whose
+		# tables were already populated by the live client-side fetch has
+		# last_pulled_bom/last_pulled_qty set to match, so this correctly does
+		# nothing and preserves any edits made since. This is what replaces
+		# the old "Pull from BOM" button.
+		if self.bom and (self.bom != self.last_pulled_bom or flt(self.qty) != flt(self.last_pulled_qty)):
 			self.apply_bom_explosion()
 
 		self.calculate_rm_cost()
@@ -932,7 +948,9 @@ class CostEstimation(Document):
 		self.set_summary_html()
 
 	def apply_bom_explosion(self):
-		data = explode_bom_tree(self.bom, per_pc_qty=1, company=self.company)
+		data = explode_bom_tree(
+			self.bom, per_pc_qty=1, company=self.company, estimate_qty=flt(self.qty) or 1
+		)
 		if self.item:
 			trailing = get_subcontract_operation_row(self.item, company=self.company)
 			if trailing:
@@ -953,6 +971,7 @@ class CostEstimation(Document):
 			self.append("operation_items", row)
 
 		self.last_pulled_bom = self.bom
+		self.last_pulled_qty = flt(self.qty) or 1
 		self.item_tree_json = frappe.as_json(data["item_tree_edges"])
 
 	def calculate_rm_cost(self):
@@ -1005,8 +1024,19 @@ class CostEstimation(Document):
 
 		self.total_labour_cost_per_pc = total_labour_cost
 
+	def _base_for_pct(self):
+		# net_rm_cost_per_pc already carries the Quantity scaling (RM/Scrap
+		# weights are exploded with qty_multiplier = Quantity), but
+		# total_labour_cost_per_pc is intentionally still a true per-single-
+		# piece figure (Operations' cycle time/rate don't scale with how many
+		# pieces are quoted) — so it's multiplied by Quantity here, once, to
+		# bring it onto the same "for this Quantity" basis as RM/Scrap before
+		# the two are combined. Everything downstream of this (other costs,
+		# profit, totals) is therefore already on the "for Quantity" basis.
+		return flt(self.net_rm_cost_per_pc) + flt(self.total_labour_cost_per_pc) * (flt(self.qty) or 1)
+
 	def calculate_other_costs(self):
-		base_for_pct = flt(self.net_rm_cost_per_pc) + flt(self.total_labour_cost_per_pc)
+		base_for_pct = self._base_for_pct()
 
 		rm_value_for_inventory = sum(
 			flt(row.gross_wt_per_pc) * flt(row.rm_rate_per_kg) for row in self.rm_items
@@ -1016,7 +1046,7 @@ class CostEstimation(Document):
 		self.rejection_cost = base_for_pct * flt(self.rejection_pct) / 100
 
 	def calculate_totals(self):
-		base_for_pct = flt(self.net_rm_cost_per_pc) + flt(self.total_labour_cost_per_pc)
+		base_for_pct = self._base_for_pct()
 
 		self.total_cost_per_pc = (
 			base_for_pct
@@ -1029,7 +1059,11 @@ class CostEstimation(Document):
 			self.profit_amount = base_for_pct * flt(self.profit_pct) / 100
 
 		self.total_component_cost = flt(self.total_cost_per_pc) + flt(self.profit_amount)
-		self.total_component_cost_for_qty = self.total_component_cost * flt(self.qty)
+		# total_cost_per_pc/total_component_cost are already computed on the
+		# "for this Quantity" basis via _base_for_pct() above, so the final
+		# total is NOT multiplied by Quantity again here (unlike before this
+		# field was named "for_qty" to describe a second multiply).
+		self.total_component_cost_for_qty = self.total_component_cost
 
 	def set_summary_html(self):
 		self.summary_html = build_summary_tree_html(self)

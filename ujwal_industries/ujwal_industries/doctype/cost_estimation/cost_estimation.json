@@ -15,6 +15,7 @@
   "qty",
   "bom",
   "last_pulled_bom",
+  "last_pulled_qty",
   "item_tree_json",
   "rm_section",
   "rm_items",
@@ -112,6 +113,17 @@
    "print_hide": 1,
    "report_hide": 1,
    "description": "Internal — tracks which BOM the RM/Scrap/Operations tables were last generated from, so Save only re-pulls when the BOM field has actually changed."
+  },
+  {
+   "fieldname": "last_pulled_qty",
+   "fieldtype": "Float",
+   "label": "Last Pulled Qty",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — tracks the Quantity that RM/Scrap weights were last scaled to, so Save re-pulls when Quantity changes just like it does for the BOM field."
   },
   {
    "fieldname": "item_tree_json",

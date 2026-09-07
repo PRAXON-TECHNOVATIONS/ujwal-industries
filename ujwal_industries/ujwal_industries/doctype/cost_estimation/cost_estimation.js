@@ -48,7 +48,20 @@ frappe.ui.form.on("Cost Estimation", {
 			}
 		});
 	},
-	qty: calculate_totals,
+	qty: function (frm) {
+		// RM/Scrap weights scale with Quantity (see explode_bom_tree's
+		// qty_multiplier) — re-pull from the BOM so Gross Wt/Pc reflects the
+		// new Quantity, same as picking a different BOM does. Operations are
+		// untouched by this re-pull's qty_multiplier (only RM/Scrap use it),
+		// so a manual Rate/Pc override there survives via the usual sync
+		// merge semantics — but a live re-fetch (not sync) always refreshes,
+		// same as the existing BOM-pick behavior.
+		if (frm.doc.bom) {
+			fetch_and_apply_bom(frm, frm.doc.bom);
+		} else {
+			calculate_totals(frm);
+		}
+	},
 	inventory_carrying_pct: calculate_other_costs,
 	packing_forwarding_pct: calculate_other_costs,
 	rejection_pct: calculate_other_costs,
@@ -152,7 +165,7 @@ function reset_stale_grid_columns(frm) {
 function fetch_and_apply_bom(frm, bom) {
 	return frappe.call({
 		method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_bom_explosion",
-		args: { bom: bom, item: frm.doc.item, company: frm.doc.company },
+		args: { bom: bom, item: frm.doc.item, company: frm.doc.company, qty: flt(frm.doc.qty) || 1 },
 		freeze: true,
 		freeze_message: __("Fetching from BOM..."),
 	}).then(({ message }) => {
@@ -176,6 +189,7 @@ function fetch_and_apply_bom(frm, bom) {
 		// pulled" — otherwise the first Save would re-explode again and
 		// wipe out any edits made in the meantime.
 		frm.doc.last_pulled_bom = bom;
+		frm.doc.last_pulled_qty = flt(frm.doc.qty) || 1;
 		frm.doc.item_tree_json = JSON.stringify(message.item_tree_edges || []);
 
 		frm.refresh_field("rm_items");
@@ -303,14 +317,14 @@ function compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities
 	if (!flt(time_per_pc_min)) {
 		return 0;
 	}
-	let rate = Math.ceil((flt(shift_rate_per_min) / flt(time_per_pc_min)) * 100) / 100;
+	let rate = flt(shift_rate_per_min) / flt(time_per_pc_min);
 	const cavities = flt(no_of_cavities);
 	if (cavities) {
-		rate = Math.ceil((rate / cavities) * 100) / 100;
+		rate = rate / cavities;
 	}
 	const multiplier = flt(qty_multiplier) || 1;
 	if (multiplier !== 1) {
-		rate = Math.ceil(rate * multiplier * 100) / 100;
+		rate = rate * multiplier;
 	}
 	return rate;
 }
@@ -319,10 +333,10 @@ function compute_assembly_breakdown_rate(shift_rate_per_min, time_per_pc_min, no
 	// Mirrors compute_assembly_breakdown_rate in cost_estimation.py — keep
 	// both in sync. Sums (shared per-cavity base rate × each sub-part's own
 	// qty_multiplier) for a single Assembly row that consumes several
-	// manufactured sub-parts, rounding only the final sum.
+	// manufactured sub-parts.
 	const base_rate = compute_rate_per_pc(shift_rate_per_min, time_per_pc_min, no_of_cavities);
 	const total = (breakdown || []).reduce((sum, entry) => sum + base_rate * flt(entry.qty_multiplier), 0);
-	return Math.ceil(total * 100) / 100;
+	return total;
 }
 
 function compute_operation_rate(row) {
@@ -397,8 +411,18 @@ function calculate_operation_row(frm, cdt, cdn) {
 	calculate_other_costs(frm);
 }
 
+function get_base_for_pct(frm, total_labour_cost) {
+	// net_rm_cost_per_pc already carries the Quantity scaling (RM/Scrap
+	// weights are exploded with qty_multiplier = Quantity, see
+	// explode_bom_tree / cost_estimation.py::_base_for_pct — keep both in
+	// sync), but total_labour_cost_per_pc is intentionally still a true
+	// per-single-piece figure, so it's multiplied by Quantity here, once,
+	// before combining with RM/Scrap.
+	return flt(frm.doc.net_rm_cost_per_pc) + total_labour_cost * (flt(frm.doc.qty) || 1);
+}
+
 function calculate_other_costs(frm) {
-	const base_for_pct = flt(frm.doc.net_rm_cost_per_pc) + get_total_labour_cost(frm);
+	const base_for_pct = get_base_for_pct(frm, get_total_labour_cost(frm));
 
 	let rm_value_for_inventory = 0;
 	(frm.doc.rm_items || []).forEach((row) => {
@@ -428,7 +452,7 @@ function get_total_labour_cost(frm) {
 
 function calculate_totals(frm) {
 	const total_labour_cost = get_total_labour_cost(frm);
-	const base_for_pct = flt(frm.doc.net_rm_cost_per_pc) + total_labour_cost;
+	const base_for_pct = get_base_for_pct(frm, total_labour_cost);
 
 	frm.doc.total_cost_per_pc =
 		base_for_pct +
@@ -445,7 +469,11 @@ function calculate_totals(frm) {
 	frm.doc.total_component_cost = flt(frm.doc.total_cost_per_pc) + flt(frm.doc.profit_amount);
 	frm.refresh_field("total_component_cost");
 
-	frm.doc.total_component_cost_for_qty = flt(frm.doc.total_component_cost) * flt(frm.doc.qty);
+	// total_cost_per_pc/total_component_cost are already computed on the
+	// "for this Quantity" basis via get_base_for_pct() above, so the final
+	// total is NOT multiplied by Quantity again here (keep in sync with
+	// cost_estimation.py::calculate_totals).
+	frm.doc.total_component_cost_for_qty = flt(frm.doc.total_component_cost);
 	frm.refresh_field("total_component_cost_for_qty");
 
 	render_summary(frm);
@@ -570,10 +598,12 @@ function summary_details_row(summary_label, summary_value, child_rows_html, { bo
 }
 
 function operation_leaf_row(r) {
+	const qty_multiplier = flt(r.qty_multiplier);
 	const label =
 		`${r.operation || "—"} — ${r.machine_name || r.workstation || "no machine"}  ` +
 		`(${flt(r.shift_rate_per_min).toFixed(3)} ÷ ${flt(r.time_per_pc_min).toFixed(3)} pc/min` +
-		`${flt(r.no_of_cavities) ? ` ÷ ${flt(r.no_of_cavities).toFixed(0)} cav` : ""})`;
+		`${flt(r.no_of_cavities) ? ` ÷ ${flt(r.no_of_cavities).toFixed(0)} cav` : ""}` +
+		`${qty_multiplier && qty_multiplier !== 1 ? ` × ${qty_multiplier.toFixed(3)} qty` : ""})`;
 
 	if (!r.assembly_breakdown_json) {
 		return summary_row(label, r.rate_per_pc, { muted: true });
