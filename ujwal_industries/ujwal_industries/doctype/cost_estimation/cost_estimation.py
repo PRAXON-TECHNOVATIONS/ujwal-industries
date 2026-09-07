@@ -231,6 +231,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 			subcontract_row = get_subcontract_operation_row(row.item_code, company=company)
 			if subcontract_row:
 				subcontract_row["item"] = row.item_code
+				subcontract_row["item_name"] = get_item_name(row.item_code)
 				subcontract_row["parent_item"] = this_item
 				operation_items.append(subcontract_row)
 
@@ -266,6 +267,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 
 			operation_row = {
 				"item": this_item,
+				"item_name": get_item_name(this_item),
 				"parent_item": parent_item,
 				"operation": row.operation,
 				"workstation": workstation,
