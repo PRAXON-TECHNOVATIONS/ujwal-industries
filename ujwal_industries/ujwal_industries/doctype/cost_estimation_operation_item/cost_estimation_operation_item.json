@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "item",
+  "item_name",
   "parent_item",
   "operation",
   "workstation",
@@ -28,6 +29,15 @@
    "in_list_view": 1,
    "label": "Item",
    "options": "Item"
+  },
+  {
+   "columns": 2,
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
   },
   {
    "description": "The assembly item whose BOM consumes Item above \u2014 blank for the top-level item itself. Used to render the Summary's nested BOM tree; not shown in the grid.",
