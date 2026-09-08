@@ -498,9 +498,25 @@ fixtures = [
 					"Super Approver",
 					"Store Incharge",
 					"Outsource Store Manager",
-					
+
 				),
 			]
+		],
+	},
+	# All BOM + BOM Item/Operation/Scrap Item customizations (allow_on_submit,
+	# field_order, track_views, etc.) -- scoped to just these 4 doctypes so it
+	# never sweeps in unrelated site customizations made directly on a live
+	# server for other doctypes.
+	{
+		"doctype": "Property Setter",
+		"filters": [
+			["doc_type", "in", ("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item")],
+		],
+	},
+	{
+		"doctype": "Custom Field",
+		"filters": [
+			["dt", "in", ("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item")],
 		],
 	},
 	# {
