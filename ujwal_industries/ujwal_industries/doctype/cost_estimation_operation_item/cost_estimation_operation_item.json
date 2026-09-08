@@ -16,8 +16,8 @@
   "no_of_cavities",
   "time_per_pc_min",
   "shift_rate_per_min",
-  "qty_multiplier",
   "assembly_breakdown_json",
+  "qty_multiplier",
   "rate_per_pc"
  ],
  "fields": [
@@ -31,11 +31,9 @@
    "options": "Item"
   },
   {
-   "columns": 2,
    "fetch_from": "item.item_name",
    "fieldname": "item_name",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Item Name",
    "read_only": 1
   },
@@ -48,7 +46,7 @@
    "options": "Item"
   },
   {
-   "columns": 2,
+   "columns": 1,
    "fieldname": "operation",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -66,10 +64,8 @@
    "options": "Workstation"
   },
   {
-   "columns": 2,
    "fieldname": "machine_name",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Machine Name",
    "read_only": 1
   },
@@ -91,14 +87,14 @@
    "label": "No of Cavities"
   },
   {
-   "columns": 2,
+   "columns": 1,
    "fieldname": "time_per_pc_min",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Per Min / Pc"
   },
   {
-   "columns": 2,
+   "columns": 1,
    "description": "Auto-filled from Machine when empty. Editable override \u2014 kept as-is on later saves once set, same as Rate per Pc (no fetch_from: that would silently re-overwrite a manual override with the Workstation's current value on every save).",
    "fieldname": "shift_rate_per_min",
    "fieldtype": "Float",
@@ -117,7 +113,7 @@
    "precision": "3"
   },
   {
-   "description": "Internal \u2014 how this row's Rate/Pc was calculated when this Assembly-type operation (see Ujwal Industries Setting \u2192 Assembly Operation Names) consumes MULTIPLE manufactured sub-parts. A JSON list, one entry per sub-part: {\"item\": <item code>, \"item_name\": <item name>, \"qty_multiplier\": <how many of this item go into ONE finished unit>}. Rate/Pc = this operation's own per-cavity rate (Shift Rate \u00f7 Per Min/Pc) \u00d7 each entry's qty_multiplier, summed across all entries \u2014 shown as a click-to-expand breakdown under this row in the Summary tab. This still shows as ONE row in the grid (a single assembly step done once), not one row per sub-part, even though the cost sums several. Blank for a normal or single-sub-part operation, which uses Qty Multiplier directly instead.",
+   "description": "Internal \u2014 how this row's Rate/Pc was calculated when this Assembly-type operation (see Ujwal Industries Setting \u2192 Assembly Operation Names) consumes MULTIPLE manufactured sub-parts. A JSON list, one entry per sub-part: {\"item\": &lt;item code&gt;, \"item_name\": &lt;item name&gt;, \"qty_multiplier\": &lt;how many of this item go into ONE finished unit&gt;}. Rate/Pc = this operation's own per-cavity rate (Shift Rate \u00f7 Per Min/Pc) \u00d7 each entry's qty_multiplier, summed across all entries \u2014 shown as a click-to-expand breakdown under this row in the Summary tab. This still shows as ONE row in the grid (a single assembly step done once), not one row per sub-part, even though the cost sums several. Blank for a normal or single-sub-part operation, which uses Qty Multiplier directly instead.",
    "fieldname": "assembly_breakdown_json",
    "fieldtype": "Long Text",
    "label": "Assembly Breakdown (JSON)",
@@ -139,7 +135,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-05 22:35:07.103448",
+ "modified": "2026-09-08 13:50:21.883694",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Cost Estimation Operation Item",
