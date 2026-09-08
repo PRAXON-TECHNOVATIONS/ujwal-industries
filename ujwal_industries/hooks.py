@@ -519,14 +519,28 @@ fixtures = [
 	},
 	# Row-level permissions added for Production Master User (full access to BOM
 	# except permlevel-1 money fields) and permlevel-1 grants for Manufacturing
-	# User/Manager so their access to cost fields is unaffected. BOM's role
+	# User/Manager so their access to cost fields is unaffected. Also grants
+	# Production Master User read/write on Workstation, Operation and
+	# Workstation Type -- BOM Operation's Link fields need read on their target
+	# doctype or the Link value won't render in the BOM form. BOM's role
 	# permissions are managed as Custom DocPerm on this site, so new grants must
 	# go there too or get_valid_perms() ignores plain DocPerm rows for BOM.
 	# Scoped to just these row names so it never sweeps in unrelated rows.
 	{
 		"doctype": "Custom DocPerm",
 		"filters": [
-			["name", "in", ("3aneba4qm9", "3anfd3597j", "3aorc58uc7")],
+			[
+				"name",
+				"in",
+				(
+					"3aneba4qm9",
+					"3anfd3597j",
+					"3aorc58uc7",
+					"sp0iv7vn90",
+					"t2c86orkon",
+					"t2cqejfh75",
+				),
+			],
 		],
 	},
 	{
