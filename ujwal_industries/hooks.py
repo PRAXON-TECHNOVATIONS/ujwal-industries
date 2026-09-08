@@ -494,23 +494,39 @@ fixtures = [
 				"in",
 				(
 					"Store Manager",
-					"Sales Executive"
+					"Sales Executive",
 					"Super Approver",
 					"Store Incharge",
 					"Outsource Store Manager",
-
+					"Production Master User",
 				),
 			]
 		],
 	},
-	# All BOM + BOM Item/Operation/Scrap Item customizations (allow_on_submit,
-	# field_order, track_views, etc.) -- scoped to just these 4 doctypes so it
-	# never sweeps in unrelated site customizations made directly on a live
-	# server for other doctypes.
+	# All BOM + BOM Item/Operation/Scrap Item/Explosion Item customizations
+	# (allow_on_submit, field_order, track_views, etc.) -- scoped to just these
+	# doctypes so it never sweeps in unrelated site customizations made
+	# directly on a live server for other doctypes.
 	{
 		"doctype": "Property Setter",
 		"filters": [
-			["doc_type", "in", ("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item")],
+			[
+				"doc_type",
+				"in",
+				("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item", "BOM Explosion Item"),
+			],
+		],
+	},
+	# Row-level permissions added for Production Master User (full access to BOM
+	# except permlevel-1 money fields) and permlevel-1 grants for Manufacturing
+	# User/Manager so their access to cost fields is unaffected. BOM's role
+	# permissions are managed as Custom DocPerm on this site, so new grants must
+	# go there too or get_valid_perms() ignores plain DocPerm rows for BOM.
+	# Scoped to just these row names so it never sweeps in unrelated rows.
+	{
+		"doctype": "Custom DocPerm",
+		"filters": [
+			["name", "in", ("3aneba4qm9", "3anfd3597j", "3aorc58uc7")],
 		],
 	},
 	{
