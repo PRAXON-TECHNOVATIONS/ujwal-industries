@@ -1,20 +1,11 @@
 frappe.ui.form.on('BOM', {
     refresh: function (frm) {
+        // Change Log is populated server-side (ujwal_industries.overrides.bom_change_log)
+        // by diffing the whole doc on every save, so it stays a read-only audit trail here.
         let grid = frm.get_field("change_log").grid;
         grid.wrapper.find('.grid-add-row').hide();
         grid.wrapper.find('.grid-add-multiple-rows').hide();
         grid.cannot_add_rows = true;
-
-        frm.meta.fields.forEach(df => {
-            if (!df.fieldname) return;
-            if (!df._custom_bound) {
-                df._custom_bound = true;
-                frappe.ui.form.on('BOM', df.fieldname, function(frm) {
-                    if (frm.is_new()) return;
-                    add_change_log(frm, df.fieldname);
-                });
-            }
-        });
 
         set_operation_filter(frm);
     },
@@ -65,17 +56,6 @@ frappe.ui.form.on('BOM', {
                     is_fixed_asset: 0,
                 },
             };
-        });
-
-        frappe.meta.get_docfields("BOM Item").forEach(df => {
-            if (!df.fieldname) return;
-            if (!df._custom_bound) {
-                df._custom_bound = true;
-                frappe.ui.form.on('BOM Item', df.fieldname, function(frm, cdt, cdn) {
-                    if (frm.is_new()) return;
-                    add_child_change_log(frm, cdt, cdn, df.fieldname);
-                });
-            }
         });
     }
 });
@@ -182,50 +162,3 @@ frappe.ui.form.on("BOM Operation", {
     }
 });
 
-function add_change_log(frm, fieldname) {
-
-    const IGNORE_FIELDS = [
-            "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "raw_material_cost", "base_raw_material_cost", "total_cost", "base_total_cost","base_scrap_material_cost","scrap_material_cost"];
-
-    if (IGNORE_FIELDS.includes(fieldname)) return;
-
-    let df = frappe.meta.get_docfield(frm.doctype, fieldname);
-    if (!df) return;
-
-    let label = df.label || fieldname;
-
-    let exists = (frm.doc.change_log || [])
-        .some(row => row.filed_name === label);
-
-
-    let row = frm.add_child("change_log");
-    row.filed_name = label;  
-    frm.refresh_field("change_log");
-}
-
-function add_child_change_log(frm, cdt, cdn, fieldname) {
-    const IGNORE_FIELDS = ["name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "amount", "base_amount", "qty_consumed_per_unit", "rate"];
-    if (IGNORE_FIELDS.includes(fieldname)) return;
-
-    let df = frappe.meta.get_docfield(cdt, fieldname);
-    if (!df) return;
-
-    let label = df.label || fieldname;
-    let row = locals[cdt][cdn];
-
-    const TABLE_LABEL_MAP = {
-        "BOM Item": "Items",
-        "BOM Scrap Item": "Scrap Items"
-    };
-
-    let tableLabel = TABLE_LABEL_MAP[cdt] || cdt;
-    let full_label = `${tableLabel} → Row ${row.idx} → ${label}`;
-
-    let exists = (frm.doc.change_log || [])
-        .some(r => r.filed_name === full_label);
-    if (exists) return;
-
-    let log = frm.add_child("change_log");
-    log.filed_name = full_label;
-    frm.refresh_field("change_log");
-}

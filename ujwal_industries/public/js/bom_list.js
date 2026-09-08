@@ -18,5 +18,13 @@
 				},
 			});
 		}
+
+		// Always land on "Is Default" = checked whenever the BOM list is freshly
+		// opened -- a user can untick it in their session to see every BOM (e.g.
+		// two BOMs for the same item with different RM), but the next fresh load
+		// (refresh, or navigating back to this list) resets to default-only again.
+		// onload only fires once per fresh list instantiation, so this is a forced
+		// reset on every load, not something that fights the user mid-session.
+		listview.filter_area.add([[listview.doctype, 'is_default', '=', 1]]);
 	};
 })();
