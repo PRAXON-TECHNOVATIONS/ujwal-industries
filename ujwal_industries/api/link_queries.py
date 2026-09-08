@@ -2,11 +2,19 @@ import frappe
 from frappe import whitelist, validate_and_sanitize_search_inputs
 
 
+# Link-field dropdowns default to a small page_len (10-20), which hides most
+# matches for a broad search term. Raise it to a high-but-bounded cap instead
+# of removing the limit outright, so a very generic term can't return an
+# unbounded result set and stall the dropdown or the DB.
+MAX_SEARCH_RESULTS = 500
+
+
 @whitelist()
 @validate_and_sanitize_search_inputs
 def item_query(doctype, txt, searchfield, start, page_len, filters):
 	"""Search Item by item_code (name), item_name, or custom_part_number — all shown in dropdown."""
 	txt = (txt or "").strip()
+	page_len = MAX_SEARCH_RESULTS
 	if isinstance(filters, str):
 		import json
 		filters = json.loads(filters)
@@ -60,6 +68,7 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 def customer_query(doctype, txt, searchfield, start, page_len, filters):
 	"""Search Customer by name (ID) or customer_name — both shown in dropdown."""
 	txt = (txt or "").strip()
+	page_len = MAX_SEARCH_RESULTS
 	if isinstance(filters, str):
 		import json
 		filters = json.loads(filters)
