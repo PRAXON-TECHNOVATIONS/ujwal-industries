@@ -93,6 +93,7 @@ doctype_list_js = {
 	"Job Card": "public/js/job_card_list.js",
 	"BOM": "public/js/bom_list.js",
 	"Work Order": "public/js/work_order_list.js",
+	"Cost Estimation": "public/js/cost_estimation_list.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -313,9 +314,18 @@ doc_events = {
   		"on_update_after_submit": "ujwal_industries.overrides.bom.validate_default_tool",
 		"validate": [
       					"ujwal_industries.overrides.bom.validate_bom",
-      					# "ujwal_industries.overrides.bom.validate_change_bom_value",
 						"ujwal_industries.ujwal_industries.overrides.bom_subcontract_cost.set_subcontract_operation_cost",
+						"ujwal_industries.overrides.bom_change_log.track_changes",
 					],
+		# Frappe never calls "validate" when editing an already-submitted doc --
+		# it runs before_update_after_submit instead -- so both cost recalculation
+		# and the change log need their own hooks here, or a submitted-BOM edit
+		# leaves costs stale and goes untracked. Recalc must run first so the
+		# change log diffs against the true final values being saved.
+		"before_update_after_submit": [
+			"ujwal_industries.overrides.bom.recalculate_on_update_after_submit",
+			"ujwal_industries.overrides.bom_change_log.track_changes",
+		],
 		"autoname": "ujwal_industries.overrides.bom.autoname",
 		"before_save": "ujwal_industries.overrides.bom.before_save",
 		"after_insert": "ujwal_industries.overrides.bom.after_insert",
