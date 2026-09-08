@@ -1,0 +1,15 @@
+/* Sales Order list filter bar: ID, Customer, Date, Delivery Status, Billing
+   Status, Item Code and Customer's PO No all live in .standard-filter-section
+   so they read left-to-right in one continuous flow, separate from the
+   Filter/Sort controls. Bootstrap's col-md-2 sizes each field by its own
+   content, so give them all an equal width so the row wraps cleanly instead
+   of at an arbitrary, lopsided point. */
+.ujwal-so-filter-grid.page-form .standard-filter-section {
+	display: flex;
+	flex-wrap: wrap;
+}
+
+.ujwal-so-filter-grid.page-form .standard-filter-section > .form-group {
+	flex: 1 1 200px;
+	max-width: 220px;
+}

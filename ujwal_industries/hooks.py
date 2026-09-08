@@ -37,6 +37,7 @@ from ujwal_industries.overrides import work_order_override
 app_include_css = [
     "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29",
     "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.3",
+    "/assets/ujwal_industries/css/sales_order_list.css?V=0.1.1",
 ]
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
@@ -62,7 +63,7 @@ app_include_js = [
 
 # include js in doctype views
 doctype_js = {
-	"Production Plan": "public/js/production_plan_subcontracting.js",
+	"Production Plan": ["public/js/production_plan_subcontracting.js", "public/js/production_plan.js"],
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
@@ -71,7 +72,7 @@ doctype_js = {
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
- 	"Work Order": "public/js/work_order_scrap.js",
+ 	"Work Order": ["public/js/work_order_scrap.js", "public/js/work_order.js"],
   	"Stock Entry": "public/js/stock_entry.js",
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
@@ -90,6 +91,8 @@ doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
 	"Sales Order": "public/js/sales_order_list.js",
 	"Job Card": "public/js/job_card_list.js",
+	"BOM": "public/js/bom_list.js",
+	"Work Order": "public/js/work_order_list.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}

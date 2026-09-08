@@ -31,8 +31,41 @@ frappe.ui.form.on('BOM', {
                 };
             };
             }
-                
+
         })
+
+        // Tools/Machines (is_fixed_asset = 1) are never actual BOM material or
+        // scrap items — exclude them here so Item search stays limited to real
+        // RM/SFG/FG items, and route through our own item_query so Part Number
+        // search (custom_part_number) still works.
+        frm.set_query("item", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    is_stock_item: 1,
+                    is_fixed_asset: 0,
+                },
+            };
+        });
+
+        frm.set_query("item_code", "items", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    include_item_in_manufacturing: 1,
+                    is_fixed_asset: 0,
+                },
+            };
+        });
+
+        frm.set_query("item_code", "scrap_items", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    is_fixed_asset: 0,
+                },
+            };
+        });
 
         frappe.meta.get_docfields("BOM Item").forEach(df => {
             if (!df.fieldname) return;
