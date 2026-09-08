@@ -341,7 +341,7 @@ def get_bom_explosion(bom, item=None, company=None, qty=1):
 	return data
 
 
-def _merge_bom_rows(existing_rows, fresh_rows, match_fields, preserve_fields):
+def _merge_bom_rows(existing_rows, fresh_rows, match_fields, preserve_fields, should_preserve=None):
 	"""Reconciles a child table against a fresh BOM pull instead of wiping
 	and replacing it outright: a row already present (by `match_fields`) is
 	kept and has every field except `preserve_fields` refreshed to the fresh
@@ -350,7 +350,14 @@ def _merge_bom_rows(existing_rows, fresh_rows, match_fields, preserve_fields):
 	catches up to what the BOM says now. A row with no match in the fresh
 	pull is dropped (the BOM no longer produces it), and a fresh row with no
 	match in existing is appended as new. Returns the new list of row dicts;
-	does not touch the document itself."""
+	does not touch the document itself.
+
+	`should_preserve(old_row, fresh_row)` can override whether the
+	preserve_fields are actually kept for a given matched row — e.g. Operations
+	only wants to keep a manually-overridden rate for machine-driven rows, not
+	for ones whose rate is entirely sourced from a master elsewhere (see
+	sync_operation_items). Defaults to always preserving, matching the old
+	unconditional behaviour."""
 
 	def key(row):
 		return tuple(row.get(f) for f in match_fields)
@@ -365,9 +372,10 @@ def _merge_bom_rows(existing_rows, fresh_rows, match_fields, preserve_fields):
 		if bucket:
 			old_row = bucket.pop(0)
 			new_row = dict(fresh_row)
-			for f in preserve_fields:
-				if old_row.get(f):
-					new_row[f] = old_row.get(f)
+			if should_preserve is None or should_preserve(old_row, fresh_row):
+				for f in preserve_fields:
+					if old_row.get(f):
+						new_row[f] = old_row.get(f)
 			merged.append(new_row)
 		else:
 			merged.append(dict(fresh_row))
@@ -430,10 +438,19 @@ def sync_operation_items(cost_estimation):
 	"""Same reconciliation as sync_rm_items, for the Operations table —
 	matched by (item, operation) since that's what's stable across a BOM
 	edit, unlike workstation/tool/rate which can change. Keeps a manually
-	set/overridden Rate/Pc on rows still present in the BOM, refreshes
-	machine/tool/cavities/cycle time, adds operations newly in the BOM,
-	drops ones no longer there (including the top-level item's own trailing
-	subcontract step, re-derived fresh every sync)."""
+	set/overridden Rate/Pc on machine-driven rows (ones with a Workstation)
+	still present in the BOM, refreshes machine/tool/cavities/cycle time,
+	adds operations newly in the BOM, drops ones no longer there (including
+	the top-level item's own trailing subcontract step, re-derived fresh
+	every sync).
+
+	Subcontract-type rows (no Workstation — e.g. Plating, Case Hardening)
+	have their Rate/Pc sourced entirely from Item Subcontracting Supplier on
+	the Item master rather than typed in here, so their rate is NEVER
+	preserved on sync: it always takes the fresh value get_subcontract_
+	operation_row just re-fetched, so a rate change on the Item master shows
+	up here after a sync instead of staying stuck at whatever it was when
+	the row was first pulled."""
 	doc = frappe.get_doc("Cost Estimation", cost_estimation)
 	if not doc.bom:
 		frappe.throw(_("Set a BOM before syncing."))
@@ -451,6 +468,7 @@ def sync_operation_items(cost_estimation):
 		fresh["operation_items"],
 		match_fields=["item", "operation"],
 		preserve_fields=["rate_per_pc"],
+		should_preserve=lambda old_row, fresh_row: bool(fresh_row.get("workstation")),
 	)
 	doc.operation_items = []
 	for row in merged:
