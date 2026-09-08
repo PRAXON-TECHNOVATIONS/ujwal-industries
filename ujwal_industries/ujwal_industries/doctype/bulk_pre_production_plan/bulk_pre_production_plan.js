@@ -36,6 +36,17 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
 
+	setup(frm) {
+		frm.set_query("item_code", function () {
+			return {
+				query: "ujwal_industries.api.link_queries.item_query",
+				filters: {
+					is_fixed_asset: 0,
+				},
+			};
+		});
+	},
+
 	onload(frm) {
 		setTimeout(() => {
 

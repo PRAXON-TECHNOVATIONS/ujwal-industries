@@ -5,7 +5,7 @@ from frappe import whitelist, validate_and_sanitize_search_inputs
 @whitelist()
 @validate_and_sanitize_search_inputs
 def item_query(doctype, txt, searchfield, start, page_len, filters):
-	"""Search Item by item_code (name) or item_name — both shown in dropdown."""
+	"""Search Item by item_code (name), item_name, or custom_part_number — all shown in dropdown."""
 	txt = (txt or "").strip()
 	if isinstance(filters, str):
 		import json
@@ -36,10 +36,15 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 	sql = f"""
 		SELECT
 			`tabItem`.`name`,
-			`tabItem`.`item_name`
+			`tabItem`.`item_name`,
+			`tabItem`.`custom_part_number`
 		FROM `tabItem`
 		WHERE `tabItem`.`disabled` = 0
-		  AND (`tabItem`.`name` LIKE %s OR `tabItem`.`item_name` LIKE %s)
+		  AND (
+		  	`tabItem`.`name` LIKE %s
+		  	OR `tabItem`.`item_name` LIKE %s
+		  	OR `tabItem`.`custom_part_number` LIKE %s
+		  )
 		  {extra_where}
 		ORDER BY
 			CASE WHEN `tabItem`.`name` LIKE %s THEN 0 ELSE 1 END,
@@ -47,7 +52,7 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 		LIMIT %s OFFSET %s
 	"""
 	like = f"%{txt}%"
-	return frappe.db.sql(sql, [like, like] + extra_values + [like, page_len, start])
+	return frappe.db.sql(sql, [like, like, like] + extra_values + [like, page_len, start])
 
 
 @whitelist()

@@ -140,7 +140,7 @@ function ujwal_po_update_items_dialog(opts) {
 					filters = { is_purchase_item: 1 };
 				}
 				return {
-					query: 'erpnext.controllers.queries.item_query',
+					query: 'ujwal_industries.api.link_queries.item_query',
 					filters: filters,
 				};
 			},

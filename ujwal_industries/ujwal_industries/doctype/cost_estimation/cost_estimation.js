@@ -3,6 +3,15 @@
 
 frappe.ui.form.on("Cost Estimation", {
 	setup: function (frm) {
+		frm.set_query("item", function () {
+			return {
+				query: "ujwal_industries.api.link_queries.item_query",
+				filters: {
+					is_fixed_asset: 0,
+				},
+			};
+		});
+
 		frm.set_query("bom", function () {
 			return {
 				filters: {
