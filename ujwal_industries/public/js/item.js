@@ -25,6 +25,55 @@ function toggle_all_subcontracting_supplier_rows(frm) {
 	});
 }
 
+// ─── Default-per-Type helpers ──────────────────────────────────────────────────
+// Exactly one row per custom_type (In House / Subcontract / In House - Vendor)
+// is marked default at all times, across the whole item regardless of Company:
+// the first row of a type is auto-defaulted, ticking a new default auto-unticks
+// the previous one of that type, and the last default of a type can't be
+// unticked down to zero.
+
+function rows_of_same_type(frm, cdn, type) {
+	return (frm.doc.custom_subcontracting_suppliers || []).filter(
+		row => row.name !== cdn && row.custom_type === type
+	);
+}
+
+function set_default_subcontracting_supplier(frm, cdt, cdn) {
+	const row = locals[cdt][cdn];
+	if (!row.is_default) return;
+
+	rows_of_same_type(frm, cdn, row.custom_type).forEach(other => {
+		if (other.is_default) {
+			frappe.model.set_value(other.doctype, other.name, 'is_default', 0);
+		}
+	});
+}
+
+function ensure_default_not_cleared(frm, cdt, cdn) {
+	const row = locals[cdt][cdn];
+	if (row.is_default) return;
+
+	const siblings = rows_of_same_type(frm, cdn, row.custom_type);
+	const still_has_default = siblings.some(other => other.is_default);
+	if (!still_has_default) {
+		frappe.model.set_value(cdt, cdn, 'is_default', 1);
+		frappe.show_alert({
+			message: __('At least one {0} supplier must be marked default.', [row.custom_type || '']),
+			indicator: 'orange'
+		}, 5);
+	}
+}
+
+function auto_default_first_row_of_type(frm, cdt, cdn) {
+	const row = locals[cdt][cdn];
+	if (!row.custom_type || row.is_default) return;
+
+	const siblings = rows_of_same_type(frm, cdn, row.custom_type);
+	if (siblings.length === 0) {
+		frappe.model.set_value(cdt, cdn, 'is_default', 1);
+	}
+}
+
 // ─── Material Type helpers ─────────────────────────────────────────────────────
 
 /**
@@ -95,6 +144,7 @@ frappe.ui.form.on('Item', {
 
 	custom_subcontracting_suppliers_add(frm, cdt, cdn) {
 		toggle_subcontracting_supplier_fields(frm, cdt, cdn);
+		auto_default_first_row_of_type(frm, cdt, cdn);
 	}
 });
 
@@ -103,6 +153,13 @@ frappe.ui.form.on('Item', {
 frappe.ui.form.on('Item Subcontracting Supplier', {
 	is_per_day_qty_based(frm, cdt, cdn) {
 		toggle_subcontracting_supplier_fields(frm, cdt, cdn);
+	},
+	custom_type(frm, cdt, cdn) {
+		auto_default_first_row_of_type(frm, cdt, cdn);
+	},
+	is_default(frm, cdt, cdn) {
+		set_default_subcontracting_supplier(frm, cdt, cdn);
+		ensure_default_not_cleared(frm, cdt, cdn);
 	},
 	form_render(frm, cdt, cdn) {
 		toggle_subcontracting_supplier_fields(frm, cdt, cdn);
