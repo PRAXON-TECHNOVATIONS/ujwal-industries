@@ -118,7 +118,15 @@ frappe.ui.form.on("BOM Operation", {
                 fieldtype: "MultiSelectList",
                 placeholder: "Select Workstations",
                 get_data: function (txt) {
-                    return frappe.db.get_link_options("Workstation", txt);
+                    return frappe.call({
+                        type: "GET",
+                        method: "frappe.desk.search.search_link",
+                        args: {
+                            doctype: "Workstation",
+                            txt: txt || "",
+                            page_length: 0,
+                        },
+                    }).then(r => r.message);
                 },
                 change: function () {
                     if (is_initializing) {
@@ -133,6 +141,18 @@ frappe.ui.form.on("BOM Operation", {
         });
 
         control.refresh();
+
+        // The dropdown toggle (.status-text) sits in the same cramped grid-form
+        // cell as the filter input and steals focus back on click, so typing
+        // never reaches the input. Re-focus the filter input every time the
+        // dropdown opens, and stop clicks on the input from bubbling up to the
+        // toggle and re-triggering it.
+        control.$list_wrapper.find(".dropdown-input-wrapper input").on("mousedown click", (e) => {
+            e.stopPropagation();
+        });
+        control.$list_wrapper.on("shown.bs.dropdown show.bs.dropdown", () => {
+            setTimeout(() => control.$filter_input.trigger("focus"), 0);
+        });
 
         let values = [];
         if (row.custom_workstations_csv) {
