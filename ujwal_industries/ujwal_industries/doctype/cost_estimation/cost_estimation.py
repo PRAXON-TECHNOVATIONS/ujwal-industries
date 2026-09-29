@@ -438,8 +438,10 @@ def sync_operation_items(cost_estimation):
 	"""Same reconciliation as sync_rm_items, for the Operations table —
 	matched by (item, operation) since that's what's stable across a BOM
 	edit, unlike workstation/tool/rate which can change. Keeps a manually
-	set/overridden Rate/Pc on machine-driven rows (ones with a Workstation)
-	still present in the BOM, refreshes machine/tool/cavities/cycle time,
+	overridden Rate/Pc on machine-driven rows (ones with a Workstation)
+	still present in the BOM — but a rate that was only ever auto-calculated
+	is recomputed from the new cycle time/cavities (see
+	_is_manual_rate_override), refreshes machine/tool/cavities/cycle time,
 	adds operations newly in the BOM, drops ones no longer there (including
 	the top-level item's own trailing subcontract step, re-derived fresh
 	every sync).
@@ -468,7 +470,8 @@ def sync_operation_items(cost_estimation):
 		fresh["operation_items"],
 		match_fields=["item", "operation"],
 		preserve_fields=["rate_per_pc"],
-		should_preserve=lambda old_row, fresh_row: bool(fresh_row.get("workstation")),
+		should_preserve=lambda old_row, fresh_row: bool(fresh_row.get("workstation"))
+		and _is_manual_rate_override(old_row),
 	)
 	doc.operation_items = []
 	for row in merged:
@@ -476,6 +479,35 @@ def sync_operation_items(cost_estimation):
 	doc.item_tree_json = frappe.as_json(fresh["item_tree_edges"])
 	doc.save()
 	return {"count": len(merged)}
+
+
+def _compute_operation_rate(row):
+	"""Rate/Pc the formula gives for this row's own inputs — dispatches to
+	the Assembly breakdown formula when the row carries one."""
+	if row.get("assembly_breakdown_json"):
+		return compute_assembly_breakdown_rate(
+			row.get("shift_rate_per_min"),
+			row.get("time_per_pc_min"),
+			row.get("no_of_cavities"),
+			frappe.parse_json(row.get("assembly_breakdown_json")),
+		)
+	return compute_rate_per_pc(
+		row.get("shift_rate_per_min"),
+		row.get("time_per_pc_min"),
+		row.get("no_of_cavities"),
+		row.get("qty_multiplier"),
+	)
+
+
+def _is_manual_rate_override(row):
+	"""True only when a machine row's stored Rate/Pc differs from what its
+	own (pre-sync) inputs compute to — i.e. someone typed it. A rate that
+	still equals the formula result was auto-calculated, so on sync it must
+	be recomputed from the BOM's new cycle time/cavities rather than kept
+	frozen at the old value. Compared at the field's 3-decimal precision."""
+	if not flt(row.get("rate_per_pc")):
+		return False
+	return flt(row.get("rate_per_pc"), 3) != flt(_compute_operation_rate(row), 3)
 
 
 @frappe.whitelist()
@@ -1027,17 +1059,7 @@ class CostEstimation(Document):
 				# calculation, later saves leave it alone so a manual override
 				# survives.
 				if not row.rate_per_pc and flt(row.time_per_pc_min):
-					if row.assembly_breakdown_json:
-						row.rate_per_pc = compute_assembly_breakdown_rate(
-							row.shift_rate_per_min,
-							row.time_per_pc_min,
-							row.no_of_cavities,
-							frappe.parse_json(row.assembly_breakdown_json),
-						)
-					else:
-						row.rate_per_pc = compute_rate_per_pc(
-							row.shift_rate_per_min, row.time_per_pc_min, row.no_of_cavities, row.qty_multiplier
-						)
+					row.rate_per_pc = _compute_operation_rate(row)
 			# else: no machine (e.g. subcontracted Plating) — rate_per_pc is typed directly, left as-is
 
 			total_labour_cost += flt(row.rate_per_pc)
