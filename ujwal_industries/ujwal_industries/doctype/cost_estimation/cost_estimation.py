@@ -213,6 +213,19 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 				# gross_wt_per_pc/scrap_wt_per_pc comment below.
 				row_qty_per_pc = flt(row.stock_qty) * per_pc_qty / batch_qty
 				_walk(row.bom_no, row_qty_per_pc, parent_item=this_item)
+				# The item's own subcontract step (from its Item master) turns
+				# the tree just walked INTO this item, so it only applies when
+				# this BOM actually makes the item via its sub-BOM. A line with
+				# no bom_no is bought in ready-made (e.g. 300059 in
+				# BOM-300421-001 — it has its own BOM and a Blanking
+				# subcontract setup, but here it's purchased from another
+				# supplier), so its subcontract step must not be costed.
+				subcontract_row = get_subcontract_operation_row(row.item_code, company=company)
+				if subcontract_row:
+					subcontract_row["item"] = row.item_code
+					subcontract_row["item_name"] = get_item_name(row.item_code)
+					subcontract_row["parent_item"] = this_item
+					operation_items.append(subcontract_row)
 			else:
 				# gross_wt_per_pc is this row's OWN stock_qty, taken as-is —
 				# deliberately NOT multiplied by the consumption ratio of any
@@ -236,12 +249,6 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 						"bom": bom_name,
 					}
 				)
-			subcontract_row = get_subcontract_operation_row(row.item_code, company=company)
-			if subcontract_row:
-				subcontract_row["item"] = row.item_code
-				subcontract_row["item_name"] = get_item_name(row.item_code)
-				subcontract_row["parent_item"] = this_item
-				operation_items.append(subcontract_row)
 
 		for row in bom.scrap_items:
 			# Same "own row's stock_qty, no intermediate-level compounding"
