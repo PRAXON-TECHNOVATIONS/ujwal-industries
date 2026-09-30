@@ -7,27 +7,35 @@ from frappe.model.document import Document
 from frappe.utils import flt
 
 
-def get_last_purchase_rate(item_code):
-	return flt(frappe.db.get_value("Item", item_code, "last_purchase_rate"))
+def get_latest_item_price(item_code, buying):
+	"""Latest currently-valid Item Price rate for `item_code` across all
+	buying (RM) or selling (Scrap) price lists — newest Valid From wins, ties
+	broken by the most recently created. Replaces the old PO/Sales Invoice
+	based rates so estimates follow the maintained price lists instead of
+	whatever the last transaction happened to be."""
+	today = frappe.utils.today()
+	rows = frappe.get_all(
+		"Item Price",
+		filters={
+			"item_code": item_code,
+			"buying" if buying else "selling": 1,
+			"valid_from": ["<=", today],
+		},
+		or_filters=[["valid_upto", "is", "not set"], ["valid_upto", ">=", today]],
+		fields=["price_list_rate"],
+		order_by="valid_from desc, creation desc",
+		limit=1,
+	)
+	return flt(rows[0].price_list_rate) if rows else 0
 
 
 def get_item_name(item_code):
 	return frappe.db.get_value("Item", item_code, "item_name")
 
 
-def get_last_sales_rate(item_code):
-	rate = frappe.db.get_value(
-		"Sales Invoice Item",
-		{"item_code": item_code, "docstatus": 1},
-		"rate",
-		order_by="creation desc",
-	)
-	return flt(rate)
-
-
 @frappe.whitelist()
-def get_last_sales_rate_api(item_code):
-	return get_last_sales_rate(item_code)
+def get_latest_item_price_api(item_code, buying=0):
+	return get_latest_item_price(item_code, buying=frappe.utils.cint(buying))
 
 
 def get_subcontract_operation_row(item_code, company=None):
@@ -223,7 +231,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 					{
 						"rm_used": row.item_code,
 						"item_name": get_item_name(row.item_code),
-						"rm_rate_per_kg": get_last_purchase_rate(row.item_code),
+						"rm_rate_per_kg": get_latest_item_price(row.item_code, buying=True),
 						"gross_wt_per_pc": flt(row.stock_qty),
 						"bom": bom_name,
 					}
@@ -242,7 +250,7 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 				{
 					"scrap_description": row.item_code,
 					"item_name": get_item_name(row.item_code),
-					"scrap_rate_per_kg": get_last_sales_rate(row.item_code),
+					"scrap_rate_per_kg": get_latest_item_price(row.item_code, buying=False),
 					"scrap_wt_per_pc": flt(row.stock_qty),
 					"bom": bom_name,
 				}
