@@ -219,11 +219,17 @@ frappe.ui.form.on("Cost Estimation RM Item", {
 		if (!row.rm_used) {
 			return;
 		}
-		frappe.db.get_value("Item", row.rm_used, ["last_purchase_rate", "item_name"]).then(({ message }) => {
-			if (message.last_purchase_rate) {
-				row.rm_rate_per_kg = message.last_purchase_rate;
-			}
+		frappe.db.get_value("Item", row.rm_used, "item_name").then(({ message }) => {
 			row.item_name = message.item_name;
+			frm.refresh_field("rm_items");
+		});
+		frappe.call({
+			method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_latest_item_price_api",
+			args: { item_code: row.rm_used, buying: 1 },
+		}).then(({ message }) => {
+			if (message) {
+				row.rm_rate_per_kg = message;
+			}
 			frm.refresh_field("rm_items");
 			calculate_rm_row(frm, cdt, cdn);
 		});
@@ -246,8 +252,8 @@ frappe.ui.form.on("Cost Estimation Scrap Item", {
 			frm.refresh_field("scrap_items");
 		});
 		frappe.call({
-			method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_last_sales_rate_api",
-			args: { item_code: row.scrap_description },
+			method: "ujwal_industries.ujwal_industries.doctype.cost_estimation.cost_estimation.get_latest_item_price_api",
+			args: { item_code: row.scrap_description, buying: 0 },
 		}).then(({ message }) => {
 			if (message) {
 				row.scrap_rate_per_kg = message;
