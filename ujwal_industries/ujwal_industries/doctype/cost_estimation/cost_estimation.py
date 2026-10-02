@@ -266,15 +266,17 @@ def explode_bom_tree(bom_name, per_pc_qty=1, company=None, estimate_qty=None):
 		for row in bom.operations:
 			# "Per Min / Pc" on this doctype is a PRODUCTION RATE (pieces made
 			# per minute) — since Rate/Pc = Shift Rate per Min ÷ Per Min/Pc.
-			# BOM Operation's own custom_batchsize field already holds this
-			# rate directly (pieces/min for that operation+machine) and is
-			# NOT scaled by the estimate's batch qty — it's an intrinsic
-			# property of the operation, not a quantity that grows with how
-			# many finished pieces we're costing. Only fall back to deriving
-			# it from time_in_mins (a per-piece cycle time in minutes, so its
-			# reciprocal is pieces/min) when Batch Size isn't filled in.
+			# BOM Operation's custom_batchsize is how many pieces this
+			# operation makes in its Operation Time (time_in_mins), so the
+			# rate is Batch Size ÷ Operation Time — e.g. Drilling on
+			# BOM-200517 makes 100 pcs in 600 min = 0.1667 pcs/min. A blank
+			# or zero Operation Time is taken as 1 min (Batch Size is then
+			# already pcs/min). Not scaled by the estimate's batch qty — it's
+			# intrinsic to the operation. Only fall back to deriving it from
+			# time_in_mins alone (a per-piece cycle time, so its reciprocal is
+			# pieces/min) when Batch Size isn't filled in.
 			if flt(row.custom_batchsize):
-				time_per_pc_min = flt(row.custom_batchsize)
+				time_per_pc_min = flt(row.custom_batchsize) / (flt(row.time_in_mins) or 1)
 			else:
 				cycle_time_per_pc_min = flt(row.time_in_mins) * per_pc_qty / batch_qty
 				time_per_pc_min = 1 / cycle_time_per_pc_min if cycle_time_per_pc_min else 0
