@@ -2,8 +2,12 @@ import frappe
 
 
 @frappe.whitelist()
-def get_machine_hold_data():
-	"""Return job cards currently On Hold (with their latest pause reason) grouped by workstation/machine."""
+def get_machine_hold_data(pause_reasons=None):
+	"""Return job cards currently On Hold (with their latest pause reason) grouped by workstation/machine.
+
+	Optional multi-select filter: pause_reasons (latest pause reason).
+	"""
+	pause_reasons = set(frappe.parse_json(pause_reasons) or [])
 
 	rows = frappe.db.sql(
 		"""
@@ -42,6 +46,9 @@ def get_machine_hold_data():
 		""",
 		as_dict=True,
 	)
+
+	if pause_reasons:
+		rows = [r for r in rows if r.pause_reason in pause_reasons]
 
 	# Group by machine
 	machines = {}
