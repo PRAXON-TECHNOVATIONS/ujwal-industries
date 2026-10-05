@@ -175,10 +175,12 @@ permission_query_conditions = {
 	"Workstation": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_workstation",
 	"Job Card": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_job_card",
 	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_query_work_order",
+	"Purchase Order": "ujwal_industries.ujwal_industries.overrides.purchase_order.has_permission_query_purchase_order",
 }
 #
 has_permission = {
 	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_work_order",
+	"Purchase Order": "ujwal_industries.ujwal_industries.overrides.purchase_order.has_permission_purchase_order",
 }
 
 # DocType Class
@@ -401,11 +403,13 @@ override_doctype_dashboards = {
 # Request Events
 # ----------------
 # before_request = ["ujwal_industries.utils.before_request"]
+before_request = ["ujwal_industries.ujwal_industries.overrides.report_patches.apply"]
 # after_request = ["ujwal_industries.utils.after_request"]
 
 # Job Events
 # ----------
 # before_job = ["ujwal_industries.utils.before_job"]
+before_job = ["ujwal_industries.ujwal_industries.overrides.report_patches.apply"]
 # after_job = ["ujwal_industries.utils.after_job"]
 
 # User Data Protection

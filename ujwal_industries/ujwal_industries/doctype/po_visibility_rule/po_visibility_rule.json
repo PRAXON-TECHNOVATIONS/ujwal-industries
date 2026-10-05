@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "creation": "2026-10-05 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "role",
+  "show_normal",
+  "show_service",
+  "show_subcontracted"
+ ],
+ "fields": [
+  {
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Role",
+   "options": "Role",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Is Subcontracted and Service PO both unticked",
+   "fieldname": "show_normal",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Show Normal PO"
+  },
+  {
+   "default": "0",
+   "description": "Service PO ticked, Is Subcontracted unticked",
+   "fieldname": "show_service",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Show Service PO"
+  },
+  {
+   "default": "0",
+   "description": "Is Subcontracted ticked",
+   "fieldname": "show_subcontracted",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Show Subcontracted PO"
+  }
+ ],
+ "grid_page_length": 50,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-05 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "PO Visibility Rule",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
