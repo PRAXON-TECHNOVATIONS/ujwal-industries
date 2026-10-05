@@ -10,7 +10,9 @@
   "create_work_order_and_material_request_on_submit",
   "consider_spm_for_split",
   "cost_estimation_section",
-  "assembly_operation_names"
+  "assembly_operation_names",
+  "purchase_order_visibility_section",
+  "po_visibility_rules"
  ],
  "fields": [
   {
@@ -49,13 +51,25 @@
    "fieldtype": "Small Text",
    "label": "Assembly Operation Names",
    "description": "Comma-separated BOM Operation names (e.g. \"Assembly, Sub Assembly\") that represent putting together multiple manufactured sub-parts by hand, one at a time — rather than one machine cycle producing one output. For these operations, Cost Estimation splits the single BOM Operation into one cost line per sub-assembly component it consumes (each with its own bom_no), multiplying that component's Rate/Pc by how many of it go into one unit of the parent assembly (its BOM Item quantity) — instead of costing the operation once per parent unit. Plain raw materials/fasteners with no BOM of their own are not fanned out this way."
+  },
+  {
+   "fieldname": "purchase_order_visibility_section",
+   "fieldtype": "Section Break",
+   "label": "Purchase Order Visibility"
+  },
+  {
+   "fieldname": "po_visibility_rules",
+   "fieldtype": "Table",
+   "label": "PO Visibility Rules",
+   "options": "PO Visibility Rule",
+   "description": "Users having any role listed here see only the PO types ticked for their roles (union if they have several listed roles). Users with none of these roles, System Manager and Administrator see all Purchase Orders. Applies to PO list, form, link fields, Report View and Purchase Order Analysis."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-11 17:41:25.246958",
+ "modified": "2026-10-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",

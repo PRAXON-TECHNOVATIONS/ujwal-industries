@@ -3,12 +3,19 @@ from frappe.utils import add_days, nowdate
 
 
 @frappe.whitelist()
-def get_machine_production_data():
-	"""Return active job cards (planned within -inf..today+7) grouped by workstation/machine."""
+def get_machine_production_data(statuses=None, pause_reasons=None):
+	"""Return active job cards (planned within -inf..today+7) grouped by workstation/machine.
+
+	Optional multi-select filters: statuses (Job Card status) and pause_reasons (latest pause reason).
+	"""
 	window_end = add_days(nowdate(), 7)
+	statuses = frappe.parse_json(statuses) or []
+	pause_reasons = set(frappe.parse_json(pause_reasons) or [])
+
+	status_cond = "AND jc.status IN %(statuses)s" if statuses else ""
 
 	rows = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			jc.name            AS job_card,
 			jc.workstation     AS machine_no,
@@ -41,11 +48,15 @@ def get_machine_production_data():
 			jc.docstatus != 2
 			AND jc.status NOT IN ('Completed', 'Cancelled')
 			AND DATE(COALESCE(jc.expected_start_date, wo.planned_start_date)) <= %(window_end)s
+			{status_cond}
 		ORDER BY jc.workstation, jc.expected_start_date
 		""",
-		{"window_end": window_end},
+		{"window_end": window_end, "statuses": tuple(statuses)},
 		as_dict=True,
 	)
+
+	if pause_reasons:
+		rows = [r for r in rows if r.pause_reason in pause_reasons]
 
 	# Group by machine
 	machines = {}

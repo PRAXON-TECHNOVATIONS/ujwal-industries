@@ -52,6 +52,7 @@ class MachineProductionDisplay {
 	_init() {
 		this._injectStyles();
 		this._buildToolbar();
+		this._buildFilters();
 		this._shrinkPageHeader();
 
 		this.$root = $(`<div id="mpd-root"></div>`)
@@ -76,6 +77,43 @@ class MachineProductionDisplay {
 		</span>`).appendTo(this.page.inner_toolbar);
 	}
 
+	// ── Filters (multi-select Status + Pause Reason) ─────────────────────────
+	_buildFilters() {
+		const onChange = () => { this._curPage = 0; this._load(); };
+
+		this.statusFilter = this.page.add_field({
+			fieldtype: 'MultiSelectList',
+			fieldname: 'status',
+			label: __('Status'),
+			placeholder: __('Status'),
+			// read options live from Job Card's status field so newly added statuses show up too;
+			// Completed / Cancelled are never shown on this display, so leave them out
+			get_data: txt => new Promise(resolve => frappe.model.with_doctype('Job Card', () => {
+				const field = frappe.meta.get_docfield('Job Card', 'status');
+				const q = (txt || '').toLowerCase();
+				resolve((field?.options || '').split('\n')
+					.filter(s => s && !['Completed', 'Cancelled'].includes(s) && s.toLowerCase().includes(q))
+					.map(s => ({ label: __(s), value: s, description: '' })));
+			})),
+			change: onChange,
+		});
+
+		this.pauseReasonFilter = this.page.add_field({
+			fieldtype: 'MultiSelectList',
+			fieldname: 'pause_reason',
+			label: __('Pause Reason'),
+			placeholder: __('Pause Reason'),
+			// fetch the full master — get_link_options caps results at 10
+			get_data: txt => frappe.db.get_list('Job Card Pause Reason', {
+				fields: ['name'],
+				filters: txt ? [['name', 'like', `%${txt}%`]] : [],
+				order_by: 'name asc',
+				limit: 0,
+			}).then(rows => rows.map(r => ({ label: r.name, value: r.name, description: '' }))),
+			change: onChange,
+		});
+	}
+
 	// ── Shrink Frappe's default page header (title, buttons, spacing) ──────────
 	_shrinkPageHeader() {
 		const $w = $(this.wrapper);
@@ -91,7 +129,7 @@ class MachineProductionDisplay {
 		});
 		$w.find('.page-actions, .custom-actions').css('margin-top', '0');
 		$w.find('.page-head-content').css({ 'margin-bottom': '0', 'padding-bottom': '0' });
-		$w.find('.standard-sidebar-section, .page-form').css('display', 'none');
+		$w.find('.standard-sidebar-section').css('display', 'none');
 	}
 
 	// ── Data load ─────────────────────────────────────────────────────────────
@@ -99,6 +137,10 @@ class MachineProductionDisplay {
 		this._stopDataTimer();
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.page.machine_production_display.machine_production_display.get_machine_production_data',
+			args: {
+				statuses: this.statusFilter.get_value() || [],
+				pause_reasons: this.pauseReasonFilter.get_value() || [],
+			},
 			callback: r => {
 				this.rows = [];
 				(r.message || []).forEach(m => (m.jobs || []).forEach(j => this.rows.push(j)));

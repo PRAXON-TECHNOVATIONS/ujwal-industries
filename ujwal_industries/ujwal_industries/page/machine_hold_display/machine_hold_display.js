@@ -52,6 +52,7 @@ class MachineHoldDisplay {
 	_init() {
 		this._injectStyles();
 		this._buildToolbar();
+		this._buildFilters();
 		this._shrinkPageHeader();
 
 		this.$root = $(`<div id="mhd-root"></div>`)
@@ -76,6 +77,24 @@ class MachineHoldDisplay {
 		</span>`).appendTo(this.page.inner_toolbar);
 	}
 
+	// ── Filter (multi-select Pause Reason) ───────────────────────────────────
+	_buildFilters() {
+		this.pauseReasonFilter = this.page.add_field({
+			fieldtype: 'MultiSelectList',
+			fieldname: 'pause_reason',
+			label: __('Pause Reason'),
+			placeholder: __('Pause Reason'),
+			// fetch the full master — get_link_options caps results at 10
+			get_data: txt => frappe.db.get_list('Job Card Pause Reason', {
+				fields: ['name'],
+				filters: txt ? [['name', 'like', `%${txt}%`]] : [],
+				order_by: 'name asc',
+				limit: 0,
+			}).then(rows => rows.map(r => ({ label: r.name, value: r.name, description: '' }))),
+			change: () => { this._curPage = 0; this._load(); },
+		});
+	}
+
 	// ── Shrink Frappe's default page header (title, buttons, spacing) ──────────
 	_shrinkPageHeader() {
 		const $w = $(this.wrapper);
@@ -91,7 +110,7 @@ class MachineHoldDisplay {
 		});
 		$w.find('.page-actions, .custom-actions').css('margin-top', '0');
 		$w.find('.page-head-content').css({ 'margin-bottom': '0', 'padding-bottom': '0' });
-		$w.find('.standard-sidebar-section, .page-form').css('display', 'none');
+		$w.find('.standard-sidebar-section').css('display', 'none');
 	}
 
 	// ── Data load ─────────────────────────────────────────────────────────────
@@ -99,6 +118,7 @@ class MachineHoldDisplay {
 		this._stopDataTimer();
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.page.machine_hold_display.machine_hold_display.get_machine_hold_data',
+			args: { pause_reasons: this.pauseReasonFilter.get_value() || [] },
 			callback: r => {
 				this.rows = [];
 				(r.message || []).forEach(m => (m.jobs || []).forEach(j => this.rows.push(j)));
