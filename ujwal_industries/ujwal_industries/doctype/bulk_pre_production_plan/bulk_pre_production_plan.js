@@ -4866,6 +4866,53 @@ function _create_inline_shift_editor(initial_csv, onchange) {
  * AG Grid cell editor — inline tag autocomplete (no popup).
  */
 
+// Popup date picker for the RM 'Receive By' override (value kept as YYYY-MM-DD)
+class RmReceiveDateEditor {
+	init(params) {
+		this.original = params.value;
+		this.changed = false;
+		this.input = document.createElement('input');
+		this.input.type = 'date';
+		this.input.value = params.value ? String(params.value).split(' ')[0] : '';
+		this.input.addEventListener('change', () => { this.changed = true; });
+		this.input.style.cssText = 'font-size:12px;padding:4px 6px;border:1px solid #fdba74;border-radius:4px;';
+		// Escape/blur without a change keeps the old value; clearing the date removes the override
+		this.input.addEventListener('keydown', e => { if (e.key === 'Enter') params.stopEditing(); });
+	}
+	getGui() { return this.input; }
+	afterGuiAttached() { this.input.focus(); }
+	// Unchanged → keep the original value so no override is saved by just opening the picker
+	getValue() { return this.changed ? (this.input.value || '') : this.original; }
+	isPopup() { return true; }
+	getPopupPosition() { return 'under'; }
+}
+
+function _save_rm_row_received_date(frm, p, so_name) {
+	const row_name = p.data.row_name || p.data.name;
+	const revert = () => {
+		p.data[p.colDef.field] = p.oldValue;
+		p.api.refreshCells({ rowNodes: [p.node], force: true });
+	};
+	if (!row_name) { revert(); return; }
+	if (frm.is_dirty()) {
+		revert();
+		frappe.msgprint({
+			title: __('Save First'),
+			message: __('Please save the document before changing an RM Receive By date.'),
+			indicator: 'orange',
+		});
+		return;
+	}
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.set_rm_row_received_date',
+		args: { docname: frm.doc.name, mr_row_name: row_name, rm_received_date: p.newValue || '' },
+		freeze: true,
+		freeze_message: __('Recalculating schedule from RM received date…'),
+		callback: () => frm.reload_doc(),
+		error: () => revert(),
+	});
+}
+
 class SupplierPopupEditor {
     init(params) {
         this.params = params;
@@ -5746,6 +5793,8 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	// ── RM Received Date override bar ──────────────────────────────────────────
 	const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_name);
 	const current_override = so_row?.custom_rm_received_date || '';
+	// Override is ON with a bulk date, or ticked for per-RM Receive By dates only
+	const override_on = !!current_override || !!so_row?.custom_rm_override;
 
 	const override_bar = document.createElement('div');
 	override_bar.style.cssText = [
@@ -5757,7 +5806,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	const chk = document.createElement('input');
 	chk.type = 'checkbox';
 	chk.id = `rm_override_chk_${so_name}`;
-	chk.checked = !!current_override;
+	chk.checked = override_on;
 	chk.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:#16a34a;flex-shrink:0;';
 
 	const chk_label = document.createElement('label');
@@ -5769,7 +5818,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	date_input.type = 'date';
 	date_input.value = current_override ? current_override.split(' ')[0] : '';
 	date_input.style.cssText = [
-		`display:${current_override ? 'inline-block' : 'none'}`,
+		`display:${override_on ? 'inline-block' : 'none'}`,
 		'font-size:12px', 'padding:2px 6px',
 		'border:1px solid #86efac', 'border-radius:4px',
 		'color:#15803d', 'font-weight:600',
@@ -5790,6 +5839,12 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		if (chk.checked) {
 			date_input.style.display = 'inline-block';
 			date_input.focus();
+			frappe.call({
+				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.enable_rm_override',
+				args: { docname: frm.doc.name, so_name },
+				// Receive By of each RM row is editable now (Parallel / Consolidated)
+				callback: () => { if (so_row) so_row.custom_rm_override = 1; },
+			});
 		} else {
 			date_input.style.display = 'none';
 			date_input.value = '';
@@ -5917,7 +5972,15 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		},
 		{
 			headerName: 'Receive By', field: _par ? 'end_date' : 'schedule_date',
-			width: 110, editable: true,
+			width: 120,
+			// Per-RM Receive By override: only when 'Override RM Received Date' is ticked
+			// Parallel / Consolidated: only with the override ticked. Sequential: always
+			// (ticked → saved as the RM's override date and SFG / FG follow it)
+			editable: p => _par
+				? (chk.checked && Number(p.data?.qty) > 0)
+				: true,
+			cellEditor: RmReceiveDateEditor,
+			cellEditorPopup: true,
 			cellStyle: { color: '#842029', fontWeight: '600' },
 			valueFormatter: p => _format_bpp_date(p.value, '')
 		},
@@ -5953,6 +6016,11 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			if (!p.data || p.oldValue === p.newValue) return;
 			const fieldname = p.colDef.field;
 			if (!fieldname) return;
+
+			if ((_par && fieldname === 'end_date') || (!_par && fieldname === 'schedule_date' && chk.checked)) {
+				_save_rm_row_received_date(frm, p, so_name);
+				return;
+			}
 
 			// Parallel/consolidated RM rows come from the computed schedule and do
 			// not carry `sales_order`; use the section's `so_name` for the lookup.
