@@ -13,15 +13,28 @@ from erpnext.manufacturing.doctype.production_plan.production_plan import (
     set_default_warehouses,
 )
 
+from ujwal_industries.ujwal_industries.overrides.pp_utils import throw_if_supplier_missing
+
 
 class CustomProductionPlan(ProductionPlan):
-    
+
+    def before_submit(self):
+        # Always enforced (even with "By Pass" setting) — the manual Create buttons
+        # run the same make_work_order() and need the supplier too.
+        throw_if_supplier_missing(
+            self.po_items,
+            self.sub_assembly_items,
+            fg_type_field="custom_manufacturing_type",
+            context_msg=_("Cannot submit Production Plan {0}.").format(self.name),
+        )
+
     def on_submit(self):
         self.update_bin_qty()
         self.update_sales_order()
         
         ui_setting = frappe.get_doc("Ujwal Industries Setting","Ujwal Industries Setting")
-        if ui_setting.create_work_order_and_material_request_on_submit == 1:
+        # Auto-submit from Bulk PP always creates the documents; By Pass applies to manual submit only.
+        if ui_setting.create_work_order_and_material_request_on_submit == 1 and not self.flags.from_bulk_pp:
             return
         else:
             self.make_work_order()
@@ -172,7 +185,7 @@ class CustomProductionPlan(ProductionPlan):
                 else:
                     frappe.msgprint(
                         _("FG Item {0} is marked for Subcontract but has no supplier. Skipping.").format(
-                            item_code
+                            fg_row.item_code
                         )
                     )
                 continue
@@ -391,7 +404,9 @@ class CustomProductionPlan(ProductionPlan):
                 po.append("items", {
                     "item_code": srv_item,
                     "qty": srv_data["qty"],
-                    "schedule_date": srv_data["schedule_date"]
+                    "schedule_date": srv_data["schedule_date"],
+                    # Link back so the Service PO shows in PP / Bulk PP connections
+                    "production_plan": self.name,
                 })
 
             if po.items:

@@ -49,8 +49,11 @@ from .tool_limit import validate_tool_limit as validate_tool_limit
 from .pp_mr_dates import set_item_type_in_production_plan as set_item_type_in_production_plan
 
 
-def on_trash_production_plan(doc, method=None):
-	"""Reset custom_pp_created on the Bulk Pre Production Plan when a Production Plan is deleted."""
+def _reset_bulk_pp_created_flag(doc) -> None:
+	"""Clear custom_pp_created on the Bulk PP rows of this PP's Sales Orders so the
+	'Create Production Plan' button is available again."""
+	import frappe
+
 	bulk_pp_name = getattr(doc, "custom_bulk_pre_production_plan", None)
 	if not bulk_pp_name:
 		return
@@ -59,17 +62,20 @@ def on_trash_production_plan(doc, method=None):
 	if not so_names:
 		return
 
-	try:
-		import frappe
-		bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
-		changed = False
-		for row in bulk_pp.get("sales_orders") or []:
-			if row.sales_order in so_names and getattr(row, "custom_pp_created", 0):
-				row.custom_pp_created = 0
-				changed = True
-		if changed:
-			bulk_pp.flags.ignore_mandatory = True
-			bulk_pp.save()
-	except Exception:
-		import frappe
-		frappe.log_error(frappe.get_traceback(), "on_trash_production_plan: failed to reset custom_pp_created")
+	# Direct child-row update: works even if the Bulk PP is already submitted
+	for row_name in frappe.get_all(
+		"Bulk PP Sales Order",
+		filters={"parent": bulk_pp_name, "sales_order": ["in", so_names], "custom_pp_created": 1},
+		pluck="name",
+	):
+		frappe.db.set_value("Bulk PP Sales Order", row_name, "custom_pp_created", 0)
+
+
+def on_trash_production_plan(doc, method=None):
+	"""Reset custom_pp_created on the Bulk Pre Production Plan when a Production Plan is deleted."""
+	_reset_bulk_pp_created_flag(doc)
+
+
+def on_cancel_production_plan(doc, method=None):
+	"""Reset custom_pp_created on the Bulk Pre Production Plan when a Production Plan is cancelled."""
+	_reset_bulk_pp_created_flag(doc)
