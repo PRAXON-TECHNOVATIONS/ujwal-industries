@@ -58,6 +58,66 @@ def get_default_supplier_for_item(item_code: str, company: str) -> str | None:
 	return result
 
 
+def get_default_manufacturing_type_for_item(item_code: str, company: str) -> str:
+	"""
+	Manufacturing type for an FG/SFG item, taken from the Type of the default row
+	in its Item Subcontracting Supplier table. Empty table (or no type) -> In House.
+	"""
+	mfg_type = frappe.db.get_value(
+		"Item Subcontracting Supplier",
+		{
+			"parent": item_code,
+			"company": company,
+			"is_default": 1
+		},
+		"custom_type"
+	)
+	return mfg_type or "In House"
+
+
+def _is_subcontract_per_day_qty_based(item_code: str, company: str) -> bool:
+	"""True when the item's default subcontracting supplier row is per-day-qty based (with a qty)."""
+	row = frappe.db.get_value(
+		"Item Subcontracting Supplier",
+		{"parent": item_code, "company": company, "is_default": 1},
+		["is_per_day_qty_based", "per_day_qty"],
+		as_dict=True,
+	)
+	return bool(row and cint(row.is_per_day_qty_based) and flt(row.per_day_qty) > 0)
+
+
+def _get_subcontract_lead_days(item_code: str, company: str, supplier: str | None = None) -> int:
+	"""
+	Lead days for a lead-time based subcontract item:
+	subcontracting supplier row (given supplier, else the default row) -> Item "Lead Time in days"
+	-> DEFAULT_RM_LEAD_TIME_DAYS.
+	"""
+	filters = {"parent": item_code, "company": company}
+	if supplier:
+		filters["supplier"] = supplier
+	else:
+		filters["is_default"] = 1
+	lead_days = cint(frappe.db.get_value("Item Subcontracting Supplier", filters, "lead_time_days") or 0)
+	if lead_days <= 0:
+		lead_days = cint(frappe.db.get_value("Item", item_code, "lead_time_days") or 0)
+	return lead_days if lead_days > 0 else DEFAULT_RM_LEAD_TIME_DAYS
+
+
+def _build_lead_days_batch(start_dt: Any, qty: float, lead_days: int, grn_days: int) -> dict[str, Any]:
+	"""Single batch for a lead-time based subcontract SFG: start + lead days (calendar) + GRN days."""
+	start_dt = get_datetime(start_dt)
+	mfg_end_dt = start_dt + timedelta(days=lead_days)
+	end_dt = mfg_end_dt + timedelta(days=grn_days)
+	return {
+		"batch": 1, "total": 1, "qty": qty,
+		"mfg_days": lead_days, "grn_days": grn_days,
+		"pm_days": 0,
+		"holiday_count": 0,
+		"holiday_hover": [],
+		"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
+	}
+
+
 def _get_default_bom_for_item(item_code: str) -> str | None:
 	"""Return the active default BOM for an item."""
 	return frappe.db.get_value(
@@ -87,6 +147,15 @@ def _parse_csv_list(csv_value: str | None) -> list[str]:
 def _join_csv_list(values: list[str]) -> str:
 	"""Join workstation values back to a CSV string."""
 	return ",".join(_parse_csv_list(",".join(values or [])))
+
+
+def _get_bom_op_workstations_csv(workstation: str | None, workstations_csv: str | None) -> str:
+	"""Machines of a BOM Operation, same as the BOM form's Machine Select:
+	the standard Workstation first, then the extra machines from the CSV."""
+	values = _parse_csv_list(workstations_csv)
+	if workstation and workstation not in values:
+		values.insert(0, workstation)
+	return _join_csv_list(values)
 
 
 def _normalise_bom_tool_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -230,7 +299,7 @@ def _get_bom_spm_details_map(
 
 	rows = frappe.db.sql(
 		"""
-		SELECT custom_batchsize, custom_workstations_csv
+		SELECT custom_batchsize, workstation, custom_workstations_csv
 		FROM `tabBOM Operation`
 		WHERE parent = %(bom_no)s
 		ORDER BY idx ASC
@@ -241,7 +310,9 @@ def _get_bom_spm_details_map(
 	)
 	row = rows[0] if rows else {}
 	batchsize = cint((row or {}).get("custom_batchsize") or 0)
-	default_workstations = _parse_csv_list((row or {}).get("custom_workstations_csv"))
+	default_workstations = _parse_csv_list(
+		_get_bom_op_workstations_csv((row or {}).get("workstation"), (row or {}).get("custom_workstations_csv"))
+	)
 	selected_workstations = _parse_csv_list(selected_workstations_csv)
 	effective_workstations = selected_workstations or default_workstations
 	machine_count = len(effective_workstations)
@@ -423,6 +494,76 @@ def _ensure_default_workstations_on_doc(doc: Document) -> None:
 		details = _get_bom_spm_details_map(row.bom_no)
 		if details.get("workstations_csv"):
 			row.custom_workstations_csv = details.get("workstations_csv")
+
+
+def _apply_rm_received_overrides(
+	doc: Document,
+	so_name: str,
+	mr_rows_out: list[dict],
+	shift_config: dict,
+	holidays: set,
+	snap_start,
+	snap_end,
+) -> bool:
+	"""
+	Apply the RM received date override of an SO to its schedule RM rows.
+	Only when the SO's override is ticked (bulk date set or custom_rm_override):
+	  - RM row with its own date (custom_rm_received_override): Order By = Receive By = that date
+	  - otherwise the SO bulk date, if set: Order By = Receive By = bulk date
+	Returns True when the override is on.
+	"""
+	so_row = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
+	if not so_row:
+		return False
+	bulk_date = getattr(so_row, "custom_rm_received_date", None)
+	if not (bulk_date or cint(getattr(so_row, "custom_rm_override", 0))):
+		return False
+
+	row_overrides = {
+		r.name: r.custom_rm_received_override
+		for r in doc.mr_items
+		if r.sales_order == so_name and getattr(r, "custom_rm_received_override", None)
+	}
+	for mr_r in mr_rows_out:
+		if flt(mr_r.get("qty", 0)) <= 0:
+			continue
+		# Row's own date wins over the bulk date; Order By = Receive By = that date
+		override_date = row_overrides.get(mr_r.get("row_name")) or bulk_date
+		if override_date:
+			mr_r["end_date"] = str(snap_end(get_datetime(override_date), shift_config))
+			mr_r["start_date"] = str(snap_start(get_datetime(override_date), shift_config))
+			if row_overrides.get(mr_r.get("row_name")):
+				mr_r["rm_override"] = 1
+	return True
+
+
+def _get_rm_end_map(mr_rows_out: list[dict]) -> dict[str, datetime]:
+	"""item_code → latest Receive By of the schedule RM rows that are actually ordered."""
+	rm_end_map: dict[str, datetime] = {}
+	for mr_r in mr_rows_out:
+		if flt(mr_r.get("qty", 0)) <= 0 or not mr_r.get("end_date"):
+			continue
+		end_dt = get_datetime(mr_r["end_date"])
+		code = mr_r.get("item_code")
+		if code not in rm_end_map or end_dt > rm_end_map[code]:
+			rm_end_map[code] = end_dt
+	return rm_end_map
+
+
+def _get_rm_ready_dt(item_codes, rm_end_map: dict[str, datetime]) -> datetime | None:
+	"""When all the given RMs have arrived (latest Receive By), or None if none of them is ordered."""
+	ends = [rm_end_map[c] for c in (item_codes or ()) if c in rm_end_map]
+	return max(ends) if ends else None
+
+
+def _ensure_default_suppliers_on_doc(doc: Document) -> None:
+	"""Backfill missing supplier on Subcontract / In House - Vendor FG/SFG rows from the default subcontracting supplier."""
+	for row in list(doc.get("po_items") or []):
+		if getattr(row, "manufacturing_type", None) in ("Subcontract", "In House - Vendor") and not getattr(row, "custom_supplier", None):
+			row.custom_supplier = get_default_supplier_for_item(row.item_code, doc.company)
+	for row in list(doc.get("sub_assembly_items") or []):
+		if getattr(row, "type_of_manufacturing", None) in ("Subcontract", "In House - Vendor") and not getattr(row, "supplier", None):
+			row.supplier = get_default_supplier_for_item(row.production_item, doc.company)
 
 
 def _ensure_default_tools_on_doc(doc: Document) -> None:
@@ -1500,7 +1641,7 @@ class BulkPreProductionPlan(Document):
 					"bom_no": bom_item.default_bom,
 					"bom_level": level,
 					"stock_uom": bom_item.stock_uom,
-					"type_of_manufacturing": "Subcontract" if bom_item.is_sub_contracted_item else "In House",
+					"type_of_manufacturing": get_default_manufacturing_type_for_item(bom_item.item_code, self.company),
 					"fg_warehouse": fg_item_row.warehouse,
 					"schedule_date": fg_item_row.planned_start_date,
 					"sales_order": fg_item_row.sales_order
@@ -1899,6 +2040,7 @@ def recalculate_existing_schedule(docname: str, planning_mode: str | None = None
 
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_suppliers_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
 
 	selected_sos = [row.sales_order for row in doc.sales_orders if row.is_selected and row.sales_order]
@@ -1998,6 +2140,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 	_backfill_po_item_names(doc)
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_suppliers_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
 
 	default_shift_config = _get_effective_shift_config()
@@ -2199,9 +2342,12 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			# Lead-time based subcontract SFG: one batch, start + lead days + GRN days
+			if sfg_row.get("lead_days"):
+				return [_build_lead_days_batch(start_dt_b0, sum(batches_qty), sfg_row["lead_days"], grn_days)]
 			batch_rows = []
 			for b_idx, batch_qty in enumerate(batches_qty):
-       
+
 				mfg_days_b = 0
 				if sfg_row.get('type_of_manufacturing') == "Subcontract" and real_spm:
 					total_minutes = batch_qty / real_spm
@@ -2276,7 +2422,15 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			fg0_net_qty = flt((fg_requirement_map.get(getattr(fg0, "name", "") or "") or {}).get("net_qty") or getattr(fg0, "planned_qty", 0) or 0)
 			fg0_prod_mins = _calculate_row_production_minutes(fg0, fg0_net_qty, _fg0_cache)
 			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
-			if fg0_prod_mins and fg0_prod_mins > 0:
+			if fg0.manufacturing_type == "Subcontract" and not _is_subcontract_per_day_qty_based(fg0.item_code, doc.company):
+				# Lead-time based subcontract FG: start = delivery - lead days - GRN days
+				_fg0_lead = _get_subcontract_lead_days(fg0.item_code, doc.company)
+				_fg0_grn = int(grn_map.get(fg0.item_code, 0))
+				_fg0_start = _snap_start(_fg0_deadline - timedelta(days=_fg0_lead + _fg0_grn), fg0_cfg)
+				if not allow_backdated and _fg0_start < today_dt:
+					_fg0_start = _snap_start(today_dt, fg0_cfg)
+				fg_start_anchor_dt = _fg0_start
+			elif fg0_prod_mins and fg0_prod_mins > 0:
 				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
 				if not allow_backdated and _fg0_start < today_dt:
 					_fg0_start = _snap_start(today_dt, fg0_cfg)
@@ -2438,6 +2592,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
 				})
 
+			# Lead-time based subcontract SFG (no per-day qty): one batch, gap = lead days + GRN days
+			lead_days = 0
+			if sfg.type_of_manufacturing == "Subcontract" and not flt(spm_details.get("subcontract_per_shift_qty") or 0):
+				lead_days = _get_subcontract_lead_days(item_code, doc.company)
+				if _is_deepest_sfg and rolling_sfg1_end is not None:
+					lead_start = b0_start
+				else:
+					lead_start = _snap_start(deadline_dt - timedelta(days=lead_days + grn_days), shift_config)
+				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
+				b0_start = lead_start
+				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
 			# Next deadline = this SFG's batch[0].start_date
 			deadline_dt = b0_start
 			sfg_supplier_name = None
@@ -2472,6 +2639,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
                 "supplier_name": sfg_supplier_name,
     			"supplier_list": supplier_list,
     			"row_name": sfg.name, "batches": batch_rows,
+				"lead_days": lead_days,
 			})
 
 		# ── Backdate cascade: deepest SFG start < today → push forward ───────
@@ -2607,17 +2775,19 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			})
 
 
-		# ── SO-level RM received date override ────────────────────────────────────────
-		_so_row_obj = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
-		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
-		if _so_rm_override:
-			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
-			_override_start_dt = _snap_start(get_datetime(_so_rm_override), default_shift_config)
-			for _mr_r in mr_rows_out:
-				if flt(_mr_r.get("qty", 0)) > 0:
-					_mr_r["end_date"] = str(_override_dt)
-					_mr_r["start_date"] = str(_override_start_dt)
-			max_mr_end_dt = _override_dt
+		# ── RM received date override (SO bulk date and/or per-RM row dates) ────────────
+		if _apply_rm_received_overrides(
+			doc, so_name, mr_rows_out, default_shift_config, default_holidays, _snap_start, _snap_end
+		):
+			_ovr_ends = list(_get_rm_end_map(mr_rows_out).values())
+			if _ovr_ends:
+				max_mr_end_dt = max(_ovr_ends)
+		# Per-RM readiness: each SFG waits only for the RMs of its own BOM; RMs not in
+		# any SFG BOM (FG-level RMs) gate the FG start.
+		_rm_end_map = _get_rm_end_map(mr_rows_out)
+		_chain_rm_codes: set[str] = set()
+		for _sfg_e in sfg_chain_out:
+			_chain_rm_codes |= sfg_bom_links.get(_sfg_e.get("bom_no") or "", set())
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
 		# SFG must always start exactly when MR arrives (material available).
@@ -2625,7 +2795,10 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		if max_mr_end_dt and sfg_chain_out:
 			# Preserve original behaviour: MR-driven cascade anchor uses default/global
 			# shift boundaries. Row-wise shifts only affect each row's scheduling windows.
-			new_start = _snap_start(max_mr_end_dt, default_shift_config)
+			# Tree-aware: each SFG waits only for its own BOM's RMs and its own child SFGs
+			# (pipeline: child's batch[0] end), not for unrelated SFGs.
+			_sfg_parent_map = {r.name: (r.parent_item_code or "") for r in doc.sub_assembly_items}
+			_child_b0_end: dict[str, datetime] = {}   # parent item_code → latest child batch[0] end
 			sfg_chain_rebuilt: list[dict] = []
 			for sfg_data in sfg_chain_out:   # deepest-first
 				row_cfg = get_shift_config_for_shift_types(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv"))) or default_shift_config
@@ -2637,20 +2810,39 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
+				# SFG start = its own BOM's RMs arrived AND its child SFGs' batch[0] done;
+				# with neither, it keeps its planned start
+				_own_rm_ready = _get_rm_ready_dt(sfg_bom_links.get(sfg_data.get("bom_no") or "", set()), _rm_end_map)
+				_deps = [d for d in (
+					_snap_start(_own_rm_ready, default_shift_config) if _own_rm_ready else None,
+					_child_b0_end.get(ic_f),
+				) if d]
+				_b0 = max(_deps) if _deps else get_datetime(sfg_data["batches"][0]["start_date"])
 				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
-				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
+				br_f  = _compute_sfg_batches_fwd(sfg_data, _b0, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
-				# Tight pipeline: patch previous SFG's end_date if holiday pushed current start forward.
-				actual_b0_start = get_datetime(br_f[0]["start_date"])
-				if sfg_chain_rebuilt and actual_b0_start > new_start:
-					sfg_chain_rebuilt[-1]["batches"][0]["end_date"] = str(actual_b0_start)
 				sfg_chain_rebuilt.append(entry)
-				new_start = get_datetime(br_f[0]["end_date"])
+				_parent_ic = _sfg_parent_map.get(sfg_data.get("row_name")) or ""
+				_b0_end = get_datetime(br_f[0]["end_date"])
+				if _parent_ic not in _child_b0_end or _b0_end > _child_b0_end[_parent_ic]:
+					_child_b0_end[_parent_ic] = _b0_end
 			sfg_chain_out = sfg_chain_rebuilt
-			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+			# FG starts when all its direct SFGs have their batch[0] done
+			_fg_child_ends = [_child_b0_end[fg.item_code] for fg in items["fg"] if fg.item_code in _child_b0_end]
+			fg_start_override = (
+				max(_fg_child_ends) if _fg_child_ends
+				else get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+			)
 			top_sfg_batch0_end = str(fg_start_override)
+
+		# FG-level RMs (not in any SFG BOM): FG can start only after they arrive
+		_fg_rm_ready = _get_rm_ready_dt(set(_rm_end_map) - _chain_rm_codes, _rm_end_map)
+		if _fg_rm_ready:
+			_fg_rm_start = _snap_start(_fg_rm_ready, default_shift_config)
+			if not top_sfg_batch0_end or get_datetime(top_sfg_batch0_end) < _fg_rm_start:
+				top_sfg_batch0_end = str(_fg_rm_start)
 
 		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
 		# Recompute raw material requirements from the final schedule production qtys.
@@ -2867,6 +3059,17 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					"end_date":      str(end_dt),
 				})
     
+			# Lead-time based subcontract FG (no per-day qty): one batch, gap = lead days + GRN days
+			if fg.manufacturing_type == "Subcontract" and not flt(spm_details.get("subcontract_per_shift_qty") or 0):
+				lead_days = _get_subcontract_lead_days(item_code, doc.company)
+				if fg_idx == 0:
+					lead_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
+				else:
+					lead_start = get_datetime(prev_fg_row0_end)
+				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
+				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
 			# Update prev_fg_row0_end for next FG in chain
 			if batch_rows:
 				prev_fg_row0_end = batch_rows[0]["end_date"]
@@ -2975,6 +3178,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 
 	_apply_parallel_schedule_overrides_to_doc(doc)
 	_ensure_default_workstations_on_doc(doc)
+	_ensure_default_suppliers_on_doc(doc)
 	_ensure_default_tools_on_doc(doc)
 
 	default_shift_config = _get_effective_shift_config()
@@ -3152,6 +3356,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			# Lead-time based subcontract SFG: one batch, start + lead days + GRN days
+			if sfg_row.get("lead_days"):
+				return [_build_lead_days_batch(start_dt_b0, sum(batches_qty), sfg_row["lead_days"], grn_days)]
 			batch_rows = []
 			for b_idx, batch_qty in enumerate(batches_qty):
 				mfg_days_b = math.ceil(batch_qty / per_day_qty) if per_day_qty > 0 else 1
@@ -3216,7 +3423,15 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			fg0_net_qty = flt((fg_requirement_map.get(getattr(fg0, "name", "") or "") or {}).get("net_qty") or getattr(fg0, "planned_qty", 0) or 0)
 			fg0_prod_mins = _calculate_row_production_minutes(fg0, fg0_net_qty, _fg0_cache)
 			_fg0_deadline = _snap_start(fg_deadline_dt, fg0_cfg)
-			if fg0_prod_mins and fg0_prod_mins > 0:
+			if fg0.manufacturing_type == "Subcontract" and not _is_subcontract_per_day_qty_based(fg0.item_code, doc.company):
+				# Lead-time based subcontract FG: start = delivery - lead days - GRN days
+				_fg0_lead = _get_subcontract_lead_days(fg0.item_code, doc.company)
+				_fg0_grn = int(grn_map.get(fg0.item_code, 0))
+				_fg0_start = _snap_start(_fg0_deadline - timedelta(days=_fg0_lead + _fg0_grn), fg0_cfg)
+				if not allow_backdated and _fg0_start < today_dt:
+					_fg0_start = _snap_start(today_dt, fg0_cfg)
+				fg_start_anchor_dt = _fg0_start
+			elif fg0_prod_mins and fg0_prod_mins > 0:
 				_fg0_start = _snap_start(_backward_schedule(_fg0_deadline, fg0_prod_mins, fg0_cfg), fg0_cfg)
 				if not allow_backdated and _fg0_start < today_dt:
 					_fg0_start = _snap_start(today_dt, fg0_cfg)
@@ -3344,6 +3559,15 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 					"start_date": str(start_dt), "mfg_end_date": str(mfg_end_dt), "end_date": str(end_dt),
 				})
 
+			# Lead-time based subcontract SFG (no per-day qty): one batch, gap = lead days + GRN days
+			lead_days = 0
+			if sfg.type_of_manufacturing == "Subcontract" and not flt(spm_details.get("subcontract_per_shift_qty") or 0):
+				lead_days = _get_subcontract_lead_days(item_code, doc.company)
+				b0_start = _snap_start(deadline_dt - timedelta(days=lead_days + grn_days), shift_config)
+				batch_rows = [_build_lead_days_batch(b0_start, sales_qty, lead_days, grn_days)]
+				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
 			# Next deadline = this SFG's batch[0].start_date
 			deadline_dt = b0_start
 			sfg_chain_bwd.append({
@@ -3368,6 +3592,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"target_warehouse": getattr(sfg, "fg_warehouse", "") or target_warehouse_map.get(item_code, ""),
 				"supplier": sfg.supplier or "", "supplier_list": supplier_list,
     			"row_name": sfg.name, "batches": batch_rows,
+				"lead_days": lead_days,
 			})
 
 		# ── Backdate cascade: deepest SFG start < today → push forward ───────
@@ -3498,17 +3723,19 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			})
 
 
-		# ── SO-level RM received date override ────────────────────────────────────────
-		_so_row_obj = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
-		_so_rm_override = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
-		if _so_rm_override:
-			_override_dt = _snap_end(get_datetime(_so_rm_override), default_shift_config)
-			_override_start_dt = _snap_start(get_datetime(_so_rm_override), default_shift_config)
-			for _mr_r in mr_rows_out:
-				if flt(_mr_r.get("qty", 0)) > 0:
-					_mr_r["end_date"] = str(_override_dt)
-					_mr_r["start_date"] = str(_override_start_dt)
-			max_mr_end_dt = _override_dt
+		# ── RM received date override (SO bulk date and/or per-RM row dates) ────────────
+		if _apply_rm_received_overrides(
+			doc, so_name, mr_rows_out, default_shift_config, default_holidays, _snap_start, _snap_end
+		):
+			_ovr_ends = list(_get_rm_end_map(mr_rows_out).values())
+			if _ovr_ends:
+				max_mr_end_dt = max(_ovr_ends)
+		# Per-RM readiness: each SFG waits only for the RMs of its own BOM; RMs not in
+		# any SFG BOM (FG-level RMs) gate the FG start.
+		_rm_end_map = _get_rm_end_map(mr_rows_out)
+		_chain_rm_codes: set[str] = set()
+		for _sfg_e in sfg_chain_out:
+			_chain_rm_codes |= sfg_bom_links.get(_sfg_e.get("bom_no") or "", set())
 		# ── Post-MR cascade: material arrives before SFG needs it → pull SFG+FG forward ──
 		# If MR ends earlier than the deepest SFG's planned start, re-run the
 		# SFG must always start exactly when MR arrives (material available).
@@ -3516,7 +3743,10 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		if max_mr_end_dt and sfg_chain_out:
 			# Preserve original behaviour: MR-driven cascade anchor uses default/global
 			# shift boundaries. Row-wise shifts only affect each row's scheduling windows.
-			new_start = _snap_start(max_mr_end_dt, default_shift_config)
+			# Tree-aware: each SFG waits only for its own BOM's RMs and its own child SFGs
+			# (pipeline: child's batch[0] end), not for unrelated SFGs.
+			_sfg_parent_map = {r.name: (r.parent_item_code or "") for r in doc.sub_assembly_items}
+			_child_b0_end: dict[str, datetime] = {}   # parent item_code → latest child batch[0] end
 			sfg_chain_rebuilt: list[dict] = []
 			for sfg_data in sfg_chain_out:   # deepest-first
 				row_cfg = get_shift_config_for_shift_types(_parse_shift_types_csv(sfg_data.get("custom_shift_types_csv"))) or default_shift_config
@@ -3528,16 +3758,39 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				psq_day = sfg_data.get("per_day_qty") or 0
 				pmd   = sfg_data["pm_days"]
 				tlq   = sfg_data["tool_load_qty"]
+				# SFG start = its own BOM's RMs arrived AND its child SFGs' batch[0] done;
+				# with neither, it keeps its planned start
+				_own_rm_ready = _get_rm_ready_dt(sfg_bom_links.get(sfg_data.get("bom_no") or "", set()), _rm_end_map)
+				_deps = [d for d in (
+					_snap_start(_own_rm_ready, default_shift_config) if _own_rm_ready else None,
+					_child_b0_end.get(ic_f),
+				) if d]
+				_b0 = max(_deps) if _deps else get_datetime(sfg_data["batches"][0]["start_date"])
 				blist = _split_batches(sfg_data["qty"], _resolve_split_qty(tlq, psq_day, sfg_data.get("type_of_manufacturing")))
-				br_f  = _compute_sfg_batches_fwd(sfg_data, new_start, blist, real_spm_f, psq_day, gd_f, pmd,
+				br_f  = _compute_sfg_batches_fwd(sfg_data, _b0, blist, real_spm_f, psq_day, gd_f, pmd,
 				                                  row_cfg, row_holidays, row_shift_minutes)
 				entry = dict(sfg_data)
 				entry["batches"] = br_f
 				sfg_chain_rebuilt.append(entry)
-				new_start = get_datetime(br_f[0]["end_date"])
+				_parent_ic = _sfg_parent_map.get(sfg_data.get("row_name")) or ""
+				_b0_end = get_datetime(br_f[0]["end_date"])
+				if _parent_ic not in _child_b0_end or _b0_end > _child_b0_end[_parent_ic]:
+					_child_b0_end[_parent_ic] = _b0_end
 			sfg_chain_out = sfg_chain_rebuilt
-			fg_start_override = get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+			# FG starts when all its direct SFGs have their batch[0] done
+			_fg_child_ends = [_child_b0_end[fg.item_code] for fg in items["fg"] if fg.item_code in _child_b0_end]
+			fg_start_override = (
+				max(_fg_child_ends) if _fg_child_ends
+				else get_datetime(sfg_chain_out[-1]["batches"][0]["end_date"])
+			)
 			top_sfg_batch0_end = str(fg_start_override)
+
+		# FG-level RMs (not in any SFG BOM): FG can start only after they arrive
+		_fg_rm_ready = _get_rm_ready_dt(set(_rm_end_map) - _chain_rm_codes, _rm_end_map)
+		if _fg_rm_ready:
+			_fg_rm_start = _snap_start(_fg_rm_ready, default_shift_config)
+			if not top_sfg_batch0_end or get_datetime(top_sfg_batch0_end) < _fg_rm_start:
+				top_sfg_batch0_end = str(_fg_rm_start)
 
 		# ── Schedule-based RM quantity reconciliation ──────────────────────────────────
 		# Recompute raw material requirements from the final schedule production qtys.
@@ -3696,6 +3949,17 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 					"end_date":      str(end_dt),
 				})
     
+			# Lead-time based subcontract FG (no per-day qty): one batch, gap = lead days + GRN days
+			if fg.manufacturing_type == "Subcontract" and not flt(spm_details.get("subcontract_per_shift_qty") or 0):
+				lead_days = _get_subcontract_lead_days(item_code, doc.company)
+				if fg_idx == 0:
+					lead_start = get_datetime(top_sfg_batch0_end) if top_sfg_batch0_end else today_dt
+				else:
+					lead_start = get_datetime(prev_fg_row0_end)
+				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
+				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
 			# Update prev_fg_row0_end for next FG in chain
 			if batch_rows:
 				prev_fg_row0_end = batch_rows[0]["end_date"]
@@ -3877,7 +4141,7 @@ def _fetch_bom_ops_map(bom_nos: list[str]) -> dict[str, list[dict]]:
 	if not bom_nos:
 		return {}
 	rows = frappe.db.sql("""
-		SELECT parent AS bom_no, operation, custom_batchsize, custom_workstations_csv, idx
+		SELECT parent AS bom_no, operation, custom_batchsize, workstation, custom_workstations_csv, idx
 		FROM `tabBOM Operation`
 		WHERE parent IN %(bom_nos)s
 		ORDER BY parent, idx
@@ -3887,7 +4151,7 @@ def _fetch_bom_ops_map(bom_nos: list[str]) -> dict[str, list[dict]]:
 		result.setdefault(r.bom_no, []).append({
 			"operation": r.operation,
 			"custom_batchsize": cint(r.custom_batchsize or 0),
-			"custom_workstations_csv": r.custom_workstations_csv or "",
+			"custom_workstations_csv": _get_bom_op_workstations_csv(r.workstation, r.custom_workstations_csv),
 		})
 	return result
 
@@ -4167,8 +4431,8 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 		# Add to po_items (FG items)
 		delivery_date = item.delivery_date or item.so_delivery_date
 
-		# Determine manufacturing type - FG items default to In House
-		manufacturing_type = 'In House'
+		# Determine manufacturing type from the item's default subcontracting supplier row
+		manufacturing_type = get_default_manufacturing_type_for_item(item.item_code, doc.company)
 
 		# Get warehouse - use item warehouse or fall back to company default
 		warehouse = item.warehouse
@@ -4196,7 +4460,13 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			'warehouse': warehouse,
 			'target_warehouse': target_warehouse_map.get(item.item_code),
 			'planned_start_date': delivery_date,
-			'manufacturing_type': manufacturing_type
+			'manufacturing_type': manufacturing_type,
+			# Subcontract / In House - Vendor FG: supplier from the default subcontracting supplier row
+			'custom_supplier': (
+				get_default_supplier_for_item(item.item_code, doc.company)
+				if manufacturing_type in ('Subcontract', 'In House - Vendor')
+				else None
+			),
 		})
 		po_count += 1
 
@@ -4312,6 +4582,7 @@ def get_sub_assembly_items_from_bom(
 				bom_item.item_bom_no,
 				selected_tool=existing_sfg.get("tool") or None,
 			)
+			sfg_mfg_type = get_default_manufacturing_type_for_item(bom_item.item_code, doc.company)
 			# Sub assembly item — use actual required_qty (qty_per_unit × parent qty)
 			doc.append('sub_assembly_items', {
 				'sales_order': so_name,
@@ -4331,7 +4602,13 @@ def get_sub_assembly_items_from_bom(
 				'qty': required_qty,
 				'stock_uom': bom_item.stock_uom,
 				'schedule_date': delivery_date,
-				'type_of_manufacturing': 'Subcontract' if bom_item.is_sub_contracted_item else 'In House',
+				'type_of_manufacturing': sfg_mfg_type,
+				# Subcontract / In House - Vendor SFG: supplier from the default subcontracting supplier row
+				'supplier': (
+					get_default_supplier_for_item(bom_item.item_code, doc.company)
+					if sfg_mfg_type in ('Subcontract', 'In House - Vendor')
+					else None
+				),
 				'fg_warehouse': target_warehouse_map.get(bom_item.item_code),
 			})
 			sfg_count += 1
@@ -4602,6 +4879,9 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	# Always use item-level delivery_date as the deadline — never use stale planned_start_date
 	_so_delivery_date_fallback = frappe.db.get_value("Sales Order", so_name, "delivery_date")
 
+	# Lead-time based subcontract FG rows: po_item name → (lead_days, grn_days)
+	fg_lead_info: dict[str, tuple[int, int]] = {}
+
 	for fg_row in doc.po_items:
 		if fg_row.sales_order != so_name or not fg_row.bom_no:
 			continue
@@ -4611,6 +4891,27 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 		_item_del = frappe.db.get_value("Sales Order Item", _soi, "delivery_date") if _soi else None
 		_row_delivery_date = _item_del or _so_delivery_date_fallback
 		delivery_dt = get_datetime(_row_delivery_date) if _row_delivery_date else get_datetime(fg_row.planned_start_date)
+
+		if fg_row.manufacturing_type == "Subcontract" and not _is_subcontract_per_day_qty_based(fg_row.item_code, doc.company):
+			# Lead-time based subcontract FG — same as SFG Subcontract:
+			# backward: delivery − grn_days (working) − lead_days (calendar)
+			fg_lead = _get_subcontract_lead_days(fg_row.item_code, doc.company)
+			fg_grn = cint(frappe.db.get_value("Item", fg_row.item_code, "custom_expected_grn_processing_days") or 0)
+			fg_lead_info[fg_row.name] = (fg_lead, fg_grn)
+
+			receive_date = getdate(delivery_dt)
+			for _ in range(fg_grn):
+				receive_date = _prev_working_date(receive_date, holidays_set)
+			fg_start = datetime.combine(getdate(add_days(receive_date, -fg_lead)), datetime.min.time()) + shift_start_td
+			fg_end = delivery_dt
+			if not allow_backdated and getdate(fg_start) < today:
+				fg_start = _current_shift_datetime(shift_config)
+				end_adj = get_holiday_adjusted_date(getdate(add_days(getdate(fg_start), fg_lead)), fg_grn, holiday_list)
+				fg_end = datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
+			fg_row.planned_start_date = str(fg_start)
+			fg_row.custom_planned_end_date = str(fg_end)
+			continue
+
 		prod_minutes = _calculate_row_production_minutes(fg_row, flt(fg_row.planned_qty), fg_bom_cache)
 
 		if prod_minutes > 0:
@@ -4689,9 +4990,15 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				if default_supplier:
 					sfg_row.supplier = default_supplier
 
-			lead_time = get_subcontract_lead_time(
-				sfg_row.production_item, sfg_row.supplier, doc.company
-			) if sfg_row.supplier else 0
+			if _is_subcontract_per_day_qty_based(sfg_row.production_item, doc.company):
+				lead_time = get_subcontract_lead_time(
+					sfg_row.production_item, sfg_row.supplier, doc.company
+				) if sfg_row.supplier else 0
+			else:
+				# Lead-time based: supplier row -> Item "Lead Time in days" -> default
+				lead_time = _get_subcontract_lead_days(
+					sfg_row.production_item, doc.company, sfg_row.supplier or None
+				)
 			grn_days = grn_days_map.get(sfg_row.production_item, 0)
 
 			# Backward: deadline − grn_days (working) − lead_time (calendar)
@@ -4773,6 +5080,16 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 					if getdate(this_end) > getdate(fg_start):
 						po_item.planned_start_date = str(this_end)
 						item_start_map[("", po_item.item_code)] = get_datetime(this_end)
+						if po_item.name in fg_lead_info:
+							# Lead-time based subcontract FG: end = new start + lead days + GRN days
+							fg_lt, fg_grn = fg_lead_info[po_item.name]
+							end_raw = getdate(add_days(getdate(this_end), fg_lt))
+							end_adj = get_holiday_adjusted_date(end_raw, fg_grn, holiday_list)
+							po_item.custom_planned_end_date = str(
+								datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
+							)
+							any_change = True
+							continue
 						fg_prod_mins = _calculate_row_production_minutes(
 							po_item, flt(po_item.planned_qty), fg_bom_cache_for_cascade
 						)
@@ -4884,6 +5201,21 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			receive_date = add_days(today, lead_time_days)
 			mr_row.schedule_date = _to_datetime(get_holiday_adjusted_date(receive_date, grn_days_mr, holiday_list))
 
+	# ── STEP 3a: RM received date override (only when the SO's override is ticked) ──
+	# RM row's own date wins over the SO bulk date; Order By = Receive By = that date.
+	# A late RM then pushes its SFG / FG forward via STEP 3b / STEP 4 below.
+	_so_row_obj = next((r for r in doc.sales_orders if r.sales_order == so_name), None)
+	_bulk_rm_date = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
+	_rm_override_on = bool(_so_row_obj and (_bulk_rm_date or cint(getattr(_so_row_obj, "custom_rm_override", 0))))
+	if _rm_override_on:
+		for mr_row in doc.mr_items:
+			if mr_row.sales_order != so_name or flt(mr_row.quantity) <= 0:
+				continue
+			_ovr_date = getattr(mr_row, "custom_rm_received_override", None) or _bulk_rm_date
+			if _ovr_date:
+				mr_row.schedule_date = getdate(_ovr_date)
+				mr_row.custom_start_date = _to_datetime(getdate(_ovr_date))
+
 	# ── STEP 3b: Propagate RM delays → SFG → (then STEP 4 pushes to FG) ──
 	# If an RM schedule_date > its parent SFG's schedule_date, the SFG can't
 	# start until the RM arrives.  Push SFG forward preserving its duration,
@@ -4935,9 +5267,26 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 					return shift_aware_forward_schedule(get_datetime(start_dt_), pmins, shift_config)
 				return get_datetime(start_dt_)
 
+		if _rm_override_on:
+			# RM override: plan FORWARD from the RM received dates — each SFG starts when
+			# its own BOM's RMs and its child SFGs are done (earlier or later than planned).
+			for sdata in sorted(sfg_map.values(), key=lambda d: -(d["row"].bom_level or 0)):
+				deps = []
+				if sdata["bom_no"] in bom_to_max_rm:
+					deps.append(datetime.combine(bom_to_max_rm[sdata["bom_no"]], datetime.min.time()) + shift_start_td)
+				deps += [c["end_date"] for c in sfg_map.values() if c["parent_item_code"] == sdata["row"].production_item]
+				if deps:
+					sdata["schedule_date"] = max(deps)
+					sdata["end_date"] = _sfg_end_dt(sdata["schedule_date"], sdata)
+			for sdata in sfg_map.values():
+				sdata["row"].schedule_date = sdata["schedule_date"]
+				sdata["row"].custom_schedule_end_date = sdata["end_date"]
+
 		# Push SFGs whose BOM has a delayed RM
 		sfg_changed = False
 		for item, sdata in sfg_map.items():
+			if _rm_override_on:
+				break
 			if sdata["bom_no"] not in bom_to_max_rm:
 				continue
 			rm_max = bom_to_max_rm[sdata["bom_no"]]  # date
@@ -4969,6 +5318,16 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				sdata["row"].custom_schedule_end_date = sdata["end_date"]
 
 	# ── STEP 4: Enforce FG planned_start >= top-level SFG end_dates ───
+	# FG-level RMs (directly in the FG BOM) also gate the FG start
+	fg_bom_rm_links: dict[str, set[str]] = {}
+	if fg_bom_nos and rm_schedules:
+		for link in frappe.db.sql("""
+			SELECT parent AS bom_no, item_code
+			FROM `tabBOM Item`
+			WHERE parent IN %(boms)s AND item_code IN %(items)s
+		""", {"boms": fg_bom_nos, "items": list(rm_schedules)}, as_dict=True):
+			fg_bom_rm_links.setdefault(link.bom_no, set()).add(link.item_code)
+
 	for fg_row in doc.po_items:
 		if fg_row.sales_order != so_name:
 			continue
@@ -4981,8 +5340,23 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 					if max_sfg_end is None or sfg_end > max_sfg_end:
 						max_sfg_end = sfg_end
 
-		if max_sfg_end and max_sfg_end > get_datetime(fg_row.planned_start_date):
+		_fg_rm_dates = [rm_schedules[c] for c in fg_bom_rm_links.get(fg_row.bom_no, ()) if c in rm_schedules]
+		if _fg_rm_dates:
+			_fg_rm_dt = datetime.combine(max(_fg_rm_dates), datetime.min.time()) + shift_start_td
+			if max_sfg_end is None or _fg_rm_dt > max_sfg_end:
+				max_sfg_end = _fg_rm_dt
+
+		# RM override: FG starts exactly when its SFGs / RMs are ready (earlier or later)
+		if max_sfg_end and (_rm_override_on or max_sfg_end > get_datetime(fg_row.planned_start_date)):
 			fg_row.planned_start_date = max_sfg_end
+			if fg_row.name in fg_lead_info:
+				# Lead-time based subcontract FG: end = new start + lead days + GRN days
+				fg_lt, fg_grn = fg_lead_info[fg_row.name]
+				end_adj = get_holiday_adjusted_date(getdate(add_days(getdate(max_sfg_end), fg_lt)), fg_grn, holiday_list)
+				fg_row.custom_planned_end_date = str(
+					datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
+				)
+				continue
 			fg_prod_mins_s4 = _calculate_row_production_minutes(
 				fg_row, flt(fg_row.planned_qty), fg_bom_cache_for_cascade
 			)
@@ -5104,6 +5478,7 @@ def _recalculate_parallel_after_submit(bulk_pp_name: str) -> None:
 
 		_apply_parallel_schedule_overrides_to_doc(doc)
 		_ensure_default_workstations_on_doc(doc)
+		_ensure_default_suppliers_on_doc(doc)
 		_ensure_default_tools_on_doc(doc)
 
 		schedule = calculate_parallel_batch_schedule(bulk_pp_name)
@@ -5673,62 +6048,101 @@ def get_bin_data(item_code=None, warehouse=None):
 # RM Received Date Override — atomic server functions
 # ---------------------------------------------------------------------------
 
-@frappe.whitelist()
-def set_rm_received_date(docname: str, so_name: str, rm_received_date: str) -> dict:
-	"""
-	Atomically save the RM received date override for an SO, recalculate the
-	consolidated batch schedule forward from that date, and persist everything.
-	"""
-	frappe.db.sql(
-		"""UPDATE `tabBulk PP Sales Order`
-		   SET custom_rm_received_date = %s
-		   WHERE parent = %s AND sales_order = %s""",
-		(rm_received_date or None, docname, so_name),
-	)
-	frappe.db.commit()
-
-	schedule = calculate_consolidated_batch_schedule(docname)
+def _recalculate_rm_override_schedule(docname: str) -> dict:
+	"""Recalculate the schedule (per the doc's planning mode) after an RM received date change and persist it."""
+	doc = frappe.get_doc("Bulk Pre Production Plan", docname)
+	mode = doc.custom_planning_mode or ""
+	if mode not in ("Parallel", "Consolidated"):
+		# Sequential: RM / SFG / FG dates are recalculated on the rows and saved
+		return recalculate_existing_schedule(docname, "Sequential")
+	if mode == "Parallel":
+		schedule = calculate_parallel_batch_schedule(docname)
+	else:
+		schedule = calculate_consolidated_batch_schedule(docname)
 
 	frappe.db.set_value(
 		"Bulk Pre Production Plan", docname,
 		"custom_batch_schedule", frappe.as_json(schedule),
 		update_modified=False,
 	)
-
-	# Also update the actual child rows so PP creation picks up the correct dates
-	for so_data in (schedule or {}).values():
-		for mr_data in so_data.get("mr") or []:
-			row_name = mr_data.get("row_name")
-			if not row_name:
-				continue
-			frappe.db.set_value("Bulk PP Material Request Item", row_name, {
-				"custom_start_date": mr_data.get("start_date") or None,
-				"schedule_date":     mr_data.get("end_date") or None,
-			})
-
+	# Also update the actual child rows (RM / SFG / FG) so PP creation picks up the correct dates
+	_apply_parallel_dates_to_rows(doc, schedule)
 	frappe.db.commit()
 	return schedule
 
 
 @frappe.whitelist()
-def clear_rm_received_date(docname: str, so_name: str) -> dict:
+def set_rm_received_date(docname: str, so_name: str, rm_received_date: str) -> dict:
 	"""
-	Clear the RM received date override for an SO and revert to backward-scheduled dates.
+	Atomically save the RM received date override (bulk date) for an SO, recalculate
+	the schedule forward from that date, and persist everything.
 	"""
 	frappe.db.sql(
 		"""UPDATE `tabBulk PP Sales Order`
-		   SET custom_rm_received_date = NULL
+		   SET custom_rm_received_date = %s, custom_rm_override = 1
+		   WHERE parent = %s AND sales_order = %s""",
+		(rm_received_date or None, docname, so_name),
+	)
+	frappe.db.commit()
+	return _recalculate_rm_override_schedule(docname)
+
+
+@frappe.whitelist()
+def enable_rm_override(docname: str, so_name: str) -> None:
+	"""Tick the RM received date override for an SO without a bulk date (per-RM dates)."""
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Sales Order`
+		   SET custom_rm_override = 1
 		   WHERE parent = %s AND sales_order = %s""",
 		(docname, so_name),
 	)
 	frappe.db.commit()
 
-	schedule = calculate_consolidated_batch_schedule(docname)
+
+@frappe.whitelist()
+def set_rm_row_received_date(docname: str, mr_row_name: str, rm_received_date: str | None = None) -> dict:
+	"""
+	Save the Receive By override of one RM row (blank clears it), recalculate the
+	schedule so its SFG / FG follow, and persist everything.
+	"""
+	so_name = frappe.db.get_value(
+		"Bulk PP Material Request Item", {"name": mr_row_name, "parent": docname}, "sales_order"
+	)
+	if not so_name:
+		frappe.throw(_("Raw material row {0} not found").format(mr_row_name))
+	override_on = frappe.db.get_value(
+		"Bulk PP Sales Order", {"parent": docname, "sales_order": so_name},
+		["custom_rm_override", "custom_rm_received_date"], as_dict=True,
+	)
+	if not override_on or not (cint(override_on.custom_rm_override) or override_on.custom_rm_received_date):
+		frappe.throw(_("Tick 'Override RM Received Date' for {0} first").format(so_name))
 
 	frappe.db.set_value(
-		"Bulk Pre Production Plan", docname,
-		"custom_batch_schedule", frappe.as_json(schedule),
+		"Bulk PP Material Request Item", mr_row_name,
+		"custom_rm_received_override", getdate(rm_received_date) if rm_received_date else None,
 		update_modified=False,
 	)
 	frappe.db.commit()
-	return schedule
+	return _recalculate_rm_override_schedule(docname)
+
+
+@frappe.whitelist()
+def clear_rm_received_date(docname: str, so_name: str) -> dict:
+	"""
+	Untick the RM received date override for an SO: clear the bulk date and every
+	per-RM date, and revert to backward-scheduled dates.
+	"""
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Sales Order`
+		   SET custom_rm_received_date = NULL, custom_rm_override = 0
+		   WHERE parent = %s AND sales_order = %s""",
+		(docname, so_name),
+	)
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Material Request Item`
+		   SET custom_rm_received_override = NULL
+		   WHERE parent = %s AND sales_order = %s""",
+		(docname, so_name),
+	)
+	frappe.db.commit()
+	return _recalculate_rm_override_schedule(docname)
