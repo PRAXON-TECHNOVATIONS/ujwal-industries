@@ -89,6 +89,8 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 
 	refresh: function (frm) {
 
+		render_generated_documents(frm);
+
 		cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function (i, item) {
 			let row = locals[cur_frm.fields_dict["sales_orders"].grid.doctype][$(item).attr('data-name')];
 			let today = frappe.datetime.get_today();
@@ -172,7 +174,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 									callback: function (r) {
 										if (r.message && r.message.length > 0) {
 											frappe.show_alert({
-												message: __('Production Plan created successfully for {0}', [so_to_process]),
+												message: __('Production Plan {0} created for {1}', [r.message.join(', '), so_to_process]),
 												indicator: 'green'
 											});
 											frm.reload_doc();
@@ -6202,5 +6204,121 @@ function _apply_so_filters(frm) {
 			}
 		}
 		$(this).toggle(show);
+	});
+}
+
+
+// ── Generated documents in Connections (WO / PO / MR) ──────────────────────
+// Adds Work Order / Purchase Order / Material Request tiles beside the standard
+// Production Plan link, with Sales Order + FG Item filters. Shown only once a PP
+// is submitted. Click opens the list: "All FG" -> filtered by Production Plan,
+// a single FG -> filtered to exactly that FG's documents.
+const _GEN_DOC_TYPES = ['Work Order', 'Purchase Order', 'Material Request'];
+
+function render_generated_documents(frm, attempt = 0) {
+	const $area = frm.dashboard && frm.dashboard.transactions_area;
+	if (!$area || frm.is_new()) return;
+
+	// Connections links render asynchronously — wait for the Production Plan tile
+	const $pp_link = $area.find('.document-link[data-doctype="Production Plan"]');
+	if (!$pp_link.length) {
+		if (attempt < 10) setTimeout(() => render_generated_documents(frm, attempt + 1), 300);
+		return;
+	}
+
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_generated_documents',
+		args: { bulk_pp_name: frm.doc.name },
+		callback: function (r) {
+			_draw_generated_documents(frm, $area, $pp_link, r.message || []);
+		},
+	});
+}
+
+function _draw_generated_documents(frm, $area, $pp_link, rows) {
+	// Idempotent: clear what a previous refresh added
+	$area.find('.bpp-gen-doc').remove();
+	if (!rows.length) return;
+
+	const esc = frappe.utils.escape_html;
+	const so_row = rows.find(d => d.sales_order === frm._gen_doc_so) || rows[0];
+	frm._gen_doc_so = so_row.sales_order;
+	if (!so_row.fg_items.includes(frm._gen_doc_fg)) frm._gen_doc_fg = '';
+	const fg = frm._gen_doc_fg;
+	const docs = fg ? so_row.by_fg[fg] : so_row.all;
+
+	const so_options = rows.map(d =>
+		`<option value="${esc(d.sales_order || '')}" ${d.sales_order === so_row.sales_order ? 'selected' : ''}>${esc(d.sales_order || '')}</option>`
+	).join('');
+	const fg_options = [`<option value="">${__('All FG')}</option>`].concat(
+		so_row.fg_items.map(i => `<option value="${esc(i)}" ${i === fg ? 'selected' : ''}>${esc(i)}</option>`)
+	).join('');
+
+	const select_css = 'width: auto; min-width: 190px; height: 28px; padding: 2px 8px;';
+	$area.prepend(`
+		<div class="bpp-gen-doc d-flex align-items-center flex-wrap"
+			style="gap: 16px; padding: 8px 12px; margin-bottom: 16px;
+				border: 1px solid var(--border-color); border-radius: var(--border-radius-md);
+				background: var(--subtle-fg);">
+			<span class="d-flex align-items-center text-muted small" style="gap: 4px;">
+				<svg class="icon icon-sm"><use href="#icon-filter"></use></svg>${__('Filters')}
+			</span>
+			<label class="d-flex align-items-center mb-0" style="gap: 8px;">
+				<span class="small text-muted">${__('Sales Order')}</span>
+				<select class="form-control input-xs bpp-gen-so" style="${select_css}">${so_options}</select>
+			</label>
+			<label class="d-flex align-items-center mb-0" style="gap: 8px;">
+				<span class="small text-muted">${__('FG Item')}</span>
+				<select class="form-control input-xs bpp-gen-fg" style="${select_css}">${fg_options}</select>
+			</label>
+		</div>
+	`);
+
+	// All tiles on one line with the Production Plan tile (its column is col-md-4 by default)
+	const $col = $pp_link.parent();
+	$col.removeClass('col-md-4').addClass('col-12 d-flex flex-wrap align-items-center').css('gap', '12px');
+	// Same as standard Connections: main count = all (incl. cancelled),
+	// side badge = active (not cancelled), each opening its own list
+	_GEN_DOC_TYPES.forEach(doctype => {
+		const d = docs[doctype] || { all: [], active: [] };
+		$col.append(`
+			<div class="document-link bpp-gen-doc" data-doctype="${doctype}">
+				<div class="document-link-badge" data-doctype="${doctype}">
+					<span class="count">${d.all.length}</span>
+					<a class="badge-link">${__(doctype)}</a>
+				</div>
+				${d.all.length ? `<span class="open-notification" data-doctype="${doctype}"
+					title="${__('Open {0}', [__(doctype)])}">${d.active.length}</span>` : ''}
+			</div>
+		`);
+	});
+
+	$area.find('.bpp-gen-so').on('change', function () {
+		frm._gen_doc_so = $(this).val();
+		frm._gen_doc_fg = '';
+		_draw_generated_documents(frm, $area, $pp_link, rows);
+	});
+	$area.find('.bpp-gen-fg').on('change', function () {
+		frm._gen_doc_fg = $(this).val();
+		_draw_generated_documents(frm, $area, $pp_link, rows);
+	});
+
+	const open_list = (doctype, only_active) => {
+		const names = (docs[doctype] || {})[only_active ? 'active' : 'all'] || [];
+		if (!names.length) {
+			frappe.show_alert({ message: __('No {0} for this selection', [__(doctype)]), indicator: 'orange' });
+			return;
+		}
+		// production_plan is in the item table for PO / MR; the List view resolves it
+		const opts = fg ? { name: ['in', names] } : { production_plan: so_row.production_plan };
+		if (only_active && !fg) opts.docstatus = ['!=', 2];
+		frappe.route_options = opts;
+		frappe.set_route('List', doctype);
+	};
+	$col.find('.bpp-gen-doc .document-link-badge').on('click', function () {
+		open_list($(this).attr('data-doctype'), false);
+	});
+	$col.find('.bpp-gen-doc .open-notification').on('click', function () {
+		open_list($(this).attr('data-doctype'), true);
 	});
 }

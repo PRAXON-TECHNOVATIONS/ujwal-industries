@@ -241,6 +241,7 @@ doc_events = {
 			# "ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
 		],
 		"on_trash": "ujwal_industries.ujwal_industries.overrides.production_plan.on_trash_production_plan",
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.production_plan.on_cancel_production_plan",
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",

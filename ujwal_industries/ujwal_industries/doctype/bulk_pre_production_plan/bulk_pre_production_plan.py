@@ -26,6 +26,8 @@ from ujwal_industries.ujwal_industries.overrides.pp_utils import (
 	_get_holiday_set,
 	_prev_working_date,
 	get_holiday_adjusted_date,
+	get_rows_missing_supplier,
+	throw_validation_sections,
 )
 
 
@@ -5495,6 +5497,125 @@ def _recalculate_parallel_after_submit(bulk_pp_name: str) -> None:
 		)
 
 
+def _get_first_default_warehouse(item_code: str) -> str:
+	"""Same warehouse lookup the PP creation uses: first Item Default row."""
+	item_doc = frappe.get_cached_doc("Item", item_code)
+	if item_doc.item_defaults:
+		return item_doc.item_defaults[0].get("default_warehouse") or ""
+	return ""
+
+
+def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> None:
+	"""
+	Catch, in one message, everything that would otherwise fail (or silently skip)
+	only when the Production Plan is submitted:
+	  1. Subcontract / In House - Vendor rows without a supplier
+	  2. Raw materials without a default warehouse (Material Request needs one)
+	  3. Subcontract / In House - Vendor items without an active Subcontracting BOM
+	     (Subcontract PO / Service PO needs its service item)
+	  4. FG / SFG BOMs that are not submitted or not active (Work Order / PO needs one)
+	"""
+	fg_rows = so_details.get("fg") or []
+	sfg_rows = so_details.get("sfg_chain") or []
+
+	missing_supplier = get_rows_missing_supplier(
+		[row for row in bulk_pp.po_items if row.sales_order == so_name],
+		[row for row in bulk_pp.sub_assembly_items if row.sales_order == so_name],
+		fg_type_field="manufacturing_type",
+	)
+
+	missing_warehouse = []
+	for mr in so_details.get("mr") or []:
+		item_code = mr.get("item_code")
+		if flt(mr.get("qty")) > 0 and item_code and not _get_first_default_warehouse(item_code):
+			missing_warehouse.append(_("<b>{0}</b> — set Default Warehouse in Item master").format(item_code))
+
+	# (level, item_code, bom_no, manufacturing_type) for every FG / SFG row going into the PP
+	production_rows = [
+		("FG", r.get("item_code"), r.get("bom_no"),
+		 r.get("manufacturing_type") or r.get("custom_manufacturing_type") or "In House")
+		for r in fg_rows
+	] + [
+		("SFG", r.get("item_code"), r.get("bom_no"), r.get("type_of_manufacturing") or "In House")
+		for r in sfg_rows
+	]
+
+	missing_sub_bom = []
+	inactive_bom = []
+	seen = set()
+	for level, item_code, bom_no, mfg_type in production_rows:
+		if (item_code, bom_no, mfg_type) in seen:
+			continue
+		seen.add((item_code, bom_no, mfg_type))
+
+		if mfg_type == "Subcontract":
+			# ERPNext picks the service item by finished good only
+			if not frappe.db.exists("Subcontracting BOM", {"finished_good": item_code, "is_active": 1}):
+				missing_sub_bom.append(_("{0} — <b>{1}</b> (Subcontract)").format(level, item_code))
+		elif mfg_type == "In House - Vendor":
+			# make_vendor_purchase_orders matches finished good + its BOM
+			if not frappe.db.exists(
+				"Subcontracting BOM",
+				{"finished_good": item_code, "finished_good_bom": bom_no, "is_active": 1},
+			):
+				missing_sub_bom.append(
+					_("{0} — <b>{1}</b> with BOM {2} (In House - Vendor)").format(level, item_code, bom_no or "-")
+				)
+
+		# SFG "Material Request" rows create no Work Order / PO, so no BOM needed
+		if mfg_type == "Material Request":
+			continue
+		if not bom_no:
+			inactive_bom.append(_("{0} — <b>{1}</b>: no BOM selected").format(level, item_code))
+			continue
+		bom = frappe.db.get_value("BOM", bom_no, ["docstatus", "is_active"], as_dict=True)
+		if not bom or bom.docstatus != 1 or not bom.is_active:
+			inactive_bom.append(
+				_("{0} — <b>{1}</b>: BOM {2} is not submitted / active").format(level, item_code, bom_no)
+			)
+
+	throw_validation_sections(
+		_("Cannot create Production Plan for Sales Order <b>{0}</b>.").format(so_name),
+		[
+			(_("Supplier is missing for:"), missing_supplier),
+			(_("Raw material has no Default Warehouse:"), missing_warehouse),
+			(_("No active Subcontracting BOM for:"), missing_sub_bom),
+			(_("BOM problem:"), inactive_bom),
+		],
+	)
+
+
+def _save_and_submit_pp_from_bulk_pp(pp_doc, so_name: str, auto_submit: int) -> None:
+	"""
+	Save the Production Plan and, when auto-submit is on, submit it — which creates the
+	draft Work Orders / Purchase Orders / Material Requests (By Pass setting ignored).
+
+	All-or-nothing: on any failure everything from this SO is rolled back and the
+	reason is shown on the Bulk PP.
+	"""
+	try:
+		pp_doc.save()
+		if auto_submit:
+			pp_doc.flags.from_bulk_pp = True
+			pp_doc.submit()
+	except Exception as e:
+		frappe.db.rollback()
+		frappe.log_error(
+			title=f"Bulk PP: Production Plan creation failed for {so_name}",
+			message=frappe.get_traceback(),
+		)
+		# Only the Error Log is in the transaction now — keep it for debugging
+		frappe.db.commit()
+		# Drop "Work Order created" etc. messages — those documents were rolled back
+		frappe.clear_messages()
+		frappe.throw(
+			_("Production Plan for Sales Order <b>{0}</b> was not created — nothing was saved.<br><br><b>Reason:</b> {1}").format(
+				so_name, str(e) or e.__class__.__name__
+			),
+			title=_("Production Plan Failed"),
+		)
+
+
 @frappe.whitelist()
 def create_selected_production_plans(bulk_pp_name, sales_orders):
 	"""
@@ -5510,6 +5631,9 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 
 	so_data = json.loads(bulk_pp.custom_batch_schedule)
 	created_plans = []
+	auto_submit = cint(frappe.db.get_single_value(
+		"Ujwal Industries Setting", "auto_submit_production_plan_from_bulk_pp"
+	))
 
 	# Authoritative RM supplier comes from the saved BPP child rows (custom_supplier),
 	# keyed by (sales_order, item_code). This is more reliable than the batch-schedule
@@ -5518,10 +5642,17 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		(row.sales_order, row.item_code): (row.custom_supplier or "")
 		for row in bulk_pp.mr_items
 	}
+	# Same for FG suppliers (Subcontract / In House - Vendor rows).
+	fg_supplier_by_key = {
+		(row.sales_order, row.item_code): (row.custom_supplier or "")
+		for row in bulk_pp.po_items
+	}
 
 	for so_name in sales_orders:
 		if so_name not in so_data:
 			continue
+
+		_validate_so_before_pp_creation(bulk_pp, so_name, so_data.get(so_name))
 		
 		# Check if already processed in this doc
 		is_already_created = False
@@ -5556,7 +5687,8 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				types = j.get('custom_manufacturing_type')
 			else:
 				types = 'In House'
-	
+			fg_supplier = fg_supplier_by_key.get((i, j.get('item_code'))) or j.get('supplier') or ""
+
 			for k in j.get('batches'):
 				pp_doc.append('po_items',{
 					'include_exploded_items' : 1,
@@ -5565,6 +5697,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 					'planned_qty' : k.get('qty'),
 					'stock_uom' : item_doc.stock_uom,
 					'custom_manufacturing_type' : types,
+					'custom_supplier' : fg_supplier,
 					'planned_start_date' : k.get('start_date'),
 					'custom_planned_end_date' : k.get('end_date'),
 					'sales_order' : j.get('sales_order'),
@@ -5574,7 +5707,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 					'custom_grn_days' : k.get('grn_days'),
 					'custom_pm_days' : k.get('pm_days'),
 				})
-		
+
 		for j in so_details.get('sfg_chain')[::-1]:
 			warehouse = ''
 			item_doc = frappe.get_doc("Item",j.get('item_code'))
@@ -5617,7 +5750,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				'custom_supplier' :  rm_supplier,
 			})
 		_run_machine_availability_check_for_production_plan(pp_doc)
-		pp_doc.save()
+		_save_and_submit_pp_from_bulk_pp(pp_doc, so_name, auto_submit)
 		created_plans.append(pp_doc.name)
 
 		# Mark row as processed
@@ -5625,12 +5758,14 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 			if row.sales_order == so_name:
 				row.custom_pp_created = 1
 				break
-	
-	if created_plans:
+
+		# Commit per SO so a failure on a later SO cannot roll back this one
 		bulk_pp.flags.ignore_mandatory = True
 		bulk_pp.save()
 		bulk_pp.flags.ignore_mandatory = False
 		frappe.db.commit()
+
+	if created_plans:
 
 		# ── Parallel mode: re-schedule remaining unsubmitted SOs ───────────────
 		# Now that the submitted SO's machine time is locked in a real Production
@@ -5772,6 +5907,7 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 							"planned_qty": batch.get("qty"),
 							"stock_uom": item_doc.stock_uom,
 							"custom_manufacturing_type": manufacturing_type,
+							"custom_supplier": fg_data.get("supplier") or "",
 							"planned_start_date": batch.get("start_date"),
 							"custom_planned_end_date": batch.get("end_date"),
 							"sales_order": fg_data.get("sales_order"),
@@ -6021,6 +6157,116 @@ def get_bulk_pp_for_production_plan(production_plan):
 		"status": bulk_pp.status,
 		"company": bulk_pp.company
 	}
+
+
+@frappe.whitelist()
+def get_generated_documents(bulk_pp_name: str) -> list[dict[str, Any]]:
+	"""
+	For the Connections area on Bulk PP: per Sales Order with a submitted Production Plan,
+	the Work Orders / Purchase Orders / Material Requests created by that PP, for "All FG"
+	and per planned FG item — as {"all": [...], "active": [...]} where "active" excludes
+	cancelled (same as the count / open-count badges of standard Connections).
+
+	An FG covers itself + its SFGs + its RMs (from this Bulk PP's `fg_item_code`).
+	Service PO lines carry the service item, mapped back via the Subcontracting BOM.
+	A document shared by several FGs is listed under each of them.
+	Lists go through get_list, so user permissions (incl. PO visibility rules) apply.
+	"""
+	frappe.has_permission("Bulk Pre Production Plan", "read", bulk_pp_name, throw=True)
+	bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
+
+	pp_names = frappe.get_all(
+		"Production Plan",
+		filters={"custom_bulk_pre_production_plan": bulk_pp_name, "docstatus": 1},
+		pluck="name",
+		order_by="creation asc",
+	)
+	if not pp_names:
+		return []
+
+	so_by_pp = {
+		row.parent: row.sales_order
+		for row in frappe.get_all(
+			"Production Plan Sales Order",
+			filters={"parent": ["in", pp_names], "parenttype": "Production Plan"},
+			fields=["parent", "sales_order"],
+		)
+	}
+
+	result = []
+	for pp in pp_names:
+		so = so_by_pp.get(pp)
+
+		# FG -> items it covers, as planned in this Bulk PP
+		fg_items = list(dict.fromkeys(row.item_code for row in bulk_pp.po_items if row.sales_order == so))
+		made_items = {fg: {fg} for fg in fg_items}
+		rm_items = {fg: set() for fg in fg_items}
+		for row in bulk_pp.sub_assembly_items:
+			if row.sales_order == so and row.fg_item_code in made_items:
+				made_items[row.fg_item_code].add(row.production_item)
+		for row in bulk_pp.mr_items:
+			if row.sales_order == so and row.fg_item_code in rm_items:
+				rm_items[row.fg_item_code].add(row.item_code)
+
+		all_made = set().union(*made_items.values()) if made_items else set()
+		service_to_made = {}
+		if all_made:
+			for sb in frappe.get_all(
+				"Subcontracting BOM",
+				filters={"finished_good": ["in", list(all_made)], "is_active": 1},
+				fields=["finished_good", "service_item"],
+			):
+				service_to_made.setdefault(sb.service_item, set()).add(sb.finished_good)
+
+		work_orders = frappe.get_list(
+			"Work Order",
+			filters={"production_plan": pp},
+			fields=["name", "docstatus", "production_item"],
+		)
+		po_lines = frappe.get_list(
+			"Purchase Order",
+			filters=[["Purchase Order Item", "production_plan", "=", pp]],
+			fields=["name", "docstatus", "`tabPurchase Order Item`.item_code as item_code", "`tabPurchase Order Item`.fg_item as fg_item"],
+		)
+		mr_lines = frappe.get_list(
+			"Material Request",
+			filters=[["Material Request Item", "production_plan", "=", pp]],
+			fields=["name", "docstatus", "`tabMaterial Request Item`.item_code as item_code"],
+		)
+
+		def _names(rows, match=None):
+			rows = [r for r in rows if match is None or match(r)]
+			return {
+				"all": sorted({r.name for r in rows}),
+				"active": sorted({r.name for r in rows if r.docstatus != 2}),
+			}
+
+		docs_by_fg = {}
+		for fg in fg_items:
+			made, rms = made_items[fg], rm_items[fg]
+			docs_by_fg[fg] = {
+				"Work Order": _names(work_orders, lambda r: r.production_item in made),
+				"Purchase Order": _names(
+					po_lines,
+					lambda r: r.fg_item in made or bool(service_to_made.get(r.item_code, set()) & made),
+				),
+				"Material Request": _names(mr_lines, lambda r: r.item_code in rms),
+			}
+
+		result.append({
+			"sales_order": so,
+			"production_plan": pp,
+			"fg_items": fg_items,
+			"all": {
+				"Work Order": _names(work_orders),
+				"Purchase Order": _names(po_lines),
+				"Material Request": _names(mr_lines),
+			},
+			"by_fg": docs_by_fg,
+		})
+
+	return result
+
 
 def get_bin_data(item_code=None, warehouse=None):
 	bin = frappe.qb.DocType("Bin")
