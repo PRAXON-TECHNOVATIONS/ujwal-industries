@@ -1377,22 +1377,36 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 				return planned === undefined ? Number(p.data?.qty || 0) : Number(planned);
 			},
 			valueFormatter: p => Number(p.value || 0).toLocaleString('en-IN'),
-			cellStyle: { color: '#2563eb', fontWeight: 'bold' }
+			cellStyle: { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' },
+			// Same Stock Details popup as the FG grid
+			onCellClicked: p => {
+				const raw    = _sq(p, 'actual_qty');
+				const total  = Number(p.data?.qty || 0);
+				// Older saved schedules have no stock figure — don't show a misleading 0
+				const actual = raw === undefined
+					? `<span style="color:#b45309;">${__('not calculated — click Calculate Schedule')}</span>`
+					: `<b>${Number(raw || 0).toLocaleString('en-IN')}</b>`;
+				frappe.msgprint({
+					title: __('Stock Details'),
+					message: `Qty As Per BOM: <b>${total.toLocaleString('en-IN')}</b><br>Available Qty in Warehouse: ${actual}`,
+					indicator: 'blue'
+				});
+			}
 		},
 		{
 			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
 			valueGetter: p => _sq(p, 'mfg_days') || 0,
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`  // 0 shown, same as Parallel
 		},
 		{
 			headerName: 'GRN Days', width: 82, type: 'numericColumn',
 			valueGetter: p => _sq(p, 'grn_days') || 0,
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'PM Days', width: 78, type: 'numericColumn',
 			valueGetter: p => _sq(p, 'pm_days') || 0,
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'Holi.', width: 58, type: 'numericColumn',
@@ -1413,7 +1427,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		{
 			headerName: 'SPM', width: 80, type: 'numericColumn',
 			valueGetter: p => _sq(p, 'spm') || 0,
-			cellRenderer: p => p.value ? String(p.value) : ''
+			cellRenderer: p => String(p.value || 0)
 		},
 		{
 			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
@@ -1432,6 +1446,10 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		{
 			headerName: 'Supplier', field: 'supplier', width: 140,
 			editable: p => ['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing),
+			// Same supplier search popup as the Parallel SFG / Sequential FG grids
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({ supplier_list: p.data?.supplier_list || [] }),
 			cellRenderer: p => {
 				if (!['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing)) return '';
 				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
@@ -1446,8 +1464,12 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		},
 	];
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
+	_make_vertically_resizable(sfg_el);
 	const sfg_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: sfg_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(sfg_cols, 22),   // sort + filter icons in the header
 		rowData: so_data.sfg,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		suppressMovableColumns: false,
@@ -1460,6 +1482,120 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 
 	// ── MR section (bottom, matches Parallel order) ──────────────────────────
 	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+}
+
+
+// ---------------------------------------------------------------------------
+// FG / SFG grid column layout — same in Sequential, Parallel and Consolidated
+// ---------------------------------------------------------------------------
+// Frozen: (expand / Dispatch) · Item Code · Item Name · Type, then the main columns in this
+// order, then everything else as before. Every column is just wide enough for its full
+// header; Item Name / Machines / Shifts / dates / Supplier Name get a fixed content width.
+const _FG_COLUMN_ORDER = [
+	'Item Code', 'Item Name', 'Type',
+	'Machines', 'Shifts', 'Qty As Per BOM', 'Planned Qty',
+	'Start Date', 'End Date', 'Per Shift Qty', 'SPM', 'Supplier', 'Supplier Name',
+];
+
+// Type select box stays the normal in-cell editor (closes on outside click); only its
+// option list grows to fit "Subcontract" / "In House - Vendor", whatever the column width.
+(function _bpp_select_list_css() {
+	if (document.getElementById('bpp-select-list-css')) return;
+	const st = document.createElement('style');
+	st.id = 'bpp-select-list-css';
+	// option list sizes to its longest option, not to the column
+	st.textContent = '.ag-theme-alpine .ag-select-list { width: max-content !important; min-width: 100%; }'
+		+ ' .ag-theme-alpine .ag-select-list-item { white-space: nowrap; padding-right: 12px; }';
+	document.head.appendChild(st);
+})();
+
+// Horizontal padding of FG headers / cells (px, each side)
+const _FG_CELL_PADDING = 6;
+
+// Columns whose cells hold more than the header (inputs / long text): fixed widths
+const _FG_CONTENT_WIDTHS = {
+	'Item Name': 220,
+	'Type': 120,          // IN HOUSE / SUB / VENDOR badge
+	'Machines': 200,
+	'Shifts': 150,
+	'Supplier Name': 220,
+	'Start Date': 140,
+	'End Date': 140,
+};
+
+let _header_measure_ctx = null;
+function _header_fit_width(header) {
+	// Exact width of the header text in the grid's header font (bold 13px), measured by the
+	// browser, + the compact left/right padding — no empty space before / after the label.
+	const text = String(header || '');
+	try {
+		if (!_header_measure_ctx) {
+			_header_measure_ctx = document.createElement('canvas').getContext('2d');
+			_header_measure_ctx.font = `600 13px ${getComputedStyle(document.body).fontFamily}`;
+		}
+		return Math.ceil(_header_measure_ctx.measureText(text).width) + 2 * _FG_CELL_PADDING + 4;
+	} catch (e) {
+		return Math.ceil(text.length * 7) + 2 * _FG_CELL_PADDING + 4;
+	}
+}
+
+function _arrange_fg_columns(cols, header_extra = 0) {
+	return _arrange_columns(cols, _FG_COLUMN_ORDER, _FG_CONTENT_WIDTHS, { header_extra });
+}
+
+// RM table: frozen Item Code · Item Name, then qty columns, UOM, dates, supplier, the rest
+const _RM_COLUMN_ORDER = [
+	'Item Code', 'Item Name',
+	'Qty As Per BOM', 'Available Qty', 'Planned Qty', 'UOM',
+	'Order By', 'Receive By', 'Supplier', 'Supplier Name',
+];
+const _RM_CONTENT_WIDTHS = {
+	'Item Name': 220,
+	'Order By': 110,
+	'Receive By': 110,
+	'Supplier': 110,        // "No Supplier" placeholder
+	'Supplier Name': 220,
+};
+
+function _arrange_rm_columns(cols) {
+	// RM grid has sort + filter on every column → leave room for those header icons
+	return _arrange_columns(cols, _RM_COLUMN_ORDER, _RM_CONTENT_WIDTHS, {
+		pin: ['Item Code', 'Item Name'],
+		header_extra: 22,
+	});
+}
+
+// Fixed-height grid → user can drag its bottom-right corner to make it taller / shorter
+function _make_vertically_resizable(el) {
+	el.style.resize = 'vertical';
+	el.style.overflow = 'hidden';
+	el.style.minHeight = '120px';
+}
+
+function _arrange_columns(cols, order, content_widths, opts = {}) {
+	const pin = opts.pin || [];
+	const header_extra = opts.header_extra || 0;
+	cols.forEach(c => { if (pin.includes(c.headerName)) c.pinned = 'left'; });
+	const rank = c => {
+		const i = order.indexOf(c.headerName);
+		return i < 0 ? order.length : i;
+	};
+	// Leading frozen helpers (expand arrow, Dispatch) stay first, in their order
+	const lead = cols.filter(c => c.pinned === 'left' && !order.includes(c.headerName));
+	const rest = cols
+		.filter(c => !lead.includes(c))
+		.map((c, i) => ({ c, i }))
+		.sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)   // others keep their old order
+		.map(x => x.c);
+
+	// Tight widths: just enough for the full header (no extra gap between columns);
+	// content-heavy columns get a fixed width that fits their content.
+	[...lead, ...rest].forEach(c => {
+		if (!c.headerName || c.flex) return;
+		c.width = Math.max(content_widths[c.headerName] || 0, _header_fit_width(c.headerName) + header_extra);
+		if (c.minWidth) c.minWidth = Math.min(c.minWidth, c.width);
+	});
+	return [...lead, ...rest];
 }
 
 
@@ -1509,6 +1645,7 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
 			start_date:             item.planned_start_date || '',
 			end_date:               item.custom_planned_end_date || '',
+			per_shift_qty:          Number(_seq.per_shift_qty || 0),
 			mfg_days:               Number(_seq.mfg_days || 0),
 			grn_days:               Number(_seq.grn_days || 0),
 			pm_days:                Number(_seq.pm_days || item.pm_days || 0),
@@ -1563,6 +1700,10 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			cellRenderer: p => _shift_display_html(p.value)
 		},
 		{
+			headerName: 'Per Shift Qty', field: 'per_shift_qty', width: 108, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
 			headerName: 'SPM', field: 'spm', width: 80, type: 'numericColumn',
 			valueGetter: p => p.data?.spm || _effective_spm_value(p.data || {}),
 			cellRenderer: p => p.value != null ? String(p.value) : ''
@@ -1609,15 +1750,15 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 		},
 		{
 			headerName: 'Mfg Days', field: 'mfg_days', width: 82, type: 'numericColumn',
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`  // 0 shown, same as Parallel
 		},
 		{
 			headerName: 'GRN Days', field: 'grn_days', width: 82, type: 'numericColumn',
-			cellRenderer: p => p.value ? String(p.value) : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'PM Days', field: 'pm_days', width: 78, type: 'numericColumn',
-			cellRenderer: p => p.value ? String(p.value) : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'Holi.', field: 'holiday_count', width: 58, type: 'numericColumn',
@@ -1670,16 +1811,20 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM)
+	fg_el.style.height = Math.max(160, rows.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const seq_fg_grid = agGrid.createGrid(fg_el, {
-		columnDefs:        cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs:        _arrange_fg_columns(cols),
 		rowData:           rows,
 		defaultColDef:     { resizable: true, sortable: false },
 		rowHeight:         40,
 		headerHeight:      40,
-		domLayout:         'autoHeight',
 		getRowStyle:       () => ({ background: '#F8FAFC', borderBottom: '1px solid #e2e8f0' }),
 		onCellValueChanged: p => _on_seq_fg_cell_changed(frm, p),
 	});
@@ -1818,6 +1963,11 @@ function _on_seq_cell_changed(frm, params) {
 	if (changed && (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool')) {
 		_mark_bom_form_dirty(frm);
 		doc_row[fieldname] = params.newValue;
+	} else if (changed) {
+		// The grid shows the real form rows, so AG Grid has already written the new value
+		// into doc_row — set_value would see "no change" and the form would not go dirty.
+		// Put the old value back so set_value records a real change (same as Parallel).
+		doc_row[fieldname] = params.oldValue;
 	}
 
 	const update_promise = (doc_row.doctype && doc_row.name)
@@ -2388,16 +2538,22 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM);
+	// expanding batch rows scrolls inside the table
+	const _fg_rows_init = _builds_rows();
+	fg_el.style.height = Math.max(160, _fg_rows_init.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const par_grids = agGrid.createGrid(fg_el, {
-		columnDefs: par_colss,
-		rowData: _builds_rows(),
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_colss),
+		rowData: _fg_rows_init,
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
 		headerHeight: 40,
-		domLayout: 'autoHeight',
 		getRowStyle: p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
@@ -2813,8 +2969,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	sfg_el.style.cssText = 'width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
 	const par_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: par_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_cols),
 		rowData: _build_rows(),
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
@@ -3353,16 +3512,22 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM);
+	// expanding batch rows scrolls inside the table
+	const _fg_rows_init = _builds_rows();
+	fg_el.style.height = Math.max(160, _fg_rows_init.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const par_grids = agGrid.createGrid(fg_el, {
-		columnDefs: par_colss,
-		rowData: _builds_rows(),
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_colss),
+		rowData: _fg_rows_init,
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
 		headerHeight: 40,
-		domLayout: 'autoHeight',
 		getRowStyle: p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
@@ -3853,8 +4018,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	sfg_el.style.cssText = 'width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
 	const par_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: par_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_cols),
 		rowData: _build_rows(),
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
@@ -5982,8 +6150,12 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		},
 	];
 
+	// Same compact padding / header-fit widths as the FG and SFG tables
+	mr_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
+	_make_vertically_resizable(mr_el);
 	const mr_grid_api = agGrid.createGrid(mr_el, {
-		columnDefs: mr_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_rm_columns(mr_cols),
 		rowData: mr_items,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		rowHeight: 36,
