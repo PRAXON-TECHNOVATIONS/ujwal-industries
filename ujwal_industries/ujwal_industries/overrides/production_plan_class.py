@@ -375,16 +375,17 @@ class CustomProductionPlan(ProductionPlan):
                 item_code = row.get("item_code")
                 bom_no = row.get("bom_no")
                 
-                # Fetch Subcontracting BOM
+                # Fetch Subcontracting BOM — by finished good only (ERPNext allows one
+                # active per item, and the service is the same whichever BOM is used)
                 sub_bom = frappe.db.get_value(
-                    "Subcontracting BOM", 
-                    {"finished_good": item_code, "finished_good_bom": bom_no, "is_active": 1},
+                    "Subcontracting BOM",
+                    {"finished_good": item_code, "is_active": 1},
                     ["name", "service_item", "conversion_factor"],
                     as_dict=True
                 )
                 
                 if not sub_bom:
-                    frappe.msgprint(_("No active Subcontracting BOM found for Item {0} and BOM {1}").format(item_code, bom_no))
+                    frappe.msgprint(_("No active Subcontracting BOM found for Item {0}").format(item_code))
                     continue
                 
                 service_item = sub_bom.service_item
