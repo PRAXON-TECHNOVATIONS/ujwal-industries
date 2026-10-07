@@ -88,6 +88,24 @@ def _is_subcontract_per_day_qty_based(item_code: str, company: str) -> bool:
 	return bool(row and cint(row.is_per_day_qty_based) and flt(row.per_day_qty) > 0)
 
 
+def _get_subcontract_per_day_days(item_code: str, company: str, qty: float, shift_types_csv: str | None) -> int:
+	"""
+	Days a per-day-qty based subcontract item needs for `qty` — same capacity Parallel
+	uses: default supplier row's per_day_qty × number of selected shifts (min 1).
+	"""
+	if flt(qty) <= 0:
+		return 0
+	per_day_qty = flt(frappe.db.get_value(
+		"Item Subcontracting Supplier",
+		{"parent": item_code, "company": company, "is_default": 1},
+		"per_day_qty",
+	))
+	if per_day_qty <= 0:
+		return 0
+	shift_count = max(len(_parse_csv_list(shift_types_csv)), 1)
+	return math.ceil(flt(qty) / (per_day_qty * shift_count))
+
+
 def _get_subcontract_lead_days(item_code: str, company: str, supplier: str | None = None) -> int:
 	"""
 	Lead days for a lead-time based subcontract item:
@@ -103,6 +121,18 @@ def _get_subcontract_lead_days(item_code: str, company: str, supplier: str | Non
 	if lead_days <= 0:
 		lead_days = cint(frappe.db.get_value("Item", item_code, "lead_time_days") or 0)
 	return lead_days if lead_days > 0 else DEFAULT_RM_LEAD_TIME_DAYS
+
+
+def _zero_qty_batch(at_dt: Any) -> dict[str, Any]:
+	"""Item covered by stock (qty 0): nothing to make or subcontract — 0 days, start = end,
+	so it never holds up the chain. Same rule in every planning mode."""
+	at = str(get_datetime(at_dt))
+	return {
+		"batch": 1, "total": 1, "qty": 0.0,
+		"mfg_days": 0, "grn_days": 0, "pm_days": 0,
+		"holiday_count": 0, "holiday_hover": [],
+		"start_date": at, "mfg_end_date": at, "end_date": at,
+	}
 
 
 def _build_lead_days_batch(start_dt: Any, qty: float, lead_days: int, grn_days: int) -> dict[str, Any]:
@@ -380,6 +410,13 @@ def _get_row_spm_details(
 	if batchsize and machine_count <= 0:
 		machine_count = 1
 	spm = batchsize * machine_count if batchsize else 0
+	# Minutes per piece across all operations: Operation Time (0 → 1) per Batch Size
+	# pieces on the row's machines — the one formula every planning mode uses.
+	minutes_per_piece = 0.0
+	for op in ops:
+		op_batchsize = cint(op.get("custom_batchsize") or 0)
+		op_time = flt(op.get("time_in_mins")) or 1.0
+		minutes_per_piece += op_time / (op_batchsize * max(machine_count, 1) if op_batchsize > 0 else 1)
 	per_shift_qty = 0
 	if row.doctype == 'Bulk PP Sub Assembly Item' and row.type_of_manufacturing == 'Subcontract':
 		spm = 0
@@ -424,7 +461,8 @@ def _get_row_spm_details(
 		"selected_workstations_display_csv": _join_csv_list(effective_workstations_display),
 		"machine_count": machine_count,
 		"spm": spm,
-		"subcontract_per_shift_qty" :per_shift_qty
+		"subcontract_per_shift_qty" :per_shift_qty,
+		"minutes_per_piece": minutes_per_piece,
 
 	}
 
@@ -447,7 +485,7 @@ def _calculate_row_production_minutes(
 	total_minutes = 0.0
 
 	for op in operations:
-		time_in_mins = float(op.get("time_in_mins") or 0)
+		time_in_mins = float(op.get("time_in_mins") or 0) or 1.0  # 0 / blank → 1 minute
 		batchsize = float(op.get("custom_batchsize") or 0)
 		effective_spm = batchsize * machine_count if batchsize > 0 else 0
 
@@ -868,6 +906,13 @@ def _fetch_bom_component_map(bom_nos: list[str]) -> dict[str, list[dict[str, Any
 	return component_map
 
 
+def _requirement_row_key(row: Any) -> str:
+	"""Key for a FG / SFG row in the requirement context: the row name, or — for rows
+	not saved yet (Sequential runs before save) — the object identity, so two unsaved
+	rows for the same item never share a key."""
+	return getattr(row, "name", None) or f"tmp::{id(row)}"
+
+
 def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], target_warehouse_map: dict[str, str]) -> dict[str, Any]:
 	"""Compute gross/net FG, SFG and MR requirements using row warehouses and BOM ratios."""
 	fg_rows = list(items.get("fg") or [])
@@ -928,7 +973,7 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 
 	for fg in fg_rows:
 		item_code = getattr(fg, "item_code", "") or ""
-		row_key = getattr(fg, "name", None) or f"fg::{item_code}"
+		row_key = _requirement_row_key(fg)
 		warehouse = _get_stock_warehouse_for_requirement_row(fg, item_code, target_warehouse_map)
 		gross_qty = max(flt(getattr(fg, "planned_qty", 0) or 0), 0.0)
 		fg_groups.setdefault((item_code, warehouse), []).append({
@@ -974,7 +1019,7 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			item_code = getattr(sfg, "production_item", "") or ""
 			fg_item_code = getattr(sfg, "fg_item_code", "") or ""
 			parent_item_code = getattr(sfg, "parent_item_code", "") or fg_item_code
-			row_key = getattr(sfg, "name", None) or f"sfg::{fg_item_code}::{item_code}::{level}"
+			row_key = _requirement_row_key(sfg)
 			warehouse = _get_stock_warehouse_for_requirement_row(sfg, item_code, target_warehouse_map)
 			base_gross_qty = max(flt(getattr(sfg, "qty", 0) or 0), 0.0)
 			parent_state = _resolve_parent_state_for_sfg(
@@ -1062,14 +1107,14 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			entry["net_required_qty"] += qty_pu * net_parent_qty
 
 	for fg in fg_rows:
-		row_key = getattr(fg, "name", None) or f"fg::{getattr(fg, 'item_code', '') or ''}"
+		row_key = _requirement_row_key(fg)
 		row_state = fg_row_states.get(row_key) or {}
 		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
 		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
 		_accumulate_mr_from_bom(getattr(fg, "bom_no", None), net_parent_qty, gross_parent_qty)
 
 	for sfg in sfg_rows:
-		row_key = getattr(sfg, "name", None) or f"sfg::{getattr(sfg, 'fg_item_code', '') or ''}::{getattr(sfg, 'production_item', '') or ''}::{cint(getattr(sfg, 'bom_level', 0) or 0)}"
+		row_key = _requirement_row_key(sfg)
 		row_state = sfg_row_states.get(row_key) or {}
 		net_parent_qty = max(flt(row_state.get("net_qty") or 0), 0.0)
 		gross_parent_qty = max(flt(row_state.get("gross_qty") or 0), 0.0)
@@ -2100,6 +2145,14 @@ def recalculate_existing_schedule(docname: str, planning_mode: str | None = None
 		frappe.db.commit()
 		return schedule
 
+	# Sequential: refresh the grid's Planned Qty / days data (stock may have changed)
+	try:
+		schedule = json.loads(frappe.db.get_value("Bulk Pre Production Plan", docname, "custom_batch_schedule") or "{}")
+	except Exception:
+		schedule = {}
+	schedule["_seq"] = {so: _compute_sequential_schedule_data(doc, so) for so in selected_sos}
+	frappe.db.set_value("Bulk Pre Production Plan", docname, "custom_batch_schedule", json.dumps(schedule))
+
 	return {
 		"status": "ok",
 		"planning_mode": mode,
@@ -2344,6 +2397,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			# Covered by stock (qty 0) → 0 days, start = end
+			if sum(flt(q) for q in batches_qty) <= 0:
+				return [_zero_qty_batch(start_dt_b0)]
 			# Lead-time based subcontract SFG: one batch, start + lead days + GRN days
 			if sfg_row.get("lead_days"):
 				return [_build_lead_days_batch(start_dt_b0, sum(batches_qty), sfg_row["lead_days"], grn_days)]
@@ -2491,7 +2547,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			real_spm       = (display_spm / shift_count) if shift_count > 0 else display_spm
 			
 			if spm_details.get("subcontract_per_shift_qty"):
-				display_spm    = round(flt(spm_details.get("spm") or 0, 2))
+				display_spm    = round(flt(spm_details.get("spm") or 0), 2)
 				per_shift_qty = flt(spm_details.get("subcontract_per_shift_qty") or 0)
 				per_day_qty   = per_shift_qty * shift_count
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
@@ -2499,6 +2555,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				# Use Operation Time (0 → 1) as well — same formula as Sequential
+				if row_spm <= 0 and real_spm > 0 and flt(spm_details.get("minutes_per_piece")) > 0:
+					real_spm = 1 / flt(spm_details.get("minutes_per_piece"))
 				per_shift_qty     = real_spm * minutes_per_shift
 				per_day_qty       = per_shift_qty * shift_count
 
@@ -2605,6 +2664,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
 				b0_start = lead_start
 				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
+			# Covered by stock (qty 0) → 0 days, start = end = its deadline
+			if sales_qty <= 0:
+				batch_rows = [_zero_qty_batch(deadline_dt)]
+				b0_start = get_datetime(deadline_dt)
+				lead_days = 0
 				display_spm = per_shift_qty = per_day_qty = 0
 
 			# Next deadline = this SFG's batch[0].start_date
@@ -2955,6 +3021,9 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				# Use Operation Time (0 → 1) as well — same formula as Sequential
+				if row_spm <= 0 and real_spm > 0 and flt(spm_details.get("minutes_per_piece")) > 0:
+					real_spm = 1 / flt(spm_details.get("minutes_per_piece"))
 				per_shift_qty  = real_spm * minutes_per_shift
 				per_day_qty    = per_shift_qty * shift_count
 
@@ -3070,6 +3139,13 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 					lead_start = get_datetime(prev_fg_row0_end)
 				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
 				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
+			# Covered by stock (qty 0) → 0 days, start = end
+			if sales_qty <= 0:
+				batch_rows = [_zero_qty_batch(
+					batch_rows[0]["start_date"] if batch_rows else (top_sfg_batch0_end or today_dt)
+				)]
 				display_spm = per_shift_qty = per_day_qty = 0
 
 			# Update prev_fg_row0_end for next FG in chain
@@ -3358,6 +3434,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 		# ── Helper: compute all batches for one SFG forward from a given start_dt ──
 		def _compute_sfg_batches_fwd(sfg_row, start_dt_b0, batches_qty, real_spm, per_day_qty,
 		                              grn_days, pm_days, shift_config, holidays, shift_minutes):
+			# Covered by stock (qty 0) → 0 days, start = end
+			if sum(flt(q) for q in batches_qty) <= 0:
+				return [_zero_qty_batch(start_dt_b0)]
 			# Lead-time based subcontract SFG: one batch, start + lead days + GRN days
 			if sfg_row.get("lead_days"):
 				return [_build_lead_days_batch(start_dt_b0, sum(batches_qty), sfg_row["lead_days"], grn_days)]
@@ -3496,6 +3575,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				# Use Operation Time (0 → 1) as well — same formula as Sequential
+				if row_spm <= 0 and real_spm > 0 and flt(spm_details.get("minutes_per_piece")) > 0:
+					real_spm = 1 / flt(spm_details.get("minutes_per_piece"))
 				per_shift_qty     = real_spm * minutes_per_shift
 				per_day_qty       = per_shift_qty * shift_count
 
@@ -3568,6 +3650,13 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				b0_start = _snap_start(deadline_dt - timedelta(days=lead_days + grn_days), shift_config)
 				batch_rows = [_build_lead_days_batch(b0_start, sales_qty, lead_days, grn_days)]
 				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
+			# Covered by stock (qty 0) → 0 days, start = end = its deadline
+			if sales_qty <= 0:
+				batch_rows = [_zero_qty_batch(deadline_dt)]
+				b0_start = get_datetime(deadline_dt)
+				lead_days = 0
 				display_spm = per_shift_qty = per_day_qty = 0
 
 			# Next deadline = this SFG's batch[0].start_date
@@ -3879,6 +3968,9 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			else:
 				display_spm    = row_spm if row_spm > 0 else (base_batchsize * machine_count * shift_count)
 				minutes_per_shift = (shift_minutes / shift_count) if shift_count > 0 else shift_minutes
+				# Use Operation Time (0 → 1) as well — same formula as Sequential
+				if row_spm <= 0 and real_spm > 0 and flt(spm_details.get("minutes_per_piece")) > 0:
+					real_spm = 1 / flt(spm_details.get("minutes_per_piece"))
 				per_shift_qty  = real_spm * minutes_per_shift
 				per_day_qty    = per_shift_qty * shift_count
 
@@ -3960,6 +4052,13 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 					lead_start = get_datetime(prev_fg_row0_end)
 				batch_rows = [_build_lead_days_batch(lead_start, sales_qty, lead_days, grn_days)]
 				# Lead days drive the dates — no SPM / per shift capacity to show
+				display_spm = per_shift_qty = per_day_qty = 0
+
+			# Covered by stock (qty 0) → 0 days, start = end
+			if sales_qty <= 0:
+				batch_rows = [_zero_qty_batch(
+					batch_rows[0]["start_date"] if batch_rows else (top_sfg_batch0_end or today_dt)
+				)]
 				display_spm = per_shift_qty = per_day_qty = 0
 
 			# Update prev_fg_row0_end for next FG in chain
@@ -4143,7 +4242,7 @@ def _fetch_bom_ops_map(bom_nos: list[str]) -> dict[str, list[dict]]:
 	if not bom_nos:
 		return {}
 	rows = frappe.db.sql("""
-		SELECT parent AS bom_no, operation, custom_batchsize, workstation, custom_workstations_csv, idx
+		SELECT parent AS bom_no, operation, time_in_mins, custom_batchsize, workstation, custom_workstations_csv, idx
 		FROM `tabBOM Operation`
 		WHERE parent IN %(bom_nos)s
 		ORDER BY parent, idx
@@ -4152,6 +4251,7 @@ def _fetch_bom_ops_map(bom_nos: list[str]) -> dict[str, list[dict]]:
 	for r in rows:
 		result.setdefault(r.bom_no, []).append({
 			"operation": r.operation,
+			"time_in_mins": flt(r.time_in_mins),
 			"custom_batchsize": cint(r.custom_batchsize or 0),
 			"custom_workstations_csv": _get_bom_op_workstations_csv(r.workstation, r.custom_workstations_csv),
 		})
@@ -4485,12 +4585,8 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	# own warehouse (not the SO's FG warehouse which may have unrelated stock).
 	_apply_item_default_warehouses(doc, so_name)
 
-	# ── Warehouse stock check (same logic as standard Production Plan) ──────
-	# Checks each item's own warehouse. Items fully covered by available stock
-	# are removed; partially covered get reduced qty.
-	_apply_bin_stock_check(doc, so_name)
-
-	# Recalculate mr_count after stock-check removals
+	# Stock is applied multi-level (FG -> SFG -> RM) inside calculate_dates_for_sales_order,
+	# the same calculation Parallel / Consolidated use.
 	mr_count = sum(1 for r in doc.mr_items if r.sales_order == so_name)
 
 	# Calculate dates for all items
@@ -4643,6 +4739,62 @@ def get_sub_assembly_items_from_bom(
 	}
 
 
+def _get_so_requirement_context(doc: "Document", so_name: str) -> dict[str, Any]:
+	"""Multi-level stock-adjusted requirements (FG -> SFG -> RM) for one SO — the same
+	calculation Parallel / Consolidated use, so all planning modes plan the same qty."""
+	items = {
+		"fg": [r for r in doc.po_items if r.sales_order == so_name],
+		"sfg": [r for r in doc.sub_assembly_items if r.sales_order == so_name],
+		"mr": [r for r in doc.mr_items if r.sales_order == so_name],
+	}
+	target_warehouse_map = _get_item_default_warehouse_map(
+		list({r.item_code for r in items["fg"] if r.item_code}
+			| {r.production_item for r in items["sfg"] if r.production_item}),
+		doc.company,
+	)
+	return _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+
+
+def _get_net_qty(ctx: dict[str, Any], row: Any, gross_qty: float) -> float:
+	"""Net (to-produce) qty of a FG / SFG row from the requirement context."""
+	state = (ctx.get("fg_by_row", {}).get(_requirement_row_key(row))
+		or ctx.get("sfg_by_row", {}).get(_requirement_row_key(row)))
+	return max(flt(state.get("net_qty")), 0.0) if state else flt(gross_qty)
+
+
+def _apply_multilevel_stock_to_mr(doc: "Document", so_name: str, ctx: dict[str, Any]) -> None:
+	"""
+	Set MR row quantities to the multi-level net requirement: an RM is not needed when
+	its parent SFG / FG is covered by stock, and its own stock is deducted too.
+	Gross stays in required_bom_qty (so re-running is idempotent); zero rows are kept,
+	same as Parallel. Net per item is split across that item's rows by gross share.
+	"""
+	net_by_item: dict[str, dict[str, float]] = {}
+	for mr in ctx.get("mr_items") or []:
+		agg = net_by_item.setdefault(mr.item_code, {"net": 0.0, "stock": 0.0})
+		agg["net"] += flt(mr.quantity)
+		agg["stock"] = max(agg["stock"], flt(mr.actual_qty))
+
+	rows_by_item: dict[str, list[Any]] = {}
+	for row in doc.mr_items:
+		if row.sales_order == so_name and row.item_code in net_by_item:
+			rows_by_item.setdefault(row.item_code, []).append(row)
+
+	for item_code, rows in rows_by_item.items():
+		for row in rows:
+			if not flt(row.required_bom_qty):
+				row.required_bom_qty = flt(row.quantity)
+		total_gross = sum(flt(r.required_bom_qty) for r in rows)
+		remaining = net_by_item[item_code]["net"]
+		for i, row in enumerate(rows):
+			share = remaining if i == len(rows) - 1 else (
+				net_by_item[item_code]["net"] * flt(row.required_bom_qty) / total_gross if total_gross else 0.0
+			)
+			remaining -= share
+			row.quantity = max(share, 0.0)
+			row.actual_qty = net_by_item[item_code]["stock"]
+
+
 def _apply_bin_stock_check(doc: "Document", so_name: str) -> None:
 	"""
 	Reduce MR item quantities by available stock at each item's own warehouse.
@@ -4770,6 +4922,8 @@ def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, 
 	holiday_list  = shift_config.get("holiday_list")
 	holidays      = _get_holiday_set(holiday_list)
 	shift_minutes = _get_shift_working_minutes(shift_config)
+	# Same multi-level net qty as Parallel / Consolidated → shown as Planned Qty
+	req_ctx = _get_so_requirement_context(doc, so_name)
 
 	# Collect all item codes for one-shot GRN lookup
 	fg_items_for_so  = [r for r in doc.po_items if r.sales_order == so_name]
@@ -4802,17 +4956,26 @@ def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, 
 
 	fg_data = []
 	for row in fg_items_for_so:
+		net_qty = _get_net_qty(req_ctx, row, row.planned_qty)
 		prod_mins = (
-			_calculate_row_production_minutes(row, flt(row.planned_qty), fg_bom_cache)
+			_calculate_row_production_minutes(row, net_qty, fg_bom_cache)
 			if row.bom_no else 0.0
 		)
 		mfg_days  = round(prod_mins / shift_minutes, 2) if shift_minutes > 0 and prod_mins > 0 else 0
+		if (row.manufacturing_type or "") == "Subcontract":
+			# Same days the date calculation uses for a subcontract FG
+			mfg_days = (
+				_get_subcontract_per_day_days(row.item_code, doc.company, net_qty, getattr(row, "custom_shift_types_csv", ""))
+				if _is_subcontract_per_day_qty_based(row.item_code, doc.company)
+				else (_get_subcontract_lead_days(row.item_code, doc.company) if net_qty > 0 else 0)
+			)
 		grn_days  = cint(grn_map.get(row.item_code, 0))
 		pm_days   = cint(getattr(row, 'pm_days', 0) or 0)
 		hcount, hdates = _holiday_info(row.planned_start_date, row.custom_planned_end_date)
 		fg_data.append({
 			"row_name":     row.name,
 			"item_code":    row.item_code,
+			"planned_qty":  net_qty,
 			"mfg_days":     mfg_days,
 			"grn_days":     grn_days,
 			"pm_days":      pm_days,
@@ -4820,15 +4983,42 @@ def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, 
 			"holiday_dates": hdates,
 		})
 
+	def _capacity(row, mfg_type: str, net_qty: float) -> tuple[float, float]:
+		"""Per Shift Qty and SPM exactly as the Parallel grid shows them."""
+		if net_qty <= 0:
+			return 0.0, 0.0
+		types = _parse_csv_list(getattr(row, "custom_shift_types_csv", "") or "")
+		row_cfg = get_shift_config_for_shift_types(types) or shift_config
+		shift_count = max(len(types), 1)
+		minutes_per_shift = (_get_shift_working_minutes(row_cfg) or shift_minutes) / shift_count
+		details = _get_row_spm_details(row, row.bom_no, sfg_bom_cache) if row.bom_no else {}
+		if mfg_type == "Subcontract":
+			per_shift = flt(details.get("subcontract_per_shift_qty"))
+			# Lead-time based subcontract: dates come from lead days, no capacity to show
+			return (per_shift, round(flt(details.get("spm")), 2)) if per_shift > 0 else (0.0, 0.0)
+		display_spm = cint(details.get("batchsize")) * cint(details.get("machine_count")) * shift_count
+		real_spm = display_spm / shift_count
+		if real_spm > 0 and flt(details.get("minutes_per_piece")) > 0:
+			real_spm = 1 / flt(details.get("minutes_per_piece"))
+		return round(real_spm * minutes_per_shift, 2), display_spm
+
 	sfg_data = []
 	for row in sfg_items_for_so:
 		mfg_type = row.type_of_manufacturing or 'In House'
+		net_qty = _get_net_qty(req_ctx, row, row.qty)
+		per_shift_qty, spm = _capacity(row, mfg_type, net_qty)
 		if mfg_type == 'Subcontract':
-			mfg_days = cint(lead_time_map.get(row.production_item, 0))
-			grn_days = cint(grn_map.get(row.production_item, 0))
+			# Covered by stock → nothing subcontracted → no lead / GRN days
+			if _is_subcontract_per_day_qty_based(row.production_item, doc.company):
+				mfg_days = _get_subcontract_per_day_days(
+					row.production_item, doc.company, net_qty, getattr(row, "custom_shift_types_csv", "")
+				)
+			else:
+				mfg_days = cint(lead_time_map.get(row.production_item, 0)) if net_qty > 0 else 0
+			grn_days = cint(grn_map.get(row.production_item, 0)) if net_qty > 0 else 0
 		else:
 			prod_mins = (
-				_calculate_row_production_minutes(row, flt(row.qty), sfg_bom_cache)
+				_calculate_row_production_minutes(row, net_qty, sfg_bom_cache)
 				if row.bom_no else 0.0
 			)
 			mfg_days = round(prod_mins / shift_minutes, 2) if shift_minutes > 0 and prod_mins > 0 else 0
@@ -4838,6 +5028,9 @@ def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, 
 		sfg_data.append({
 			"row_name":      row.name,
 			"item_code":     row.production_item,
+			"planned_qty":   net_qty,
+			"per_shift_qty": per_shift_qty,
+			"spm":           spm,
 			"mfg_days":      mfg_days,
 			"grn_days":      grn_days,
 			"pm_days":       pm_days,
@@ -4864,6 +5057,11 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	today = getdate()
 	today_dt = _to_datetime(today)
 
+	# ── Stock: same multi-level net quantities as Parallel / Consolidated ──────
+	# Durations use the net (to-produce) qty; an item fully covered by stock takes no time.
+	req_ctx = _get_so_requirement_context(doc, so_name)
+	_apply_multilevel_stock_to_mr(doc, so_name, req_ctx)
+
 	# ── Shift config (used for all scheduling) ────────────────────────────────
 	shift_config = _get_effective_shift_config()
 	holiday_list = shift_config.get("holiday_list")
@@ -4881,8 +5079,21 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	# Always use item-level delivery_date as the deadline — never use stale planned_start_date
 	_so_delivery_date_fallback = frappe.db.get_value("Sales Order", so_name, "delivery_date")
 
-	# Lead-time based subcontract FG rows: po_item name → (lead_days, grn_days)
-	fg_lead_info: dict[str, tuple[int, int]] = {}
+	def _shift_days(from_date: Any, n_days: int, working: bool) -> Any:
+		"""Move n_days (negative = back). Per-day-qty items count working days (holidays
+		skipped, like Parallel); lead-time items count calendar days (supplier's days)."""
+		d = getdate(from_date)
+		if not working:
+			return getdate(add_days(d, n_days))
+		step = 1 if n_days >= 0 else -1
+		for _ in range(abs(cint(n_days))):
+			d = getdate(add_days(d, step))
+			while d in holidays_set:
+				d = getdate(add_days(d, step))
+		return d
+
+	# Subcontract FG rows: po_item name → (days, grn_days, per-day-qty based → working days)
+	fg_lead_info: dict[str, tuple[int, int, bool]] = {}
 
 	for fg_row in doc.po_items:
 		if fg_row.sales_order != so_name or not fg_row.bom_no:
@@ -4894,27 +5105,44 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 		_row_delivery_date = _item_del or _so_delivery_date_fallback
 		delivery_dt = get_datetime(_row_delivery_date) if _row_delivery_date else get_datetime(fg_row.planned_start_date)
 
-		if fg_row.manufacturing_type == "Subcontract" and not _is_subcontract_per_day_qty_based(fg_row.item_code, doc.company):
-			# Lead-time based subcontract FG — same as SFG Subcontract:
-			# backward: delivery − grn_days (working) − lead_days (calendar)
-			fg_lead = _get_subcontract_lead_days(fg_row.item_code, doc.company)
-			fg_grn = cint(frappe.db.get_value("Item", fg_row.item_code, "custom_expected_grn_processing_days") or 0)
-			fg_lead_info[fg_row.name] = (fg_lead, fg_grn)
+		fg_net_qty = _get_net_qty(req_ctx, fg_row, fg_row.planned_qty)
+
+		if fg_net_qty <= 0:
+			# Covered by stock → nothing to make: 0 days, start = end
+			_zero_dt = today_dt if (not allow_backdated and getdate(delivery_dt) < today) else delivery_dt
+			fg_row.planned_start_date = str(_zero_dt)
+			fg_row.custom_planned_end_date = str(_zero_dt)
+			continue
+
+		if fg_row.manufacturing_type == "Subcontract":
+			# Subcontract FG — same as SFG Subcontract:
+			# backward: delivery − grn_days (working) − days (calendar), where days =
+			# ceil(qty ÷ per-day qty) for per-day-qty based items, else the lead time.
+			# Nothing to subcontract (covered by stock) → no lead / GRN time
+			fg_per_day = _is_subcontract_per_day_qty_based(fg_row.item_code, doc.company)
+			if fg_per_day:
+				fg_lead = _get_subcontract_per_day_days(
+					fg_row.item_code, doc.company, fg_net_qty, getattr(fg_row, "custom_shift_types_csv", "")
+				)
+			else:
+				fg_lead = _get_subcontract_lead_days(fg_row.item_code, doc.company) if fg_net_qty > 0 else 0
+			fg_grn = cint(frappe.db.get_value("Item", fg_row.item_code, "custom_expected_grn_processing_days") or 0) if fg_net_qty > 0 else 0
+			fg_lead_info[fg_row.name] = (fg_lead, fg_grn, fg_per_day)
 
 			receive_date = getdate(delivery_dt)
 			for _ in range(fg_grn):
 				receive_date = _prev_working_date(receive_date, holidays_set)
-			fg_start = datetime.combine(getdate(add_days(receive_date, -fg_lead)), datetime.min.time()) + shift_start_td
+			fg_start = datetime.combine(_shift_days(receive_date, -fg_lead, fg_per_day), datetime.min.time()) + shift_start_td
 			fg_end = delivery_dt
 			if not allow_backdated and getdate(fg_start) < today:
 				fg_start = _current_shift_datetime(shift_config)
-				end_adj = get_holiday_adjusted_date(getdate(add_days(getdate(fg_start), fg_lead)), fg_grn, holiday_list)
+				end_adj = get_holiday_adjusted_date(_shift_days(fg_start, fg_lead, fg_per_day), fg_grn, holiday_list)
 				fg_end = datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
 			fg_row.planned_start_date = str(fg_start)
 			fg_row.custom_planned_end_date = str(fg_end)
 			continue
 
-		prod_minutes = _calculate_row_production_minutes(fg_row, flt(fg_row.planned_qty), fg_bom_cache)
+		prod_minutes = _calculate_row_production_minutes(fg_row, fg_net_qty, fg_bom_cache)
 
 		if prod_minutes > 0:
 			calculated_start = _backward_schedule(delivery_dt, prod_minutes, shift_config)
@@ -4992,29 +5220,42 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				if default_supplier:
 					sfg_row.supplier = default_supplier
 
-			if _is_subcontract_per_day_qty_based(sfg_row.production_item, doc.company):
-				lead_time = get_subcontract_lead_time(
-					sfg_row.production_item, sfg_row.supplier, doc.company
-				) if sfg_row.supplier else 0
+			sfg_per_day = _is_subcontract_per_day_qty_based(sfg_row.production_item, doc.company)
+			if sfg_per_day:
+				# Per-day-qty based: days = ceil(qty ÷ per-day qty), same capacity as Parallel
+				lead_time = _get_subcontract_per_day_days(
+					sfg_row.production_item, doc.company,
+					_get_net_qty(req_ctx, sfg_row, sfg_row.qty),
+					getattr(sfg_row, "custom_shift_types_csv", ""),
+				)
 			else:
 				# Lead-time based: supplier row -> Item "Lead Time in days" -> default
 				lead_time = _get_subcontract_lead_days(
 					sfg_row.production_item, doc.company, sfg_row.supplier or None
 				)
 			grn_days = grn_days_map.get(sfg_row.production_item, 0)
+			if _get_net_qty(req_ctx, sfg_row, sfg_row.qty) <= 0:
+				# Nothing to subcontract (covered by stock) → no lead / GRN time
+				lead_time = 0
+				grn_days = 0
 
 			# Backward: deadline − grn_days (working) − lead_time (calendar)
 			receive_date = getdate(end_date)
 			for _ in range(grn_days):
 				receive_date = _prev_working_date(receive_date, holidays_set)
-			sc_date = getdate(add_days(receive_date, -lead_time))
+			sc_date = _shift_days(receive_date, -lead_time, sfg_per_day)
 			start_date: Any = datetime.combine(sc_date, datetime.min.time()) + shift_start_td
+			if _get_net_qty(req_ctx, sfg_row, sfg_row.qty) <= 0:
+				# Covered by stock → nothing to subcontract: 0 days, start = end
+				start_date = end_date
 
 			if not allow_backdated and getdate(start_date) < today:
 				start_date = _current_shift_datetime(shift_config)
-				end_raw = getdate(add_days(getdate(start_date), lead_time))
+				end_raw = _shift_days(start_date, lead_time, sfg_per_day)
 				end_adj = get_holiday_adjusted_date(end_raw, grn_days, holiday_list)
 				end_date = datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
+				if _get_net_qty(req_ctx, sfg_row, sfg_row.qty) <= 0:
+					end_date = start_date
 
 			item_data[(fg_key, sfg_row.production_item)] = {
 				"row":          sfg_row,
@@ -5022,6 +5263,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				"end_date":      end_date,
 				"time_type":     "lead_time",
 				"lead_time":     lead_time,
+				"working_days":  sfg_per_day,
 				"grn_days":      grn_days,
 				"prod_mins":     0.0,
 			}
@@ -5029,7 +5271,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 		else:
 			# In House — shift-aware backward schedule
 			prod_mins = _calculate_row_production_minutes(
-				sfg_row, flt(sfg_row.qty), sfg_bom_cache
+				sfg_row, _get_net_qty(req_ctx, sfg_row, sfg_row.qty), sfg_bom_cache
 			) if sfg_row.bom_no else 0.0
 
 			if prod_mins > 0:
@@ -5084,8 +5326,8 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 						item_start_map[("", po_item.item_code)] = get_datetime(this_end)
 						if po_item.name in fg_lead_info:
 							# Lead-time based subcontract FG: end = new start + lead days + GRN days
-							fg_lt, fg_grn = fg_lead_info[po_item.name]
-							end_raw = getdate(add_days(getdate(this_end), fg_lt))
+							fg_lt, fg_grn, fg_wd = fg_lead_info[po_item.name]
+							end_raw = _shift_days(this_end, fg_lt, fg_wd)
 							end_adj = get_holiday_adjusted_date(end_raw, fg_grn, holiday_list)
 							po_item.custom_planned_end_date = str(
 								datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
@@ -5093,7 +5335,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 							any_change = True
 							continue
 						fg_prod_mins = _calculate_row_production_minutes(
-							po_item, flt(po_item.planned_qty), fg_bom_cache_for_cascade
+							po_item, _get_net_qty(req_ctx, po_item, po_item.planned_qty), fg_bom_cache_for_cascade
 						)
 						if fg_prod_mins > 0:
 							po_item.custom_planned_end_date = str(
@@ -5114,7 +5356,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 				if parent_data["time_type"] == "lead_time":
 					lt = parent_data["lead_time"]
 					grn = parent_data["grn_days"]
-					end_raw = getdate(add_days(getdate(this_end), lt))
+					end_raw = _shift_days(this_end, lt, parent_data.get("working_days", False))
 					end_adj = get_holiday_adjusted_date(end_raw, grn, holiday_list)
 					parent_data["end_date"] = (
 						datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
@@ -5159,6 +5401,14 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 
 	for mr_row in doc.mr_items:
 		if mr_row.sales_order != so_name:
+			continue
+
+		if flt(mr_row.quantity) <= 0:
+			# Covered by stock (multi-level) → nothing to order, no dates — same as Parallel
+			mr_row.custom_start_date = None
+			mr_row.schedule_date = None
+			mr_row.custom_lead_days = 0
+			mr_row.custom_grn_days = 0
 			continue
 
 		# Find earliest parent SFG schedule that uses this RM
@@ -5224,7 +5474,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	# then cascade up through nested SFGs.
 	rm_schedules: dict[str, Any] = {}
 	for mr_row in doc.mr_items:
-		if mr_row.sales_order == so_name and mr_row.schedule_date:
+		if mr_row.sales_order == so_name and mr_row.schedule_date and flt(mr_row.quantity) > 0:
 			rm_schedules[mr_row.item_code] = getdate(mr_row.schedule_date)
 
 	if rm_schedules:
@@ -5252,6 +5502,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 					"time_type":       data["time_type"],
 					"prod_mins":       data["prod_mins"],
 					"lead_time":       data["lead_time"],
+					"working_days":    data.get("working_days", False),
 					"grn_days":        data["grn_days"],
 				}
 
@@ -5260,7 +5511,7 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			if sdata_["time_type"] == "lead_time":
 				lt = sdata_["lead_time"]
 				grn = sdata_["grn_days"]
-				end_raw = getdate(add_days(getdate(start_dt_), lt))
+				end_raw = _shift_days(start_dt_, lt, sdata_.get("working_days", False))
 				end_d = getdate(get_holiday_adjusted_date(end_raw, grn, holiday_list))
 				return datetime.combine(end_d, datetime.min.time()) + shift_start_td
 			else:
@@ -5353,14 +5604,14 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 			fg_row.planned_start_date = max_sfg_end
 			if fg_row.name in fg_lead_info:
 				# Lead-time based subcontract FG: end = new start + lead days + GRN days
-				fg_lt, fg_grn = fg_lead_info[fg_row.name]
-				end_adj = get_holiday_adjusted_date(getdate(add_days(getdate(max_sfg_end), fg_lt)), fg_grn, holiday_list)
+				fg_lt, fg_grn, fg_wd = fg_lead_info[fg_row.name]
+				end_adj = get_holiday_adjusted_date(_shift_days(max_sfg_end, fg_lt, fg_wd), fg_grn, holiday_list)
 				fg_row.custom_planned_end_date = str(
 					datetime.combine(getdate(end_adj), datetime.min.time()) + shift_start_td
 				)
 				continue
 			fg_prod_mins_s4 = _calculate_row_production_minutes(
-				fg_row, flt(fg_row.planned_qty), fg_bom_cache_for_cascade
+				fg_row, _get_net_qty(req_ctx, fg_row, fg_row.planned_qty), fg_bom_cache_for_cascade
 			)
 			if fg_prod_mins_s4 > 0:
 				fg_row.custom_planned_end_date = str(
@@ -5402,6 +5653,9 @@ def create_production_plans_document(bulk_pp_name) :
 				types = 'In House'
 	
 			for k in j.get('batches'):
+				# Covered by stock → nothing to make; a 0-qty row would only create empty WO / PO lines
+				if flt(k.get('qty')) <= 0:
+					continue
 				pp_doc.append('po_items',{
 					'include_exploded_items' : 1,
 					'item_code' : j.get('item_code'),
@@ -5426,6 +5680,8 @@ def create_production_plans_document(bulk_pp_name) :
 			if item_doc.item_defaults:
 					warehouse = item_doc.item_defaults[0].get('default_warehouse')
 			for k in j.get('batches'):
+				if flt(k.get('qty')) <= 0:
+					continue
 				pp_doc.append('sub_assembly_items',{
 					'production_item' : j.get('item_code'),
 					'bom_no' : j.get('bom_no'),
@@ -5569,12 +5825,18 @@ def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> 
 	     missing; listed only if creation is not possible
 	  4. FG / SFG BOMs that are not submitted or not active (Work Order / PO needs one)
 	"""
-	fg_rows = so_details.get("fg") or []
-	sfg_rows = so_details.get("sfg_chain") or []
+	# Only rows that actually go into the PP — items fully covered by stock (qty 0) are skipped there
+	def _has_qty(r):
+		return any(flt(b.get("qty")) > 0 for b in (r.get("batches") or []))
+
+	fg_rows = [r for r in (so_details.get("fg") or []) if _has_qty(r)]
+	sfg_rows = [r for r in (so_details.get("sfg_chain") or []) if _has_qty(r)]
+	fg_to_make = {r.get("item_code") for r in fg_rows}
+	sfg_to_make = {r.get("item_code") for r in sfg_rows}
 
 	missing_supplier = get_rows_missing_supplier(
-		[row for row in bulk_pp.po_items if row.sales_order == so_name],
-		[row for row in bulk_pp.sub_assembly_items if row.sales_order == so_name],
+		[row for row in bulk_pp.po_items if row.sales_order == so_name and row.item_code in fg_to_make],
+		[row for row in bulk_pp.sub_assembly_items if row.sales_order == so_name and row.production_item in sfg_to_make],
 		fg_type_field="manufacturing_type",
 	)
 
@@ -5663,6 +5925,78 @@ def _save_and_submit_pp_from_bulk_pp(pp_doc, so_name: str, auto_submit: int) -> 
 		)
 
 
+def _build_sequential_so_details(bulk_pp, so_name: str) -> dict[str, Any]:
+	"""
+	Sequential mode: the SO's FG / SFG / RM rows exactly as the Sequential grid shows
+	them (net Planned Qty, Sequential dates, one row per item — no batch split), in the
+	same shape as a batch-schedule entry so PP creation and its checks work unchanged.
+	"""
+	req_ctx = _get_so_requirement_context(bulk_pp, so_name)
+	seq = _compute_sequential_schedule_data(bulk_pp, so_name)
+	days_by_row = {r["row_name"]: r for r in (seq.get("fg") or []) + (seq.get("sfg") or [])}
+
+	def _batch(row, qty, start, end):
+		d = days_by_row.get(row.name) or {}
+		return {
+			"qty": qty,
+			"start_date": str(start) if start else None,
+			"end_date": str(end) if end else None,
+			"mfg_days": d.get("mfg_days", 0),
+			"grn_days": d.get("grn_days", 0),
+			"pm_days": d.get("pm_days", 0),
+		}
+
+	fg = [{
+		"item_code": row.item_code,
+		"bom_no": row.bom_no,
+		"sales_order": so_name,
+		"manufacturing_type": row.manufacturing_type or "In House",
+		"supplier": row.custom_supplier or "",
+		"custom_workstations_csv": row.custom_workstations_csv or "",
+		"custom_shift_types_csv": row.custom_shift_types_csv or "",
+		"batches": [_batch(row, _get_net_qty(req_ctx, row, row.planned_qty), row.planned_start_date, row.custom_planned_end_date)],
+	} for row in bulk_pp.po_items if row.sales_order == so_name]
+
+	# Deepest level first — PP creation reverses it to top-down, same as the batch schedule
+	sfg_rows = sorted(
+		[r for r in bulk_pp.sub_assembly_items if r.sales_order == so_name],
+		key=lambda r: -cint(r.bom_level or 0),
+	)
+	sfg_chain = [{
+		"item_code": row.production_item,
+		"bom_no": row.bom_no,
+		"type_of_manufacturing": row.type_of_manufacturing or "In House",
+		"supplier": row.supplier or "",
+		"custom_workstations_csv": row.custom_workstations_csv or "",
+		"custom_shift_types_csv": row.custom_shift_types_csv or "",
+		"batches": [_batch(row, _get_net_qty(req_ctx, row, row.qty), row.schedule_date, row.custom_schedule_end_date)],
+	} for row in sfg_rows]
+
+	# One RM line per item (rows can repeat per BOM path): total qty, earliest dates
+	mr_by_item: dict[str, dict[str, Any]] = {}
+	for row in bulk_pp.mr_items:
+		if row.sales_order != so_name:
+			continue
+		m = mr_by_item.setdefault(row.item_code, {
+			"item_code": row.item_code,
+			"item_name": row.item_name,
+			"warehouse": row.warehouse or "",
+			"supplier": row.custom_supplier or "",
+			"qty": 0.0,
+			"required_bom_qty": 0.0,
+			"start_date": None,
+			"end_date": None,
+		})
+		m["qty"] += flt(row.quantity)
+		m["required_bom_qty"] += flt(row.required_bom_qty)
+		if flt(row.quantity) > 0:
+			for key, val in (("start_date", row.custom_start_date), ("end_date", row.schedule_date)):
+				if val and (not m[key] or get_datetime(val) < get_datetime(m[key])):
+					m[key] = str(val)
+
+	return {"fg": fg, "sfg_chain": sfg_chain, "mr": list(mr_by_item.values())}
+
+
 @frappe.whitelist()
 def create_selected_production_plans(bulk_pp_name, sales_orders):
 	"""
@@ -5673,10 +6007,16 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		sales_orders = json.loads(sales_orders)
 
 	bulk_pp = frappe.get_doc("Bulk Pre Production Plan", bulk_pp_name)
-	if not bulk_pp.custom_batch_schedule:
+	is_sequential = (bulk_pp.custom_planning_mode or "Sequential") == "Sequential"
+	if not bulk_pp.custom_batch_schedule and not is_sequential:
 		frappe.throw(_("Batch schedule not found. Please click 'Calculate Schedule' first."))
 
-	so_data = json.loads(bulk_pp.custom_batch_schedule)
+	so_data = json.loads(bulk_pp.custom_batch_schedule or "{}")
+	if is_sequential:
+		# PP follows what the Sequential grid shows — not the stored Parallel batch schedule
+		for so_name in sales_orders:
+			if any(r.sales_order == so_name for r in bulk_pp.po_items):
+				so_data[so_name] = _build_sequential_so_details(bulk_pp, so_name)
 	created_plans = []
 	auto_submit = cint(frappe.db.get_single_value(
 		"Ujwal Industries Setting", "auto_submit_production_plan_from_bulk_pp"
@@ -5737,6 +6077,9 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 			fg_supplier = fg_supplier_by_key.get((i, j.get('item_code'))) or j.get('supplier') or ""
 
 			for k in j.get('batches'):
+				# Covered by stock → nothing to make; a 0-qty row would only create empty WO / PO lines
+				if flt(k.get('qty')) <= 0:
+					continue
 				pp_doc.append('po_items',{
 					'include_exploded_items' : 1,
 					'item_code' : j.get('item_code'),
@@ -5761,6 +6104,8 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 			if item_doc.item_defaults:
 					warehouse = item_doc.item_defaults[0].get('default_warehouse')
 			for k in j.get('batches'):
+				if flt(k.get('qty')) <= 0:
+					continue
 				pp_doc.append('sub_assembly_items',{
 					'production_item' : j.get('item_code'),
 					'bom_no' : j.get('bom_no'),
@@ -5796,6 +6141,12 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 				'quantity' :  j.get('qty'),
 				'custom_supplier' :  rm_supplier,
 			})
+		if not (pp_doc.po_items or pp_doc.sub_assembly_items or pp_doc.mr_items):
+			frappe.throw(
+				_("Nothing to produce or purchase for Sales Order <b>{0}</b> — existing stock covers the full requirement.").format(so_name),
+				title=_("Covered by Stock"),
+			)
+
 		_run_machine_availability_check_for_production_plan(pp_doc)
 		_save_and_submit_pp_from_bulk_pp(pp_doc, so_name, auto_submit)
 		created_plans.append(pp_doc.name)
@@ -5947,6 +6298,8 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 					)
 
 					for batch in fg_data.get("batches") or []:
+						if flt(batch.get("qty")) <= 0:
+							continue
 						pp_doc.append("po_items", {
 							"include_exploded_items": 1,
 							"item_code": fg_data.get("item_code"),
@@ -5973,6 +6326,8 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 						warehouse = item_doc.item_defaults[0].get("default_warehouse")
 
 					for batch in sfg_data.get("batches") or []:
+						if flt(batch.get("qty")) <= 0:
+							continue
 						pp_doc.append("sub_assembly_items", {
 							"production_item": sfg_data.get("item_code"),
 							"bom_no": sfg_data.get("bom_no"),
