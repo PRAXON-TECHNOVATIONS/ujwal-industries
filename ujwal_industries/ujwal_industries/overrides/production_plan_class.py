@@ -336,11 +336,36 @@ class CustomProductionPlan(ProductionPlan):
                 continue
 
             po.set_service_items_for_finished_goods()
+            self._fill_missing_service_items(po)
             po.set_missing_values()
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
             po.insert()
             purchase_orders.append(po.name)
+
+    @staticmethod
+    def _fill_missing_service_items(po):
+        """
+        Set the service item on any Subcontract PO line still without one.
+        ERPNext's set_service_items_for_finished_goods passes a set to
+        get_subcontracting_boms_for_finished_goods, which only handles a list, so it
+        can leave lines empty; the PO is inserted with ignore_validate, so nothing
+        else fills them.
+        """
+        from erpnext.subcontracting.doctype.subcontracting_bom.subcontracting_bom import (
+            get_subcontracting_boms_for_finished_goods,
+        )
+
+        fg_items = list({d.fg_item for d in po.items if not d.item_code and d.fg_item})
+        if not fg_items:
+            return
+        sub_boms = get_subcontracting_boms_for_finished_goods(fg_items)
+        for d in po.items:
+            sb = sub_boms.get(d.fg_item) if not d.item_code else None
+            if sb:
+                d.item_code = sb.service_item
+                d.qty = flt(d.fg_item_qty) * flt(sb.conversion_factor)
+                d.uom = sb.service_item_uom
 
     def make_vendor_purchase_orders(self, vendor_po_dict, purchase_orders):
         """

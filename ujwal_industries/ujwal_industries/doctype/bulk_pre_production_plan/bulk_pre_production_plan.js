@@ -1298,142 +1298,45 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		'#B45309', '#FFFBEB', 'fa-cubes');
 	container.appendChild(sfg_label);
 
-	// Color palette per unique bom_level — level 0 first (direct child of FG)
-	const _level_colors = ['#D1FAE5', '#FEF9C3', '#EDE9FE', '#FFE4E6', '#E0F2FE', '#FFF7ED'];
-	const _level_border = ['#059669', '#CA8A04', '#7C3AED', '#E11D48', '#0284C7', '#EA580C'];
-	const _bom_levels = [...new Set((so_data.sfg || []).map(r => r.bom_level))].sort((a, b) => a - b);
-
 	// Build lookup map for sequential days data keyed by SFG row name
 	const sfg_seq_map = Object.fromEntries(
 		((seq_data && seq_data.sfg) || []).map(r => [r.row_name, r])
 	);
+	const _sq = (p, key) => sfg_seq_map[p.data?.name]?.[key];
 
 	const sfg_el = document.createElement('div');
 	sfg_el.className = 'ag-theme-alpine';
 	sfg_el.style.cssText = 'height:' + Math.max(200, so_data.sfg.length * 42 + 56) + 'px; width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same columns and order as the Parallel / Consolidated SFG grid (no batches / timeline)
 	const sfg_cols = [
-		{
-			headerName: 'Lvl', field: 'bom_level', width: 52, pinned: 'left',
-			sort: 'asc',
-			cellRenderer: p => {
-				const li = _bom_levels.indexOf(p.value);
-				const bg = _level_border[li % _level_border.length];
-				return `<span style="display:inline-block;width:22px;height:22px;line-height:22px;
-				text-align:center;border-radius:50%;background:${bg};color:#fff;
-				font-size:11px;font-weight:700;">${p.value}</span>`;
-			}
-		},
 		{
 			headerName: 'Item Code', field: 'production_item', width: 120, pinned: 'left',
 			cellRenderer: p => `<strong>${p.value || ''}</strong>`
 		},
 		{
-			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 120, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 220, pinned: 'left',
+			cellRenderer: p => p.value || ''
+		},
+		{
+			headerName: 'Type', field: 'type_of_manufacturing', width: 120, pinned: 'left',
 			editable: true,
 			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: {
-				values: ['In House', 'Subcontract', 'In House - Vendor']
-			},
+			cellEditorParams: { values: ['In House', 'Subcontract', 'In House - Vendor'] },
 			cellRenderer: p => {
-				let color = '#16a34a'; // In House
-				if (p.value === 'Subcontract') color = '#d97706';
-				else if (p.value === 'In House - Vendor') color = '#0284c7';
-				return _badge(p.value || 'In House', color);
+				if (p.value === 'Subcontract') return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				if (p.value === 'In House - Vendor') return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
+				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
 			}
-		},
-		{
-			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
-			cellRenderer: p => p.value || '—'
-		},
-		{
-			headerName: 'Qty', field: 'qty', width: 120, type: 'numericColumn',
-			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
-		},
-		{
-			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.mfg_days) || 0,
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
-		},
-		{
-			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.grn_days) || 0,
-			cellRenderer: p => p.value ? String(p.value) : ''
-		},
-		{
-			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.pm_days) || 0,
-			cellRenderer: p => p.value ? String(p.value) : ''
-		},
-		{
-			headerName: 'Holi.', width: 58, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.holiday_count) || 0,
-			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
-			cellRenderer: p => {
-				const count = p.value || 0;
-				if (!count) return '';
-				return `<span class="holi-click">${count}</span>`;
-			},
-			onCellClicked: p => {
-				if (p.colDef.headerName !== 'Holi.') return;
-				const dates = (sfg_seq_map[p.data?.name]?.holiday_dates) || [];
-				if (!dates.length) return;
-				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
-			}
-		},
-		{
-			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
-			cellStyle: { color: '#0F5132', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
-		},
-		{
-			headerName: 'End Date', field: 'custom_schedule_end_date', width: 130, editable: true,
-			cellStyle: { color: '#842029', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
-		},
-		{
-			headerName: 'Supplier', field: 'supplier', width: 140,
-			editable: p => p.data?.type_of_manufacturing !== 'In House',
-			cellRenderer: p => p.data?.type_of_manufacturing === 'In House'
-				? '<span style="color:#94a3b8;">—</span>'
-				: (p.value || '')
-		},
-		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
-			cellRenderer: p => {
-				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
-				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
-			}
-		},
-		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
-		{
-			headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.production_item, p.value)
-			}),
-			valueFormatter: p => p.value || '',
-			cellRenderer: p => p.value ? `<code style="font-size:10px;color:#6b7280;background:#f1f5f9;padding:1px 5px;border-radius:3px;">${p.value}</code>` : ''
-		},
-		{
-			headerName: 'Tool', field: 'tool', width: 190, editable: true,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-			cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
 		},
 		{
 			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false, filter: false,
-			editable: true,
+			editable: p => p.data?.type_of_manufacturing !== 'Subcontract',
 			autoHeight: true,
-			cellStyle: {
-				whiteSpace: 'normal',
-				lineHeight: '1.35',
-				paddingTop: '6px',
-				paddingBottom: '6px'
-			},
+			cellStyle: p => p.data?.type_of_manufacturing === 'Subcontract'
+				? { opacity: 0.4, pointerEvents: 'none' }
+				: { whiteSpace: 'normal', lineHeight: '1.35', paddingTop: '6px', paddingBottom: '6px' },
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1442,7 +1345,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 				row_type: 'sfg',
 				row_name: p.data?.name || p.data?._row_name || ''
 			}),
-			cellRenderer: p => _machine_display_html(
+			cellRenderer: p => p.data?.type_of_manufacturing === 'Subcontract' ? '' : _machine_display_html(
 				p.value,
 				p.data?.batchsize || 0,
 				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
@@ -1452,12 +1355,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false, filter: false,
 			editable: true,
 			autoHeight: true,
-			cellStyle: {
-				whiteSpace: 'normal',
-				lineHeight: '1.35',
-				paddingTop: '6px',
-				paddingBottom: '6px'
-			},
+			cellStyle: { whiteSpace: 'normal', lineHeight: '1.35', paddingTop: '6px', paddingBottom: '6px' },
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1466,6 +1364,85 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 				row_name: p.data?.name || p.data?._row_name || ''
 			}),
 			cellRenderer: p => _shift_display_html(p.value)
+		},
+		{
+			headerName: 'Qty As Per BOM', field: 'qty', width: 120, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			// Net of stock (FG -> SFG -> RM), same as Parallel / Consolidated
+			headerName: 'Planned Qty', width: 120, type: 'numericColumn',
+			valueGetter: p => {
+				const planned = _sq(p, 'planned_qty');
+				return planned === undefined ? Number(p.data?.qty || 0) : Number(planned);
+			},
+			valueFormatter: p => Number(p.value || 0).toLocaleString('en-IN'),
+			cellStyle: { color: '#2563eb', fontWeight: 'bold' }
+		},
+		{
+			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'mfg_days') || 0,
+			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+		},
+		{
+			headerName: 'GRN Days', width: 82, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'grn_days') || 0,
+			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+		},
+		{
+			headerName: 'PM Days', width: 78, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'pm_days') || 0,
+			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+		},
+		{
+			headerName: 'Holi.', width: 58, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'holiday_count') || 0,
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => p.value ? `<span class="holi-click">${p.value}</span>` : '',
+			onCellClicked: p => {
+				const dates = _sq(p, 'holiday_dates') || [];
+				if (!dates.length) return;
+				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
+			}
+		},
+		{
+			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'per_shift_qty') || 0,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'SPM', width: 80, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'spm') || 0,
+			cellRenderer: p => p.value ? String(p.value) : ''
+		},
+		{
+			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
+			cellStyle: { color: '#059669', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{
+			headerName: 'End Date', field: 'custom_schedule_end_date', width: 130, editable: true,
+			cellStyle: { color: '#dc2626', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{
+			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 170,
+			cellRenderer: p => p.value || '—'
+		},
+		{
+			headerName: 'Supplier', field: 'supplier', width: 140,
+			editable: p => ['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing),
+			cellRenderer: p => {
+				if (!['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing)) return '';
+				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+			}
+		},
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
+			cellRenderer: p => {
+				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
 		},
 	];
 
@@ -1476,11 +1453,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		suppressMovableColumns: false,
 		rowHeight: 38,
 		headerHeight: 40,
-		getRowStyle: p => {
-			if (!p.data) return {};
-			const li = _bom_levels.indexOf(p.data.bom_level);
-			return { background: _level_colors[li % _level_colors.length] + '99' };
-		},
+		getRowStyle: () => ({ background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }),
 		onCellValueChanged: p => _on_seq_cell_changed(frm, p),
 	});
 	_grids['seq_sfg_' + so_data.so_name] = sfg_grid;
@@ -1516,7 +1489,8 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			_row_name:              item.name,
 			item_code:              item.item_code || '',
 			item_name:              item.item_name || '',
-			planned_qty:            Number(item.planned_qty || item.qty || 0),
+			// Net of stock (same as Parallel / Consolidated); BOM qty stays in planned_qty_as_show
+			planned_qty:            _seq.planned_qty !== undefined ? Number(_seq.planned_qty) : Number(item.planned_qty || item.qty || 0),
 			stock_uom:              item.stock_uom || '',
 			bom_no:                 item.bom_no || '',
 			tool:                   item.tool || '',
