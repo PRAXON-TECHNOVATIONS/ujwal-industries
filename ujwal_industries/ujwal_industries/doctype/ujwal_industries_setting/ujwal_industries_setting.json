@@ -9,6 +9,7 @@
   "machine_conflict_validation",
   "create_work_order_and_material_request_on_submit",
   "auto_submit_production_plan_from_bulk_pp",
+  "default_service_item",
   "consider_spm_for_split",
   "cost_estimation_section",
   "assembly_operation_names",
@@ -41,6 +42,14 @@
    "fieldname": "auto_submit_production_plan_from_bulk_pp",
    "fieldtype": "Check",
    "label": "Auto Submit Production Plan from Bulk PP"
+  },
+  {
+   "default": "Job Work",
+   "description": "In Bulk Pre Production Plan. Service item used when 'Create Production Plan' auto-creates a missing Subcontracting BOM (1 Finished Good = 1 Service Item) for Subcontract / In House - Vendor rows. Must be a non-stock item.",
+   "fieldname": "default_service_item",
+   "fieldtype": "Link",
+   "label": "Default Service Item for Subcontracting BOM",
+   "options": "Item"
   },
   {
    "default": "0",
@@ -77,7 +86,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-06 13:00:00.000000",
+ "modified": "2026-10-07 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",

@@ -5505,6 +5505,59 @@ def _get_first_default_warehouse(item_code: str) -> str:
 	return ""
 
 
+def _ensure_subcontracting_bom(item_code: str, bom_no: str | None) -> str | None:
+	"""
+	Make sure the item has an active Subcontracting BOM; create one if missing
+	(1 Finished Good = 1 Default Service Item, same as every manual one so far).
+	Ticks "Is Subcontracted Item" on the Item when needed (ERPNext requires it).
+
+	Returns None when OK, else the reason it could not be created.
+	"""
+	if frappe.db.exists("Subcontracting BOM", {"finished_good": item_code, "is_active": 1}):
+		return None
+
+	item = frappe.db.get_value(
+		"Item", item_code,
+		["disabled", "is_stock_item", "default_bom", "is_sub_contracted_item", "stock_uom"],
+		as_dict=True,
+	)
+	if not item:
+		return _("Item not found")
+	if item.disabled:
+		return _("Item is disabled")
+	if not item.is_stock_item:
+		return _("Item must be a Stock Item")
+	if not item.default_bom:
+		return _("Item has no Default BOM")
+
+	service_item = (
+		frappe.db.get_single_value("Ujwal Industries Setting", "default_service_item") or "Job Work"
+	)
+	if not frappe.db.exists("Item", service_item):
+		return _("Service Item {0} (Ujwal Industries Setting) does not exist").format(service_item)
+
+	if not item.is_sub_contracted_item:
+		frappe.db.set_value("Item", item_code, "is_sub_contracted_item", 1)
+
+	try:
+		frappe.get_doc({
+			"doctype": "Subcontracting BOM",
+			"is_active": 1,
+			"finished_good": item_code,
+			"finished_good_qty": 1,
+			"finished_good_uom": item.stock_uom,
+			"finished_good_bom": bom_no or item.default_bom,
+			"service_item": service_item,
+			"service_item_qty": 1,
+			"service_item_uom": frappe.db.get_value("Item", service_item, "stock_uom"),
+		}).insert(ignore_permissions=True)
+	except Exception as e:
+		frappe.clear_last_message()
+		return _("Could not create Subcontracting BOM: {0}").format(frappe.utils.strip_html(str(e)))
+
+	return None
+
+
 def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> None:
 	"""
 	Catch, in one message, everything that would otherwise fail (or silently skip)
@@ -5512,7 +5565,8 @@ def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> 
 	  1. Subcontract / In House - Vendor rows without a supplier
 	  2. Raw materials without a default warehouse (Material Request needs one)
 	  3. Subcontract / In House - Vendor items without an active Subcontracting BOM
-	     (Subcontract PO / Service PO needs its service item)
+	     (Subcontract PO / Service PO needs its service item) — auto-created when
+	     missing; listed only if creation is not possible
 	  4. FG / SFG BOMs that are not submitted or not active (Work Order / PO needs one)
 	"""
 	fg_rows = so_details.get("fg") or []
@@ -5548,19 +5602,12 @@ def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> 
 			continue
 		seen.add((item_code, bom_no, mfg_type))
 
-		if mfg_type == "Subcontract":
-			# ERPNext picks the service item by finished good only
-			if not frappe.db.exists("Subcontracting BOM", {"finished_good": item_code, "is_active": 1}):
-				missing_sub_bom.append(_("{0} — <b>{1}</b> (Subcontract)").format(level, item_code))
-		elif mfg_type == "In House - Vendor":
-			# make_vendor_purchase_orders matches finished good + its BOM
-			if not frappe.db.exists(
-				"Subcontracting BOM",
-				{"finished_good": item_code, "finished_good_bom": bom_no, "is_active": 1},
-			):
-				missing_sub_bom.append(
-					_("{0} — <b>{1}</b> with BOM {2} (In House - Vendor)").format(level, item_code, bom_no or "-")
-				)
+		if mfg_type in ("Subcontract", "In House - Vendor"):
+			# Both POs pick the service item by finished good only; create the
+			# Subcontracting BOM automatically when missing
+			reason = _ensure_subcontracting_bom(item_code, bom_no)
+			if reason:
+				missing_sub_bom.append(_("{0} — <b>{1}</b> ({2}): {3}").format(level, item_code, mfg_type, reason))
 
 		# SFG "Material Request" rows create no Work Order / PO, so no BOM needed
 		if mfg_type == "Material Request":
@@ -5579,7 +5626,7 @@ def _validate_so_before_pp_creation(bulk_pp, so_name: str, so_details: dict) -> 
 		[
 			(_("Supplier is missing for:"), missing_supplier),
 			(_("Raw material has no Default Warehouse:"), missing_warehouse),
-			(_("No active Subcontracting BOM for:"), missing_sub_bom),
+			(_("Subcontracting BOM could not be created for:"), missing_sub_bom),
 			(_("BOM problem:"), inactive_bom),
 		],
 	)
