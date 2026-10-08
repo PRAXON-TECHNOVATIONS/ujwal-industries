@@ -82,6 +82,7 @@ doctype_js = {
 	"Sales Order": "public/js/sales_order_custom.js",
 	"Purchase Order": "public/js/purchase_order_custom.js",
 	"Purchase Receipt": "public/js/purchase_receipt.js",
+	"Salary Slip": "public/js/salary_slip.js",
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
@@ -348,6 +349,13 @@ doc_events = {
 	"Quotation":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",
 	},
+ 
+	"Attendance" :{
+		"validate": "ujwal_industries.ujwal_industries.overrides.attendance.calculate_working_and_overtime_hours",
+    },
+	"Salary Slip": {
+        "before_validate": "ujwal_industries.ujwal_industries.overrides.salary_slip.set_total_ot_hours"
+    },
 }
 
 # Scheduled Tasks
