@@ -459,7 +459,55 @@ def job_card_validate(doc: Document, method=None):
     _set_tool_from_production_plan(doc)
     build_tool_summary_html(doc)
     set_previous_tool(doc)
-        
+    validate_job_card_qty_not_over_tolerance(doc, method)
+    apply_order_completed_status(doc)
+    apply_material_return_status(doc)
+
+
+def apply_order_completed_status(doc: Document) -> None:
+    """
+    Operators cannot submit a Job Card, so core's set_status() never reaches
+    "Completed" pre-submit (it only does so when docstatus == 1). Treat the
+    "Order Completed" pause reason as the operator's signal that production on
+    this job card is done, so the status reflects that ahead of submission.
+
+    validate_job_card_qty_not_over_tolerance (called earlier in job_card_validate)
+    already throws if qty is over the upper tolerance bound. Here we additionally
+    block marking the card Completed if qty is still below the lower bound, so an
+    operator can't close out a job that's genuinely unfinished.
+    """
+    if doc.docstatus != 0:
+        return
+
+    last_log = doc.time_logs[-1] if doc.time_logs else None
+    if not last_log or last_log.custom_pause_reason != "Order Completed":
+        return
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is not None:
+        total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+        if total_completed_qty < min_acceptable:
+            _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
+
+    doc.status = "Completed"
+
+
+def apply_material_return_status(doc: Document) -> None:
+    """
+    Keep the Job Card status as "Material Return" once the operator has signalled it.
+
+    Like apply_order_completed_status, this runs in validate so ERPNext's set_status()
+    (which only knows its own statuses) does not reset it back during save. The signal
+    is the "Material Return" pause reason on the latest time log.
+    """
+    if doc.docstatus != 0:
+        return
+
+    last_log = doc.time_logs[-1] if doc.time_logs else None
+    if last_log and last_log.custom_pause_reason == "Material Return":
+        doc.status = "Material Return"
+
+
 def _create_job_card_downtime(job_card, pause_reason):
     if pause_reason != "Downtime":
         return
@@ -641,6 +689,18 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # Get the job card document
     job_card = frappe.get_doc("Job Card", job_card_id)
 
+    # The row make_time_log will close (set to_time on) when pausing is the open
+    # row with no to_time yet. If none exists, the job card is in an anomalous
+    # state (e.g. "Work In Progress" with no open time log) and there is no
+    # correct row to attach this pause's counters/qty to - touching time_logs[-1]
+    # in that case would silently overwrite an already-closed historical row.
+    open_row_name = next((tl.name for tl in job_card.time_logs if not tl.to_time), None)
+    if not open_row_name:
+        frappe.throw(
+            "Cannot pause this Job Card: no active (open) time log was found to close. "
+            "The Job Card may be in an inconsistent state - please resume the job first."
+        )
+
     # Update sub-operation if needed (from standard ERPNext logic)
     if job_card.sub_operations and len(job_card.sub_operations) > 0:
         sub_operations = [d for d in job_card.sub_operations if d.status != "Complete"]
@@ -655,9 +715,11 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # Reload the job card to get the newly created time log
     job_card.reload()
 
-    # Find the most recent time log entry (the one just created)
-    if job_card.time_logs and len(job_card.time_logs) > 0:
-        latest_time_log = job_card.time_logs[-1]
+    # Locate the same row that was open before make_time_log ran (by name, not
+    # position) - it's the one make_time_log just closed and is the only row
+    # this pause's counters/qty/reason should be attached to.
+    latest_time_log = next((tl for tl in job_card.time_logs if tl.name == open_row_name), None)
+    if latest_time_log:
         latest_time_log.custom_pause_reason = pause_reason
         latest_time_log.custom_start_counter = start_counter
         latest_time_log.custom_end_counter = end_counter
@@ -669,6 +731,90 @@ def pause_job_with_reason(args: dict[str, Any] | str) -> None:
     # AVI
     _create_job_card_downtime(job_card, pause_reason)
     # AVI
+    frappe.db.commit()
+
+
+MATERIAL_RETURN_REASON = "Material Return"
+
+
+@frappe.whitelist()
+def material_return_stop_job(args: dict[str, Any] | str) -> None:
+    """
+    Operator signals a Material Return: the machine broke / job cannot continue, so
+    whatever was produced so far stays on the Job Card and the remaining transferred
+    raw material has to be returned to store.
+
+    This:
+      - records the produced qty so far on the closing time log (if a row is open),
+      - tags that time log with the "Material Return" pause reason,
+      - sets the Job Card status to "Material Return" (the Store Display surfaces this).
+
+    Unlike pause_job_with_reason, this works even when there is no open time log
+    (job never started, or 0 qty produced) so material can be returned at any point.
+    Store then manually creates the Manufacture Stock Entry for the produced qty and
+    the return Stock Entry for the leftover raw material.
+    """
+    import json
+
+    if isinstance(args, str):
+        args = json.loads(args)
+
+    job_card_id = args.get("job_card_id")
+    completed_qty = flt(args.get("completed_qty") or 0)
+
+    if not job_card_id:
+        frappe.throw("Job Card ID is required")
+
+    job_card = frappe.get_doc("Job Card", job_card_id)
+
+    if job_card.docstatus != 0:
+        frappe.throw("Material Return can only be done on a draft Job Card.")
+
+    open_row_name = next((tl.name for tl in job_card.time_logs if not tl.to_time), None)
+
+    # `completed_qty` from the prompt is the CUMULATIVE "Quantity Produced So Far".
+    # `total_completed_qty` is the sum of every time log's `completed_qty`, so the qty
+    # we record on the closing/marker row must be the delta over what other rows
+    # already carry, otherwise the produced qty gets double-counted.
+    precision = job_card.precision("total_completed_qty")
+    already_recorded = sum(
+        flt(tl.completed_qty) for tl in job_card.time_logs if tl.name != open_row_name
+    )
+    delta_qty = flt(completed_qty - already_recorded, precision) if completed_qty > 0 else 0
+    if delta_qty < 0:
+        delta_qty = 0
+
+    if open_row_name:
+        # Job is running: close the open time log via core, then tag it.
+        from erpnext.manufacturing.doctype.job_card.job_card import make_time_log
+
+        close_args = dict(args)
+        close_args["status"] = "On Hold"
+        close_args["completed_qty"] = delta_qty
+        make_time_log(close_args)
+        job_card.reload()
+
+        row = next((tl for tl in job_card.time_logs if tl.name == open_row_name), None)
+        if row:
+            row.custom_pause_reason = MATERIAL_RETURN_REASON
+            row.completed_qty = delta_qty
+    else:
+        # Job not running (Open / already paused / 0 qty). Append a zero-duration
+        # marker time log so the "Material Return" reason is recorded.
+        now = now_datetime()
+        job_card.append(
+            "time_logs",
+            {
+                "from_time": now,
+                "to_time": now,
+                "completed_qty": delta_qty,
+                "operation": job_card.operation,
+                "custom_pause_reason": MATERIAL_RETURN_REASON,
+            },
+        )
+
+    job_card.status = MATERIAL_RETURN_REASON
+    job_card.save(ignore_permissions=True)
     frappe.db.commit()
 
 
@@ -761,32 +907,20 @@ def onload_job_card(doc: Document, method: str | None = None) -> None:
     doc.set_onload("operation_requires_tool", operation_requires_tool(doc.bom_no, doc.operation))
 
 
-def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
+def _get_qty_tolerance_range(doc: Document) -> tuple | None:
     """
-    Override the standard Job Card quantity validation on submit with tolerance-based validation.
-
-    By default, ERPNext requires that (Total Completed Qty + Process Loss Qty) must equal
-    Qty to Manufacture exactly. This override uses the Item's custom_tolerance_ field to allow
-    completion within an acceptable range.
+    Compute the tolerance-based acceptable range for a Job Card's Total Completed Qty.
 
     Tolerance is defined as a percentage in the Item master's custom_tolerance_ field.
     For example, if custom_tolerance_ = 0.5 (representing 0.5%), then:
     - Qty to Manufacture = 100
     - Acceptable range = 100 ± 0.5 = 99.5 to 100.5
 
-    If total_completed_qty falls within this range, we auto-adjust process_loss_qty
-    to make the validation pass.
-
-    This function should be hooked to Job Card's before_submit event.
-
-    Args:
-        doc: Job Card document
-        method: Event method name (unused)
+    Returns a tuple of (total_completed_qty, for_quantity, tolerance_percentage,
+    min_acceptable, max_acceptable), or None if there's nothing to validate.
     """
-    _ = method  # Unused but required for hook signature
-
     if not doc.for_quantity or not doc.production_item:
-        return
+        return None
 
     from frappe.utils import flt
 
@@ -794,40 +928,87 @@ def override_job_card_qty_validation(doc: Document, method: str | None = None) -
     total_completed_qty = flt(doc.total_completed_qty, precision)
     for_quantity = flt(doc.for_quantity, precision)
 
-    # Get tolerance percentage from Item master's custom_tolerance_ field
     tolerance_percentage = flt(
         frappe.db.get_value("Item", doc.production_item, "custom_tolerance_") or 0
     )
 
-    # Calculate tolerance amount
     # If tolerance is 0.5%, then tolerance_amount = for_quantity * 0.5 / 100
     tolerance_amount = flt((for_quantity * tolerance_percentage) / 100, precision)
 
-    # Calculate acceptable range
     min_acceptable = flt(for_quantity - tolerance_amount, precision)
     max_acceptable = flt(for_quantity + tolerance_amount, precision)
 
-    # Check if total_completed_qty is within tolerance
+    return total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable
+
+
+def _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable) -> None:
+    frappe.throw(
+        frappe._(
+            "Total Completed Qty ({0}) is outside the acceptable tolerance range.<br>"
+            "Qty to Manufacture: {1}<br>"
+            "Tolerance: ±{2}%<br>"
+            "Acceptable Range: {3} to {4}"
+        ).format(
+            frappe.bold(total_completed_qty),
+            frappe.bold(for_quantity),
+            frappe.bold(tolerance_percentage),
+            frappe.bold(min_acceptable),
+            frappe.bold(max_acceptable)
+        )
+    )
+
+
+def validate_job_card_qty_not_over_tolerance(doc: Document, method: str | None = None) -> None:
+    """
+    Save-time check: only blocks when Total Completed Qty exceeds the upper
+    tolerance bound. Being under is allowed on save since qty is often logged
+    in splits across multiple time logs before the job card is submitted.
+
+    Hooked to Job Card's validate event.
+    """
+    _ = method  # Unused but required for hook signature
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is None:
+        return
+
+    total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+
+    if total_completed_qty > max_acceptable:
+        _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
+
+
+def override_job_card_qty_validation(doc: Document, method: str | None = None) -> None:
+    """
+    Override the standard Job Card quantity validation on submit with tolerance-based validation.
+
+    By default, ERPNext requires that (Total Completed Qty + Process Loss Qty) must equal
+    Qty to Manufacture exactly. This override uses the Item's custom_tolerance_ field to allow
+    completion within an acceptable range (see _get_qty_tolerance_range).
+
+    If total_completed_qty falls within this range, we auto-adjust process_loss_qty
+    to make the validation pass.
+
+    This is the final check, hooked to Job Card's before_submit event, and checks
+    both the lower and upper bound since qty entry must be complete by submit time.
+
+    Args:
+        doc: Job Card document
+        method: Event method name (unused)
+    """
+    _ = method  # Unused but required for hook signature
+
+    range_values = _get_qty_tolerance_range(doc)
+    if range_values is None:
+        return
+
+    total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable = range_values
+
     if min_acceptable <= total_completed_qty <= max_acceptable:
         # Within tolerance - adjust process_loss_qty to make validation pass
         doc.process_loss_qty = for_quantity - total_completed_qty
     else:
-        # Outside tolerance - let the standard validation throw an error
-        # But enhance the error message to show the acceptable range
-        frappe.throw(
-            frappe._(
-                "Total Completed Qty ({0}) is outside the acceptable tolerance range.<br>"
-                "Qty to Manufacture: {1}<br>"
-                "Tolerance: ±{2}%<br>"
-                "Acceptable Range: {3} to {4}"
-            ).format(
-                frappe.bold(total_completed_qty),
-                frappe.bold(for_quantity),
-                frappe.bold(tolerance_percentage),
-                frappe.bold(min_acceptable),
-                frappe.bold(max_acceptable)
-            )
-        )
+        _throw_qty_tolerance_error(total_completed_qty, for_quantity, tolerance_percentage, min_acceptable, max_acceptable)
 
 
 

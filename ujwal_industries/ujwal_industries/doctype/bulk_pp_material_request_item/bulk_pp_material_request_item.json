@@ -16,6 +16,7 @@
   "column_break_1",
   "custom_start_date",
   "schedule_date",
+  "custom_rm_received_override",
   "custom_lead_days",
   "custom_grn_days",
   "uom",
@@ -114,6 +115,11 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Required By"
+  },
+  {
+   "fieldname": "custom_rm_received_override",
+   "fieldtype": "Date",
+   "label": "RM Received Date (Override)"
   },
   {
    "fieldname": "custom_lead_days",
@@ -243,7 +249,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-05-26 12:00:00.000000",
+ "modified": "2026-10-06 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Bulk PP Material Request Item",

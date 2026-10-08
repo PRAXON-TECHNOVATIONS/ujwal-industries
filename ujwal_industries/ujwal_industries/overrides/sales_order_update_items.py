@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 
 import frappe
 from frappe import _
@@ -26,6 +27,8 @@ APPROVAL_DATA_FIELD = "custom_update_request_data"
 PENDING_APPROVAL_STATUS = "Pending Approval"
 APPROVED_STATUS = "Approved"
 
+POSITION_FIELDNAME = "custom_po_no"
+
 
 @frappe.whitelist()
 def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, child_docname="items", reason=None):
@@ -45,17 +48,31 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 
 	if parent_doctype == "Sales Order":
 		_validate_sales_order_update_items_qty_lock(parent_doctype_name, incoming_items)
+		_validate_position_numbers_present(incoming_items)
 
 	before_rows = _get_row_snapshots(doc, child_docname, parent_doctype)
 
-	result = erpnext_update_child_qty_rate(
-		parent_doctype=parent_doctype,
-		trans_items=trans_items,
-		parent_doctype_name=parent_doctype_name,
-		child_docname=child_docname,
-	)
+	if parent_doctype == "Sales Order":
+		with _position_number_not_mandatory():
+			result = erpnext_update_child_qty_rate(
+				parent_doctype=parent_doctype,
+				trans_items=trans_items,
+				parent_doctype_name=parent_doctype_name,
+				child_docname=child_docname,
+			)
+	else:
+		result = erpnext_update_child_qty_rate(
+			parent_doctype=parent_doctype,
+			trans_items=trans_items,
+			parent_doctype_name=parent_doctype_name,
+			child_docname=child_docname,
+		)
 
 	updated_doc = frappe.get_doc(parent_doctype, parent_doctype_name)
+
+	if parent_doctype == "Sales Order":
+		_apply_position_numbers(updated_doc, child_docname, before_rows, incoming_items)
+
 	changed_rows = _get_changed_rows(before_rows, updated_doc, child_docname, parent_doctype)
 
 	if changed_rows:
@@ -184,6 +201,67 @@ def _build_row_snapshot(row, parent_doctype):
 	for fieldname in fields:
 		snapshot[fieldname] = row.get(fieldname)
 	return snapshot
+
+
+def _validate_position_numbers_present(incoming_items):
+	missing_rows = [
+		row.get("item_code") or _("(new row)")
+		for row in incoming_items
+		if row.get("item_code") and not row.get(POSITION_FIELDNAME)
+	]
+	if missing_rows:
+		frappe.throw(
+			_("Pos. NO. is mandatory for every item row: {0}").format(", ".join(missing_rows))
+		)
+
+
+@contextmanager
+def _position_number_not_mandatory():
+	"""Sales Order Item's custom_po_no is a mandatory field, but core
+	erpnext.update_child_qty_rate builds new child rows itself and has no
+	way for us to pass custom_po_no through at insert time. We already
+	enforce it's present via _validate_position_numbers_present() above, and
+	apply the real values right after via _apply_position_numbers(), so it's
+	safe to relax the DB-level mandatory check for the duration of this one
+	call. Reverted in the finally block regardless of outcome."""
+
+	custom_field_name = f"Sales Order Item-{POSITION_FIELDNAME}"
+	frappe.db.set_value("Custom Field", custom_field_name, "reqd", 0, update_modified=False)
+	frappe.clear_cache(doctype="Sales Order Item")
+	try:
+		yield
+	finally:
+		frappe.db.set_value("Custom Field", custom_field_name, "reqd", 1, update_modified=False)
+		frappe.clear_cache(doctype="Sales Order Item")
+
+
+def _apply_position_numbers(doc, child_docname, before_rows, incoming_items):
+	"""Persist Pos. NO. (custom_po_no) values submitted via the Update Items
+	dialog. Core erpnext.update_child_qty_rate does not carry custom fields
+	through, so existing rows are matched by docname and newly inserted rows
+	are matched positionally against the incoming rows that had no docname
+	(core appends new rows in the same relative order it processes them)."""
+
+	existing_by_docname = {
+		row.get("docname"): row.get(POSITION_FIELDNAME)
+		for row in incoming_items
+		if row.get("docname")
+	}
+	new_row_position_numbers = [
+		row.get(POSITION_FIELDNAME) for row in incoming_items if not row.get("docname") and row.get("item_code")
+	]
+
+	new_rows = [row for row in doc.get(child_docname, []) if row.name not in before_rows]
+
+	for row in doc.get(child_docname, []):
+		if row.name in existing_by_docname:
+			position_number = existing_by_docname[row.name]
+			if position_number and row.get(POSITION_FIELDNAME) != position_number:
+				frappe.db.set_value(row.doctype, row.name, POSITION_FIELDNAME, position_number, update_modified=False)
+
+	for row, position_number in zip(new_rows, new_row_position_numbers):
+		if position_number:
+			frappe.db.set_value(row.doctype, row.name, POSITION_FIELDNAME, position_number, update_modified=False)
 
 
 def _get_changed_rows(before_rows, doc, child_docname, parent_doctype):

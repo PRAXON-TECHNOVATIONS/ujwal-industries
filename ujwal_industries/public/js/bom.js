@@ -1,20 +1,11 @@
 frappe.ui.form.on('BOM', {
     refresh: function (frm) {
+        // Change Log is populated server-side (ujwal_industries.overrides.bom_change_log)
+        // by diffing the whole doc on every save, so it stays a read-only audit trail here.
         let grid = frm.get_field("change_log").grid;
         grid.wrapper.find('.grid-add-row').hide();
         grid.wrapper.find('.grid-add-multiple-rows').hide();
         grid.cannot_add_rows = true;
-
-        frm.meta.fields.forEach(df => {
-            if (!df.fieldname) return;
-            if (!df._custom_bound) {
-                df._custom_bound = true;
-                frappe.ui.form.on('BOM', df.fieldname, function(frm) {
-                    if (frm.is_new()) return;
-                    add_change_log(frm, df.fieldname);
-                });
-            }
-        });
 
         set_operation_filter(frm);
     },
@@ -31,18 +22,40 @@ frappe.ui.form.on('BOM', {
                 };
             };
             }
-                
+
         })
 
-        frappe.meta.get_docfields("BOM Item").forEach(df => {
-            if (!df.fieldname) return;
-            if (!df._custom_bound) {
-                df._custom_bound = true;
-                frappe.ui.form.on('BOM Item', df.fieldname, function(frm, cdt, cdn) {
-                    if (frm.is_new()) return;
-                    add_child_change_log(frm, cdt, cdn, df.fieldname);
-                });
-            }
+        // Tools/Machines (is_fixed_asset = 1) are never actual BOM material or
+        // scrap items — exclude them here so Item search stays limited to real
+        // RM/SFG/FG items, and route through our own item_query so Part Number
+        // search (custom_part_number) still works.
+        frm.set_query("item", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    is_stock_item: 1,
+                    is_fixed_asset: 0,
+                },
+            };
+        });
+
+        frm.set_query("item_code", "items", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    include_item_in_manufacturing: 1,
+                    is_fixed_asset: 0,
+                },
+            };
+        });
+
+        frm.set_query("item_code", "scrap_items", function () {
+            return {
+                query: "ujwal_industries.api.link_queries.item_query",
+                filters: {
+                    is_fixed_asset: 0,
+                },
+            };
         });
     }
 });
@@ -105,7 +118,15 @@ frappe.ui.form.on("BOM Operation", {
                 fieldtype: "MultiSelectList",
                 placeholder: "Select Workstations",
                 get_data: function (txt) {
-                    return frappe.db.get_link_options("Workstation", txt);
+                    return frappe.call({
+                        type: "GET",
+                        method: "frappe.desk.search.search_link",
+                        args: {
+                            doctype: "Workstation",
+                            txt: txt || "",
+                            page_length: 0,
+                        },
+                    }).then(r => r.message);
                 },
                 change: function () {
                     if (is_initializing) {
@@ -120,6 +141,18 @@ frappe.ui.form.on("BOM Operation", {
         });
 
         control.refresh();
+
+        // The dropdown toggle (.status-text) sits in the same cramped grid-form
+        // cell as the filter input and steals focus back on click, so typing
+        // never reaches the input. Re-focus the filter input every time the
+        // dropdown opens, and stop clicks on the input from bubbling up to the
+        // toggle and re-triggering it.
+        control.$list_wrapper.find(".dropdown-input-wrapper input").on("mousedown click", (e) => {
+            e.stopPropagation();
+        });
+        control.$list_wrapper.on("shown.bs.dropdown show.bs.dropdown", () => {
+            setTimeout(() => control.$filter_input.trigger("focus"), 0);
+        });
 
         let values = [];
         if (row.custom_workstations_csv) {
@@ -149,50 +182,3 @@ frappe.ui.form.on("BOM Operation", {
     }
 });
 
-function add_change_log(frm, fieldname) {
-
-    const IGNORE_FIELDS = [
-            "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "raw_material_cost", "base_raw_material_cost", "total_cost", "base_total_cost","base_scrap_material_cost","scrap_material_cost"];
-
-    if (IGNORE_FIELDS.includes(fieldname)) return;
-
-    let df = frappe.meta.get_docfield(frm.doctype, fieldname);
-    if (!df) return;
-
-    let label = df.label || fieldname;
-
-    let exists = (frm.doc.change_log || [])
-        .some(row => row.filed_name === label);
-
-
-    let row = frm.add_child("change_log");
-    row.filed_name = label;  
-    frm.refresh_field("change_log");
-}
-
-function add_child_change_log(frm, cdt, cdn, fieldname) {
-    const IGNORE_FIELDS = ["name", "owner", "creation", "modified", "modified_by", "idx", "docstatus", "amount", "base_amount", "qty_consumed_per_unit", "rate"];
-    if (IGNORE_FIELDS.includes(fieldname)) return;
-
-    let df = frappe.meta.get_docfield(cdt, fieldname);
-    if (!df) return;
-
-    let label = df.label || fieldname;
-    let row = locals[cdt][cdn];
-
-    const TABLE_LABEL_MAP = {
-        "BOM Item": "Items",
-        "BOM Scrap Item": "Scrap Items"
-    };
-
-    let tableLabel = TABLE_LABEL_MAP[cdt] || cdt;
-    let full_label = `${tableLabel} → Row ${row.idx} → ${label}`;
-
-    let exists = (frm.doc.change_log || [])
-        .some(r => r.filed_name === full_label);
-    if (exists) return;
-
-    let log = frm.add_child("change_log");
-    log.filed_name = full_label;
-    frm.refresh_field("change_log");
-}

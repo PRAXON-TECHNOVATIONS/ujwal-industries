@@ -36,6 +36,17 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 
 frappe.ui.form.on('Bulk Pre Production Plan', {
 
+	setup(frm) {
+		frm.set_query("item_code", function () {
+			return {
+				query: "ujwal_industries.api.link_queries.item_query",
+				filters: {
+					is_fixed_asset: 0,
+				},
+			};
+		});
+	},
+
 	onload(frm) {
 		setTimeout(() => {
 
@@ -67,7 +78,18 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 		}, 200);
 	},
 
+	// When the doc becomes dirty the primary button turns into "Save". Clear any
+	// greyed-out styling we applied to the "Submit" button so Save stays clickable.
+	// Run once now and again after Frappe finishes repainting the primary button.
+	dirty: function (frm) {
+		reset_bulk_pp_submit_button_styles(frm);
+		setTimeout(() => reset_bulk_pp_submit_button_styles(frm), 100);
+		setTimeout(() => reset_bulk_pp_submit_button_styles(frm), 400);
+	},
+
 	refresh: function (frm) {
+
+		render_generated_documents(frm);
 
 		cur_frm.fields_dict["sales_orders"].$wrapper.find('.grid-body .rows').find(".grid-row").each(function (i, item) {
 			let row = locals[cur_frm.fields_dict["sales_orders"].grid.doctype][$(item).attr('data-name')];
@@ -152,7 +174,7 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 									callback: function (r) {
 										if (r.message && r.message.length > 0) {
 											frappe.show_alert({
-												message: __('Production Plan created successfully for {0}', [so_to_process]),
+												message: __('Production Plan {0} created for {1}', [r.message.join(', '), so_to_process]),
 												indicator: 'green'
 											});
 											frm.reload_doc();
@@ -345,13 +367,15 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					return;
 				}
 
-				// Deduplicate by item_code, summing qty across multiple SO lines
+				// Deduplicate by item_code + delivery_date so same item with different
+				// delivery dates appears as separate selectable entries.
 				const item_map = {};
 				r.message.forEach(item => {
-					if (item_map[item.item_code]) {
-						item_map[item.item_code].qty = (item_map[item.item_code].qty || 0) + (item.qty || 0);
+					const key = `${item.item_code}__${item.delivery_date || ''}`;
+					if (item_map[key]) {
+						item_map[key].qty = (item_map[key].qty || 0) + (item.qty || 0);
 					} else {
-						item_map[item.item_code] = Object.assign({}, item);
+						item_map[key] = Object.assign({}, item);
 					}
 				});
 				const items = Object.values(item_map);
@@ -361,20 +385,27 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					already_selected = row.selected_items ? JSON.parse(row.selected_items) : [];
 				} catch (_) { already_selected = []; }
 
-				// All items are selectable regardless of SO order type or planning_type.
-				// Previously this restricted Sales SOs to planning_type=1 and Forecast SOs
-				// to planning_type=2, which caused all items to appear disabled when the
-				// items didn't match those types. Removed so the user can freely pick any FG.
+				// Normalise already_selected to a set of "item_code__delivery_date" keys
+				// supporting both old string format and new {item_code, delivery_date} format
+				const already_selected_keys = new Set(
+					already_selected.map(s =>
+						typeof s === 'string' ? `${s}__` : `${s.item_code}__${s.delivery_date || ''}`
+					)
+				);
+
 				const is_selectable = (_item) => true;
 
-				// Build dialog fields — one Check per unique item_code
+				// Build dialog fields — one Check per unique item_code+delivery_date
 				const fields = items.map(item => {
+					const key = `${item.item_code}__${item.delivery_date || ''}`;
 					const selectable = is_selectable(item);
+					const date_label = item.delivery_date
+						? `  [Del: ${frappe.datetime.str_to_user(item.delivery_date)}]` : '';
 					return {
 						fieldtype: 'Check',
-						fieldname: item.item_code,
-						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
-						default: selectable && (already_selected.length === 0 || already_selected.includes(item.item_code)) ? 1 : 0,
+						fieldname: key,
+						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}${date_label}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+						default: selectable && (already_selected.length === 0 || already_selected_keys.has(key)) ? 1 : 0,
 					};
 				});
 
@@ -383,10 +414,10 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					fields: fields,
 					primary_action_label: __('Confirm'),
 					primary_action(values) {
-						// Only include selectable items; disabled items are excluded
+						// Store as {item_code, delivery_date} objects so backend can filter by both
 						const selected = items
-							.filter(item => is_selectable(item) && values[item.item_code])
-							.map(item => item.item_code);
+							.filter(item => is_selectable(item) && values[`${item.item_code}__${item.delivery_date || ''}`])
+							.map(item => ({ item_code: item.item_code, delivery_date: item.delivery_date || '' }));
 
 						frappe.model.set_value(cdt, cdn, 'selected_items', JSON.stringify(selected));
 
@@ -418,7 +449,8 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 				setTimeout(() => {
 					items.forEach(item => {
 						if (!is_selectable(item)) {
-							const $field = d.get_field(item.item_code);
+							const key = `${item.item_code}__${item.delivery_date || ''}`;
+							const $field = d.get_field(key);
 							if ($field) {
 								$field.$wrapper.find('input[type="checkbox"]').prop('disabled', true);
 								$field.$wrapper.css('opacity', '0.45');
@@ -435,10 +467,10 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					</div>`
 				);
 				d.$wrapper.on('click', '.so-select-all', () => {
-					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 1); });
+					items.forEach(item => { if (is_selectable(item)) d.set_value(`${item.item_code}__${item.delivery_date || ''}`, 1); });
 				});
 				d.$wrapper.on('click', '.so-deselect-all', () => {
-					items.forEach(item => { if (is_selectable(item)) d.set_value(item.item_code, 0); });
+					items.forEach(item => { if (is_selectable(item)) d.set_value(`${item.item_code}__${item.delivery_date || ''}`, 0); });
 				});
 
 				d.show();
@@ -597,18 +629,32 @@ function update_bulk_pp_submit_button(frm) {
 function reset_bulk_pp_submit_button_styles(frm) {
 	if (!frm.page || !frm.page.wrapper) return;
 
-	frm.page.wrapper.find('.bpp-submit-disabled')
-		.prop('disabled', false)
-		.removeClass('bpp-submit-disabled')
-		.removeAttr('title')
-		.css({
-			'background-color': '',
-			'border-color': '',
-			'color': '',
-			'cursor': '',
-			'box-shadow': '',
-			'opacity': ''
-		});
+	const clear = ($btn) => {
+		$btn.prop('disabled', false)
+			.removeClass('bpp-submit-disabled')
+			.removeAttr('title')
+			.css({
+				'background-color': '',
+				'border-color': '',
+				'color': '',
+				'cursor': '',
+				'box-shadow': '',
+				'opacity': ''
+			});
+	};
+
+	const $wrapper = frm.page.wrapper;
+
+	// 1) Any button we previously greyed out.
+	clear($wrapper.find('.bpp-submit-disabled'));
+
+	// 2) Safety net: if Frappe re-rendered the primary button into a fresh "Save"
+	//    element that inherited stale styling, clear it by its live label too.
+	$wrapper.find('.page-actions button').each(function () {
+		const label = ($(this).attr('data-label') || '').replace(/%20/g, ' ').trim();
+		const text = ($(this).text() || '').trim();
+		if (label === 'Save' || text === __('Save')) clear($(this));
+	});
 }
 
 
@@ -752,6 +798,9 @@ const _AG_ASSETS = [
 
 // Grid instance registry keyed by SO name (so we can destroy/recreate on tab switch)
 let _grids = {};
+// Remembers the last SO tab the user was on, so a save/reload keeps that tab active
+// instead of snapping back to the first one.
+let _active_so = null;
 let _ag_loaded = false;
 let _bom_options_cache = {};
 let _bom_recalc_inflight = false;
@@ -818,25 +867,45 @@ function setup_production_tabs(frm) {
 		</div>`;
 
 	// ── SO tabs ──────────────────────────────────────────────────────────────
+	// Keep the previously-selected SO active across re-renders (e.g. after a save).
+	// Fall back to the first SO if the remembered one is no longer present.
+	if (!_active_so || !so_list.some(s => s.so_name === _active_so)) {
+		_active_so = so_list[0].so_name;
+	}
 	let tabs_li = '';
 	let tabs_content = '';
 	so_list.forEach((so_data, idx) => {
-		const active = idx === 0 ? 'active' : '';
+		const active = so_data.so_name === _active_so ? 'active' : '';
 		const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_data.so_name) || {};
 		const isMerged = so_row.merged == 1;
+		const ppCreated = !!so_row.custom_pp_created;
 		const del_date = frappe.format(so_row.delivery_date, { fieldtype: 'Date' });
+
+		// Background / border priority: PP created (green) > merged (amber) > default.
+		let bg = '';
+		let border = '';
+		if (ppCreated) {
+			bg = '#DCFCE7';
+			border = '1px solid #16A34A';
+		} else if (isMerged) {
+			bg = '#FEF3C7';
+			border = '1px solid #F59E0B';
+		}
+
+		const nameColor = active ? '#1E3A5F' : (ppCreated ? '#15803D' : '#64748B');
+
 		tabs_li += `
-    
 			<li class="nav-item">
 				<a class="nav-link bpp-so-tab ${active}" data-so="${so_data.so_name}"
-					href="#bpp-so-${idx}" role="tab"
+					href="javascript:void(0)" data-target="#bpp-so-${idx}" role="tab"
+					data-pp-created="${ppCreated ? 1 : 0}" data-merged="${isMerged ? 1 : 0}"
+					title="${ppCreated ? 'Production Plan already created for this Sales Order' : 'Production Plan not yet created'}"
 					style="padding:8px 18px; font-size:12px; cursor:pointer;
-					border-radius:6px 6px 0 0; font-weight:600; color:${active ? '#1E3A5F' : '#64748B'};
-					background:${isMerged ? '#FEF3C7' : ''};
-					border:${isMerged ? '1px solid #F59E0B' : ''};"
-
-					<i class="fa ${so_row.custom_pp_created ? 'fa-check-circle' : 'fa-file-text-o'}" 
-						style="margin-right:4px; font-size:11px; color:${so_row.custom_pp_created ? '#16A34A' : 'inherit'};"></i>
+					border-radius:6px 6px 0 0; font-weight:600; color:${nameColor};
+					background:${bg};
+					border:${border};">
+					<i class="fa ${ppCreated ? 'fa-check-circle' : 'fa-file-text-o'}"
+						style="margin-right:4px; font-size:11px; color:${ppCreated ? '#16A34A' : 'inherit'};"></i>
 					${so_data.so_name}
 					<span style="display:block; font-size:10px; font-weight:400; color:#94A3B8; margin-top:1px;">
 						${so_row.customer || ''} · ${del_date}
@@ -866,12 +935,23 @@ function setup_production_tabs(frm) {
 	// Tab click
 	html_field.$wrapper.find('#bppTabs .nav-link').on('click', function (e) {
 		e.preventDefault();
-		html_field.$wrapper.find('#bppTabs .nav-link').removeClass('active')
-			.css({ color: '#64748B', borderBottom: 'none', background: 'transparent' });
+		// Reset every tab to its own resting background/colour based on PP-created / merged state.
+		html_field.$wrapper.find('#bppTabs .nav-link').removeClass('active').each(function () {
+			const $t = $(this);
+			const isPP = $t.attr('data-pp-created') === '1';
+			const isMrg = $t.attr('data-merged') === '1';
+			$t.css({
+				color: isPP ? '#15803D' : '#64748B',
+				borderBottom: 'none',
+				background: isPP ? '#DCFCE7' : (isMrg ? '#FEF3C7' : 'transparent'),
+			});
+		});
 		html_field.$wrapper.find('.tab-pane').removeClass('show active');
 		$(this).addClass('active')
 			.css({ color: '#1E3A5F', borderBottom: '2px solid #2563EB', background: '#EFF6FF' });
-		const target = $(this).attr('href');
+		// Remember this SO so it stays selected across save/reload re-renders.
+		_active_so = $(this).attr('data-so');
+		const target = $(this).attr('data-target');
 		html_field.$wrapper.find(target).addClass('show active');
 	});
 
@@ -1218,142 +1298,45 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 		'#B45309', '#FFFBEB', 'fa-cubes');
 	container.appendChild(sfg_label);
 
-	// Color palette per unique bom_level — level 0 first (direct child of FG)
-	const _level_colors = ['#D1FAE5', '#FEF9C3', '#EDE9FE', '#FFE4E6', '#E0F2FE', '#FFF7ED'];
-	const _level_border = ['#059669', '#CA8A04', '#7C3AED', '#E11D48', '#0284C7', '#EA580C'];
-	const _bom_levels = [...new Set((so_data.sfg || []).map(r => r.bom_level))].sort((a, b) => a - b);
-
 	// Build lookup map for sequential days data keyed by SFG row name
 	const sfg_seq_map = Object.fromEntries(
 		((seq_data && seq_data.sfg) || []).map(r => [r.row_name, r])
 	);
+	const _sq = (p, key) => sfg_seq_map[p.data?.name]?.[key];
 
 	const sfg_el = document.createElement('div');
 	sfg_el.className = 'ag-theme-alpine';
 	sfg_el.style.cssText = 'height:' + Math.max(200, so_data.sfg.length * 42 + 56) + 'px; width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same columns and order as the Parallel / Consolidated SFG grid (no batches / timeline)
 	const sfg_cols = [
-		{
-			headerName: 'Lvl', field: 'bom_level', width: 52, pinned: 'left',
-			sort: 'asc',
-			cellRenderer: p => {
-				const li = _bom_levels.indexOf(p.value);
-				const bg = _level_border[li % _level_border.length];
-				return `<span style="display:inline-block;width:22px;height:22px;line-height:22px;
-				text-align:center;border-radius:50%;background:${bg};color:#fff;
-				font-size:11px;font-weight:700;">${p.value}</span>`;
-			}
-		},
 		{
 			headerName: 'Item Code', field: 'production_item', width: 120, pinned: 'left',
 			cellRenderer: p => `<strong>${p.value || ''}</strong>`
 		},
 		{
-			headerName: 'Mfg Type', field: 'type_of_manufacturing', width: 120, pinned: 'left',
+			headerName: 'Item Name', field: 'item_name', width: 220, pinned: 'left',
+			cellRenderer: p => p.value || ''
+		},
+		{
+			headerName: 'Type', field: 'type_of_manufacturing', width: 120, pinned: 'left',
 			editable: true,
 			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: {
-				values: ['In House', 'Subcontract', 'In House - Vendor']
-			},
+			cellEditorParams: { values: ['In House', 'Subcontract', 'In House - Vendor'] },
 			cellRenderer: p => {
-				let color = '#16a34a'; // In House
-				if (p.value === 'Subcontract') color = '#d97706';
-				else if (p.value === 'In House - Vendor') color = '#0284c7';
-				return _badge(p.value || 'In House', color);
+				if (p.value === 'Subcontract') return `<span style="background:#FEF3C7;color:#B45309;border:1px solid #F59E0B55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">SUB</span>`;
+				if (p.value === 'In House - Vendor') return `<span style="background:#E0F2FE;color:#0284C7;border:1px solid #38BDF855;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">VENDOR</span>`;
+				return `<span style="background:#DCFCE7;color:#16A34A;border:1px solid #22C55E55;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;">IN HOUSE</span>`;
 			}
-		},
-		{
-			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 150,
-			cellRenderer: p => p.value || '—'
-		},
-		{
-			headerName: 'Qty', field: 'qty', width: 120, type: 'numericColumn',
-			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
-		},
-		{
-			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.mfg_days) || 0,
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
-		},
-		{
-			headerName: 'GRN Days', width: 82, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.grn_days) || 0,
-			cellRenderer: p => p.value ? String(p.value) : ''
-		},
-		{
-			headerName: 'PM Days', width: 78, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.pm_days) || 0,
-			cellRenderer: p => p.value ? String(p.value) : ''
-		},
-		{
-			headerName: 'Holi.', width: 58, type: 'numericColumn',
-			valueGetter: p => (sfg_seq_map[p.data?.name]?.holiday_count) || 0,
-			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
-			cellRenderer: p => {
-				const count = p.value || 0;
-				if (!count) return '';
-				return `<span class="holi-click">${count}</span>`;
-			},
-			onCellClicked: p => {
-				if (p.colDef.headerName !== 'Holi.') return;
-				const dates = (sfg_seq_map[p.data?.name]?.holiday_dates) || [];
-				if (!dates.length) return;
-				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
-			}
-		},
-		{
-			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
-			cellStyle: { color: '#0F5132', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
-		},
-		{
-			headerName: 'End Date', field: 'custom_schedule_end_date', width: 130, editable: true,
-			cellStyle: { color: '#842029', fontWeight: '600' },
-			valueFormatter: p => _format_bpp_date(p.value)
-		},
-		{
-			headerName: 'Supplier', field: 'supplier', width: 140,
-			editable: p => p.data?.type_of_manufacturing !== 'In House',
-			cellRenderer: p => p.data?.type_of_manufacturing === 'In House'
-				? '<span style="color:#94a3b8;">—</span>'
-				: (p.value || '')
-		},
-		{
-			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
-			cellRenderer: p => {
-				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
-				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
-			}
-		},
-		{ headerName: 'Parent Item', field: 'parent_item_code', width: 140 },
-		{
-			headerName: 'BOM', field: 'bom_no', width: 180, editable: true,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: _get_bom_options(p.data?.production_item, p.value)
-			}),
-			valueFormatter: p => p.value || '',
-			cellRenderer: p => p.value ? `<code style="font-size:10px;color:#6b7280;background:#f1f5f9;padding:1px 5px;border-radius:3px;">${p.value}</code>` : ''
-		},
-		{
-			headerName: 'Tool', field: 'tool', width: 190, editable: true,
-			cellEditor: 'agSelectCellEditor',
-			cellEditorParams: p => ({
-				values: ((p.data?.tools || []).map(row => row.tool).filter(Boolean))
-			}),
-			cellRenderer: p => p.value || '<span style="color:#94a3b8;">No Tool</span>'
 		},
 		{
 			headerName: 'Machines', field: 'custom_workstations_csv', width: 270, sortable: false, filter: false,
-			editable: true,
+			editable: p => p.data?.type_of_manufacturing !== 'Subcontract',
 			autoHeight: true,
-			cellStyle: {
-				whiteSpace: 'normal',
-				lineHeight: '1.35',
-				paddingTop: '6px',
-				paddingBottom: '6px'
-			},
+			cellStyle: p => p.data?.type_of_manufacturing === 'Subcontract'
+				? { opacity: 0.4, pointerEvents: 'none' }
+				: { whiteSpace: 'normal', lineHeight: '1.35', paddingTop: '6px', paddingBottom: '6px' },
 			cellEditor: WorkstationPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1362,7 +1345,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 				row_type: 'sfg',
 				row_name: p.data?.name || p.data?._row_name || ''
 			}),
-			cellRenderer: p => _machine_display_html(
+			cellRenderer: p => p.data?.type_of_manufacturing === 'Subcontract' ? '' : _machine_display_html(
 				p.value,
 				p.data?.batchsize || 0,
 				_bom_capacity_cache[p.data?.bom_no || '']?.workstations_csv || ''
@@ -1372,12 +1355,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 			headerName: 'Shifts', field: 'custom_shift_types_csv', width: 190, sortable: false, filter: false,
 			editable: true,
 			autoHeight: true,
-			cellStyle: {
-				whiteSpace: 'normal',
-				lineHeight: '1.35',
-				paddingTop: '6px',
-				paddingBottom: '6px'
-			},
+			cellStyle: { whiteSpace: 'normal', lineHeight: '1.35', paddingTop: '6px', paddingBottom: '6px' },
 			cellEditor: ShiftPopupEditor,
 			cellEditorPopup: true,
 			cellEditorParams: p => ({
@@ -1387,26 +1365,237 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 			}),
 			cellRenderer: p => _shift_display_html(p.value)
 		},
+		{
+			headerName: 'Qty As Per BOM', field: 'qty', width: 120, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			// Net of stock (FG -> SFG -> RM), same as Parallel / Consolidated
+			headerName: 'Planned Qty', width: 120, type: 'numericColumn',
+			valueGetter: p => {
+				const planned = _sq(p, 'planned_qty');
+				return planned === undefined ? Number(p.data?.qty || 0) : Number(planned);
+			},
+			valueFormatter: p => Number(p.value || 0).toLocaleString('en-IN'),
+			cellStyle: { color: '#2563eb', fontWeight: 'bold', cursor: 'pointer' },
+			// Same Stock Details popup as the FG grid
+			onCellClicked: p => {
+				const raw    = _sq(p, 'actual_qty');
+				const total  = Number(p.data?.qty || 0);
+				// Older saved schedules have no stock figure — don't show a misleading 0
+				const actual = raw === undefined
+					? `<span style="color:#b45309;">${__('not calculated — click Calculate Schedule')}</span>`
+					: `<b>${Number(raw || 0).toLocaleString('en-IN')}</b>`;
+				frappe.msgprint({
+					title: __('Stock Details'),
+					message: `Qty As Per BOM: <b>${total.toLocaleString('en-IN')}</b><br>Available Qty in Warehouse: ${actual}`,
+					indicator: 'blue'
+				});
+			}
+		},
+		{
+			headerName: 'Mfg Days', width: 82, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'mfg_days') || 0,
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`  // 0 shown, same as Parallel
+		},
+		{
+			headerName: 'GRN Days', width: 82, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'grn_days') || 0,
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
+		},
+		{
+			headerName: 'PM Days', width: 78, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'pm_days') || 0,
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
+		},
+		{
+			headerName: 'Holi.', width: 58, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'holiday_count') || 0,
+			cellStyle: p => (p.value > 0) ? { color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' } : {},
+			cellRenderer: p => p.value ? `<span class="holi-click">${p.value}</span>` : '',
+			onCellClicked: p => {
+				const dates = _sq(p, 'holiday_dates') || [];
+				if (!dates.length) return;
+				frappe.msgprint({ title: __('Holiday Dates'), message: dates.join('<br>'), indicator: 'red' });
+			}
+		},
+		{
+			headerName: 'Per Shift Qty', width: 108, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'per_shift_qty') || 0,
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
+			headerName: 'SPM', width: 80, type: 'numericColumn',
+			valueGetter: p => _sq(p, 'spm') || 0,
+			cellRenderer: p => String(p.value || 0)
+		},
+		{
+			headerName: 'Start Date', field: 'schedule_date', width: 130, editable: true,
+			cellStyle: { color: '#059669', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{
+			headerName: 'End Date', field: 'custom_schedule_end_date', width: 130, editable: true,
+			cellStyle: { color: '#dc2626', fontWeight: '600' },
+			valueFormatter: p => _format_bpp_date(p.value)
+		},
+		{
+			headerName: 'Target Warehouse', field: 'fg_warehouse', width: 170,
+			cellRenderer: p => p.value || '—'
+		},
+		{
+			headerName: 'Supplier', field: 'supplier', width: 140,
+			editable: p => ['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing),
+			// Same supplier search popup as the Parallel SFG / Sequential FG grids
+			cellEditor: SupplierPopupEditor,
+			cellEditorPopup: true,
+			cellEditorParams: p => ({ supplier_list: p.data?.supplier_list || [] }),
+			cellRenderer: p => {
+				if (!['Subcontract', 'In House - Vendor'].includes(p.data?.type_of_manufacturing)) return '';
+				return p.value || '<span style="color:#94a3b8;">No Supplier</span>';
+			}
+		},
+		{
+			headerName: 'Supplier Name', field: 'supplier_name', width: 270,
+			cellRenderer: p => {
+				if (p.data?.type_of_manufacturing === 'In House') return '<span style="color:#94a3b8;">—</span>';
+				return p.value ? `<span style="color:#374151;">${p.value}</span>` : '<span style="color:#94a3b8;">—</span>';
+			}
+		},
 	];
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
+	_make_vertically_resizable(sfg_el);
 	const sfg_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: sfg_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(sfg_cols, 22),   // sort + filter icons in the header
 		rowData: so_data.sfg,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		suppressMovableColumns: false,
 		rowHeight: 38,
 		headerHeight: 40,
-		getRowStyle: p => {
-			if (!p.data) return {};
-			const li = _bom_levels.indexOf(p.data.bom_level);
-			return { background: _level_colors[li % _level_colors.length] + '99' };
-		},
+		getRowStyle: () => ({ background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }),
 		onCellValueChanged: p => _on_seq_cell_changed(frm, p),
 	});
 	_grids['seq_sfg_' + so_data.so_name] = sfg_grid;
 
 	// ── MR section (bottom, matches Parallel order) ──────────────────────────
 	_append_mr_section(container, so_data.mr, frm, so_data.so_name, 'seq');
+}
+
+
+// ---------------------------------------------------------------------------
+// FG / SFG grid column layout — same in Sequential, Parallel and Consolidated
+// ---------------------------------------------------------------------------
+// Frozen: (expand / Dispatch) · Item Code · Item Name · Type, then the main columns in this
+// order, then everything else as before. Every column is just wide enough for its full
+// header; Item Name / Machines / Shifts / dates / Supplier Name get a fixed content width.
+const _FG_COLUMN_ORDER = [
+	'Item Code', 'Item Name', 'Type',
+	'Machines', 'Shifts', 'Qty As Per BOM', 'Planned Qty',
+	'Start Date', 'End Date', 'Per Shift Qty', 'SPM', 'Supplier', 'Supplier Name',
+];
+
+// Type select box stays the normal in-cell editor (closes on outside click); only its
+// option list grows to fit "Subcontract" / "In House - Vendor", whatever the column width.
+(function _bpp_select_list_css() {
+	if (document.getElementById('bpp-select-list-css')) return;
+	const st = document.createElement('style');
+	st.id = 'bpp-select-list-css';
+	// option list sizes to its longest option, not to the column
+	st.textContent = '.ag-theme-alpine .ag-select-list { width: max-content !important; min-width: 100%; }'
+		+ ' .ag-theme-alpine .ag-select-list-item { white-space: nowrap; padding-right: 12px; }';
+	document.head.appendChild(st);
+})();
+
+// Horizontal padding of FG headers / cells (px, each side)
+const _FG_CELL_PADDING = 6;
+
+// Columns whose cells hold more than the header (inputs / long text): fixed widths
+const _FG_CONTENT_WIDTHS = {
+	'Item Name': 220,
+	'Type': 120,          // IN HOUSE / SUB / VENDOR badge
+	'Machines': 200,
+	'Shifts': 150,
+	'Supplier Name': 220,
+	'Start Date': 140,
+	'End Date': 140,
+};
+
+let _header_measure_ctx = null;
+function _header_fit_width(header) {
+	// Exact width of the header text in the grid's header font (bold 13px), measured by the
+	// browser, + the compact left/right padding — no empty space before / after the label.
+	const text = String(header || '');
+	try {
+		if (!_header_measure_ctx) {
+			_header_measure_ctx = document.createElement('canvas').getContext('2d');
+			_header_measure_ctx.font = `600 13px ${getComputedStyle(document.body).fontFamily}`;
+		}
+		return Math.ceil(_header_measure_ctx.measureText(text).width) + 2 * _FG_CELL_PADDING + 4;
+	} catch (e) {
+		return Math.ceil(text.length * 7) + 2 * _FG_CELL_PADDING + 4;
+	}
+}
+
+function _arrange_fg_columns(cols, header_extra = 0) {
+	return _arrange_columns(cols, _FG_COLUMN_ORDER, _FG_CONTENT_WIDTHS, { header_extra });
+}
+
+// RM table: frozen Item Code · Item Name, then qty columns, UOM, dates, supplier, the rest
+const _RM_COLUMN_ORDER = [
+	'Item Code', 'Item Name',
+	'Qty As Per BOM', 'Available Qty', 'Planned Qty', 'UOM',
+	'Order By', 'Receive By', 'Supplier', 'Supplier Name',
+];
+const _RM_CONTENT_WIDTHS = {
+	'Item Name': 220,
+	'Order By': 110,
+	'Receive By': 110,
+	'Supplier': 110,        // "No Supplier" placeholder
+	'Supplier Name': 220,
+};
+
+function _arrange_rm_columns(cols) {
+	// RM grid has sort + filter on every column → leave room for those header icons
+	return _arrange_columns(cols, _RM_COLUMN_ORDER, _RM_CONTENT_WIDTHS, {
+		pin: ['Item Code', 'Item Name'],
+		header_extra: 22,
+	});
+}
+
+// Fixed-height grid → user can drag its bottom-right corner to make it taller / shorter
+function _make_vertically_resizable(el) {
+	el.style.resize = 'vertical';
+	el.style.overflow = 'hidden';
+	el.style.minHeight = '120px';
+}
+
+function _arrange_columns(cols, order, content_widths, opts = {}) {
+	const pin = opts.pin || [];
+	const header_extra = opts.header_extra || 0;
+	cols.forEach(c => { if (pin.includes(c.headerName)) c.pinned = 'left'; });
+	const rank = c => {
+		const i = order.indexOf(c.headerName);
+		return i < 0 ? order.length : i;
+	};
+	// Leading frozen helpers (expand arrow, Dispatch) stay first, in their order
+	const lead = cols.filter(c => c.pinned === 'left' && !order.includes(c.headerName));
+	const rest = cols
+		.filter(c => !lead.includes(c))
+		.map((c, i) => ({ c, i }))
+		.sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)   // others keep their old order
+		.map(x => x.c);
+
+	// Tight widths: just enough for the full header (no extra gap between columns);
+	// content-heavy columns get a fixed width that fits their content.
+	[...lead, ...rest].forEach(c => {
+		if (!c.headerName || c.flex) return;
+		c.width = Math.max(content_widths[c.headerName] || 0, _header_fit_width(c.headerName) + header_extra);
+		if (c.minWidth) c.minWidth = Math.min(c.minWidth, c.width);
+	});
+	return [...lead, ...rest];
 }
 
 
@@ -1436,7 +1625,8 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			_row_name:              item.name,
 			item_code:              item.item_code || '',
 			item_name:              item.item_name || '',
-			planned_qty:            Number(item.planned_qty || item.qty || 0),
+			// Net of stock (same as Parallel / Consolidated); BOM qty stays in planned_qty_as_show
+			planned_qty:            _seq.planned_qty !== undefined ? Number(_seq.planned_qty) : Number(item.planned_qty || item.qty || 0),
 			stock_uom:              item.stock_uom || '',
 			bom_no:                 item.bom_no || '',
 			tool:                   item.tool || '',
@@ -1455,6 +1645,7 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
 			start_date:             item.planned_start_date || '',
 			end_date:               item.custom_planned_end_date || '',
+			per_shift_qty:          Number(_seq.per_shift_qty || 0),
 			mfg_days:               Number(_seq.mfg_days || 0),
 			grn_days:               Number(_seq.grn_days || 0),
 			pm_days:                Number(_seq.pm_days || item.pm_days || 0),
@@ -1509,6 +1700,10 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			cellRenderer: p => _shift_display_html(p.value)
 		},
 		{
+			headerName: 'Per Shift Qty', field: 'per_shift_qty', width: 108, type: 'numericColumn',
+			valueFormatter: p => p.value ? Number(p.value).toLocaleString('en-IN') : ''
+		},
+		{
 			headerName: 'SPM', field: 'spm', width: 80, type: 'numericColumn',
 			valueGetter: p => p.data?.spm || _effective_spm_value(p.data || {}),
 			cellRenderer: p => p.value != null ? String(p.value) : ''
@@ -1555,15 +1750,15 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 		},
 		{
 			headerName: 'Mfg Days', field: 'mfg_days', width: 82, type: 'numericColumn',
-			cellRenderer: p => p.value ? `<strong>${p.value}</strong>` : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`  // 0 shown, same as Parallel
 		},
 		{
 			headerName: 'GRN Days', field: 'grn_days', width: 82, type: 'numericColumn',
-			cellRenderer: p => p.value ? String(p.value) : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'PM Days', field: 'pm_days', width: 78, type: 'numericColumn',
-			cellRenderer: p => p.value ? String(p.value) : ''
+			cellRenderer: p => `<strong>${p.value || 0}</strong>`
 		},
 		{
 			headerName: 'Holi.', field: 'holiday_count', width: 58, type: 'numericColumn',
@@ -1616,16 +1811,20 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM)
+	fg_el.style.height = Math.max(160, rows.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const seq_fg_grid = agGrid.createGrid(fg_el, {
-		columnDefs:        cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs:        _arrange_fg_columns(cols),
 		rowData:           rows,
 		defaultColDef:     { resizable: true, sortable: false },
 		rowHeight:         40,
 		headerHeight:      40,
-		domLayout:         'autoHeight',
 		getRowStyle:       () => ({ background: '#F8FAFC', borderBottom: '1px solid #e2e8f0' }),
 		onCellValueChanged: p => _on_seq_fg_cell_changed(frm, p),
 	});
@@ -1764,6 +1963,11 @@ function _on_seq_cell_changed(frm, params) {
 	if (changed && (fieldname === 'bom_no' || fieldname === 'custom_workstations_csv' || fieldname === 'tool')) {
 		_mark_bom_form_dirty(frm);
 		doc_row[fieldname] = params.newValue;
+	} else if (changed) {
+		// The grid shows the real form rows, so AG Grid has already written the new value
+		// into doc_row — set_value would see "no change" and the form would not go dirty.
+		// Put the old value back so set_value records a real change (same as Parallel).
+		doc_row[fieldname] = params.oldValue;
 	}
 
 	const update_promise = (doc_row.doctype && doc_row.name)
@@ -1825,6 +2029,66 @@ function _on_seq_cell_changed(frm, params) {
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// Dispatch checkbox + bucket logic (shared by Parallel & Consolidated grids)
+//
+// A tick on a batch row "closes" a dispatch bucket covering every batch since the
+// previous tick: bucket qty = sum of those batches, delivery date = the ticked batch's
+// end_date. Trailing batches after the last tick auto-form a final bucket. If no batch
+// in an FG is ticked, the FG falls back to one bucket = full qty at the Sales Order's
+// delivery date. The tick state lives on each batch as `b.dispatch` inside the
+// custom_batch_schedule JSON, so the Dispatch Display report can read it.
+// ---------------------------------------------------------------------------
+
+// Toggle the dispatch flag on a batch and persist it into the schedule JSON.
+//
+// `par_data` here is a single SO's slice ({fg:[...], sfg_chain:[...]}). We mutate the
+// batch on that in-memory slice (so the grid re-render reflects it immediately) AND
+// re-write the FULL custom_batch_schedule dict ({so_name: {...}}) so we never overwrite
+// the whole schedule with just one SO's data.
+function _toggle_batch_dispatch(frm, par_data, item_code, batch_label) {
+	const fg = (par_data.fg || []).find(f => f.item_code === item_code);
+	if (!fg) return;
+	const batch = (fg.batches || []).find(b => `${b.batch}/${b.total}` === batch_label);
+	if (!batch) return;
+
+	batch.dispatch = !batch.dispatch;
+
+	// Persist by mutating the matching batch inside the full stored schedule.
+	try {
+		const full = JSON.parse(frm.doc.custom_batch_schedule || '{}');
+		Object.values(full).forEach(so_slice => {
+			if (!so_slice || typeof so_slice !== 'object' || !Array.isArray(so_slice.fg)) return;
+			so_slice.fg.forEach(f => {
+				if (f.item_code !== item_code) return;
+				(f.batches || []).forEach(b => {
+					if (`${b.batch}/${b.total}` === batch_label) b.dispatch = batch.dispatch;
+				});
+			});
+		});
+		frm.doc.custom_batch_schedule = JSON.stringify(full);
+		frm.dirty();
+	} catch (e) { /* keep in-memory toggle even if persist fails */ }
+}
+
+// Column definition for the dispatch checkbox (batch rows only).
+function _dispatch_checkbox_col(frm, par_data, rebuild) {
+	return {
+		headerName: 'Dispatch', field: 'dispatch', width: 80, sortable: false, pinned: 'left',
+		cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+		cellRenderer: p => {
+			if (p.data?._is_group) return '';
+			return `<input type="checkbox" ${p.data?.dispatch ? 'checked' : ''}
+				style="width:15px;height:15px;cursor:pointer;" />`;
+		},
+		onCellClicked: p => {
+			if (p.data?._is_group) return;
+			_toggle_batch_dispatch(frm, par_data, p.data.item_code, p.data.batch_label);
+			rebuild();
+		}
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Parallel Grid — N batch rows per SFG with timeline bar column
@@ -1934,6 +2198,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
 					qty: b.qty,
+					dispatch: !!b.dispatch,
 					mfg_days: b.mfg_days,
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
@@ -1978,6 +2243,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 
 		},
+		_dispatch_checkbox_col(frm, par_data, () => par_grids.setGridOption('rowData', _builds_rows())),
 		{
 			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
@@ -2272,16 +2538,22 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM);
+	// expanding batch rows scrolls inside the table
+	const _fg_rows_init = _builds_rows();
+	fg_el.style.height = Math.max(160, _fg_rows_init.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const par_grids = agGrid.createGrid(fg_el, {
-		columnDefs: par_colss,
-		rowData: _builds_rows(),
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_colss),
+		rowData: _fg_rows_init,
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
 		headerHeight: 40,
-		domLayout: 'autoHeight',
 		getRowStyle: p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
@@ -2697,8 +2969,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	sfg_el.style.cssText = 'width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
 	const par_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: par_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_cols),
 		rowData: _build_rows(),
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
@@ -2824,6 +3099,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 					item_code: fg.item_code,
 					batch_label: `${b.batch}/${b.total}`,
 					qty: b.qty,
+					dispatch: !!b.dispatch,
 					mfg_days: b.mfg_days,
 					grn_days: b.grn_days,
 					pm_days: b.pm_days,
@@ -2870,6 +3146,7 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 			}
 
 		},
+		_dispatch_checkbox_col(frm, par_data, () => par_grids.setGridOption('rowData', _builds_rows())),
 		{
 			headerName: 'Item Code', field: 'item_code', width: 120, pinned: 'left',
 			cellRenderer: p => {
@@ -3235,16 +3512,22 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 
 	const fg_el = document.createElement('div');
 	fg_el.className = 'ag-theme-alpine';
-	fg_el.style.cssText = 'width:100%;';
+	// Compact padding on headers / cells (theme default ~17px each side)
+	fg_el.style.cssText = `width:100%; --ag-cell-horizontal-padding:${_FG_CELL_PADDING}px;`;
 	container.appendChild(fg_el);
 
+	// Fixed starting height that fits the rows + drag handle to make it taller (like SFG / RM);
+	// expanding batch rows scrolls inside the table
+	const _fg_rows_init = _builds_rows();
+	fg_el.style.height = Math.max(160, _fg_rows_init.length * 40 + 60) + 'px';
+	_make_vertically_resizable(fg_el);
 	const par_grids = agGrid.createGrid(fg_el, {
-		columnDefs: par_colss,
-		rowData: _builds_rows(),
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_colss),
+		rowData: _fg_rows_init,
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
 		headerHeight: 40,
-		domLayout: 'autoHeight',
 		getRowStyle: p => p.data?._is_group
 			? { background: '#F8FAFC', fontWeight: '500', borderBottom: '1px solid #e2e8f0' }
 			: { background: '#ffffff' },
@@ -3735,8 +4018,11 @@ function _render_parallel_grid(frm, so_data, par_data, container) {
 	sfg_el.style.cssText = 'width:100%;';
 	container.appendChild(sfg_el);
 
+	// Same column order / compact padding / header-fit widths as the FG table
+	sfg_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
 	const par_grid = agGrid.createGrid(sfg_el, {
-		columnDefs: par_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_fg_columns(par_cols),
 		rowData: _build_rows(),
 		defaultColDef: { resizable: true, sortable: false },
 		getRowHeight: p => p.data?._is_group ? 40 : 34,
@@ -3773,6 +4059,7 @@ function _find_so_for_row(schedule, row_name) {
 	for (const [so, data] of Object.entries(schedule)) {
 		if ((data.sfg_chain || []).some(s => s.row_name === row_name)) return so;
 		if ((data.fg || []).some(f => f.row_name === row_name)) return so;
+		if ((data.mr || []).some(m => m.row_name === row_name)) return so;
 	}
 	return null;
 }
@@ -3783,7 +4070,10 @@ function _sync_parallel_schedule_override(frm, row_name, row_type, patch = {}) {
 		const schedule = JSON.parse(frm.doc.custom_batch_schedule);
 		const so_name = _find_so_for_row(schedule, row_name);
 		if (!so_name || !schedule[so_name]) return;
-		const collection = row_type === 'fg' ? (schedule[so_name].fg || []) : (schedule[so_name].sfg_chain || []);
+		let collection;
+		if (row_type === 'fg') collection = schedule[so_name].fg || [];
+		else if (row_type === 'mr') collection = schedule[so_name].mr || [];
+		else collection = schedule[so_name].sfg_chain || [];
 		const row = collection.find(item => item.row_name === row_name);
 		if (!row) return;
 		Object.assign(row, patch || {});
@@ -4225,6 +4515,10 @@ function _shift_display_html(csv_value) {
 }
 
 function _get_supplier_options(txt, allowed_codes) {
+    // allowed_codes is intentionally ignored: the supplier is a free manual pick,
+    // and the row's `supplier_list` holds display labels ("NAME - Full Name"), not
+    // bare Supplier names — using it as an `in` filter matched nothing and made the
+    // search appear broken. Always search the full Supplier list instead.
     const args = {
         doctype: 'Supplier',
         fields: ['name', 'custom_supplier_names'],
@@ -4235,9 +4529,6 @@ function _get_supplier_options(txt, allowed_codes) {
             ['name', 'like', `%${txt}%`],
             ['custom_supplier_names', 'like', `%${txt}%`]
         ];
-    }
-    if (allowed_codes && allowed_codes.length) {
-        args.filters = [['name', 'in', allowed_codes]];
     }
     return frappe.call({ method: 'frappe.client.get_list', args })
         .then(res => (res.message || []).map(s => ({
@@ -4718,6 +5009,53 @@ function _create_inline_shift_editor(initial_csv, onchange) {
 /**
  * AG Grid cell editor — inline tag autocomplete (no popup).
  */
+
+// Popup date picker for the RM 'Receive By' override (value kept as YYYY-MM-DD)
+class RmReceiveDateEditor {
+	init(params) {
+		this.original = params.value;
+		this.changed = false;
+		this.input = document.createElement('input');
+		this.input.type = 'date';
+		this.input.value = params.value ? String(params.value).split(' ')[0] : '';
+		this.input.addEventListener('change', () => { this.changed = true; });
+		this.input.style.cssText = 'font-size:12px;padding:4px 6px;border:1px solid #fdba74;border-radius:4px;';
+		// Escape/blur without a change keeps the old value; clearing the date removes the override
+		this.input.addEventListener('keydown', e => { if (e.key === 'Enter') params.stopEditing(); });
+	}
+	getGui() { return this.input; }
+	afterGuiAttached() { this.input.focus(); }
+	// Unchanged → keep the original value so no override is saved by just opening the picker
+	getValue() { return this.changed ? (this.input.value || '') : this.original; }
+	isPopup() { return true; }
+	getPopupPosition() { return 'under'; }
+}
+
+function _save_rm_row_received_date(frm, p, so_name) {
+	const row_name = p.data.row_name || p.data.name;
+	const revert = () => {
+		p.data[p.colDef.field] = p.oldValue;
+		p.api.refreshCells({ rowNodes: [p.node], force: true });
+	};
+	if (!row_name) { revert(); return; }
+	if (frm.is_dirty()) {
+		revert();
+		frappe.msgprint({
+			title: __('Save First'),
+			message: __('Please save the document before changing an RM Receive By date.'),
+			indicator: 'orange',
+		});
+		return;
+	}
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.set_rm_row_received_date',
+		args: { docname: frm.doc.name, mr_row_name: row_name, rm_received_date: p.newValue || '' },
+		freeze: true,
+		freeze_message: __('Recalculating schedule from RM received date…'),
+		callback: () => frm.reload_doc(),
+		error: () => revert(),
+	});
+}
 
 class SupplierPopupEditor {
     init(params) {
@@ -5599,6 +5937,8 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	// ── RM Received Date override bar ──────────────────────────────────────────
 	const so_row = (frm.doc.sales_orders || []).find(r => r.sales_order === so_name);
 	const current_override = so_row?.custom_rm_received_date || '';
+	// Override is ON with a bulk date, or ticked for per-RM Receive By dates only
+	const override_on = !!current_override || !!so_row?.custom_rm_override;
 
 	const override_bar = document.createElement('div');
 	override_bar.style.cssText = [
@@ -5610,7 +5950,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	const chk = document.createElement('input');
 	chk.type = 'checkbox';
 	chk.id = `rm_override_chk_${so_name}`;
-	chk.checked = !!current_override;
+	chk.checked = override_on;
 	chk.style.cssText = 'cursor:pointer;width:14px;height:14px;accent-color:#16a34a;flex-shrink:0;';
 
 	const chk_label = document.createElement('label');
@@ -5622,7 +5962,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	date_input.type = 'date';
 	date_input.value = current_override ? current_override.split(' ')[0] : '';
 	date_input.style.cssText = [
-		`display:${current_override ? 'inline-block' : 'none'}`,
+		`display:${override_on ? 'inline-block' : 'none'}`,
 		'font-size:12px', 'padding:2px 6px',
 		'border:1px solid #86efac', 'border-radius:4px',
 		'color:#15803d', 'font-weight:600',
@@ -5643,6 +5983,12 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		if (chk.checked) {
 			date_input.style.display = 'inline-block';
 			date_input.focus();
+			frappe.call({
+				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.enable_rm_override',
+				args: { docname: frm.doc.name, so_name },
+				// Receive By of each RM row is editable now (Parallel / Consolidated)
+				callback: () => { if (so_row) so_row.custom_rm_override = 1; },
+			});
 		} else {
 			date_input.style.display = 'none';
 			date_input.value = '';
@@ -5770,7 +6116,15 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		},
 		{
 			headerName: 'Receive By', field: _par ? 'end_date' : 'schedule_date',
-			width: 110, editable: true,
+			width: 120,
+			// Per-RM Receive By override: only when 'Override RM Received Date' is ticked
+			// Parallel / Consolidated: only with the override ticked. Sequential: always
+			// (ticked → saved as the RM's override date and SFG / FG follow it)
+			editable: p => _par
+				? (chk.checked && Number(p.data?.qty) > 0)
+				: true,
+			cellEditor: RmReceiveDateEditor,
+			cellEditorPopup: true,
 			cellStyle: { color: '#842029', fontWeight: '600' },
 			valueFormatter: p => _format_bpp_date(p.value, '')
 		},
@@ -5796,8 +6150,12 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		},
 	];
 
+	// Same compact padding / header-fit widths as the FG and SFG tables
+	mr_el.style.setProperty('--ag-cell-horizontal-padding', `${_FG_CELL_PADDING}px`);
+	_make_vertically_resizable(mr_el);
 	const mr_grid_api = agGrid.createGrid(mr_el, {
-		columnDefs: mr_cols,
+		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
+		columnDefs: _arrange_rm_columns(mr_cols),
 		rowData: mr_items,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		rowHeight: 36,
@@ -5807,9 +6165,17 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			const fieldname = p.colDef.field;
 			if (!fieldname) return;
 
+			if ((_par && fieldname === 'end_date') || (!_par && fieldname === 'schedule_date' && chk.checked)) {
+				_save_rm_row_received_date(frm, p, so_name);
+				return;
+			}
+
+			// Parallel/consolidated RM rows come from the computed schedule and do
+			// not carry `sales_order`; use the section's `so_name` for the lookup.
+			const _row_so = p.data.sales_order || so_name;
 			const mr_row = (frm.doc.mr_items || []).find(r =>
 				r.item_code === p.data.item_code &&
-				r.sales_order === p.data.sales_order
+				r.sales_order === _row_so
 			);
 
 			if (!mr_row) {
@@ -5817,20 +6183,33 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				return;
 			}
 
-			const db_field = _par ? 'supplier' : 'custom_supplier';
+			// The MR child doctype only has `custom_supplier` (no `supplier` field),
+			// so always persist there regardless of the grid's display column name.
+			const db_field = 'custom_supplier';
 
 			if (fieldname === 'supplier' || fieldname === 'custom_supplier') {
 				frappe.model.set_value(mr_row.doctype, mr_row.name, db_field, p.newValue).then(() => {
 					_mark_form_dirty(frm);
 				});
+				// Parallel/Consolidated grids re-render from the stored batch-schedule
+				// JSON, so mirror the supplier there too — otherwise it reverts on reload.
+				if (_par) {
+					_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier: p.newValue || '' });
+				}
 				// Fetch and update supplier name in the grid cell
 				if (p.newValue) {
 					frappe.db.get_value('Supplier', p.newValue, 'custom_supplier_names').then(r => {
 						p.data.supplier_name = r.message?.custom_supplier_names || p.newValue;
+						if (_par) {
+							_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier_name: p.data.supplier_name });
+						}
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
 					});
 				} else {
 					p.data.supplier_name = '';
+					if (_par) {
+						_sync_parallel_schedule_override(frm, mr_row.name, 'mr', { supplier_name: '' });
+					}
 					p.api.refreshCells({ rowNodes: [p.node], columns: ['supplier_name'], force: true });
 				}
 				return;
@@ -5971,5 +6350,121 @@ function _apply_so_filters(frm) {
 			}
 		}
 		$(this).toggle(show);
+	});
+}
+
+
+// ── Generated documents in Connections (WO / PO / MR) ──────────────────────
+// Adds Work Order / Purchase Order / Material Request tiles beside the standard
+// Production Plan link, with Sales Order + FG Item filters. Shown only once a PP
+// is submitted. Click opens the list: "All FG" -> filtered by Production Plan,
+// a single FG -> filtered to exactly that FG's documents.
+const _GEN_DOC_TYPES = ['Work Order', 'Purchase Order', 'Material Request'];
+
+function render_generated_documents(frm, attempt = 0) {
+	const $area = frm.dashboard && frm.dashboard.transactions_area;
+	if (!$area || frm.is_new()) return;
+
+	// Connections links render asynchronously — wait for the Production Plan tile
+	const $pp_link = $area.find('.document-link[data-doctype="Production Plan"]');
+	if (!$pp_link.length) {
+		if (attempt < 10) setTimeout(() => render_generated_documents(frm, attempt + 1), 300);
+		return;
+	}
+
+	frappe.call({
+		method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_generated_documents',
+		args: { bulk_pp_name: frm.doc.name },
+		callback: function (r) {
+			_draw_generated_documents(frm, $area, $pp_link, r.message || []);
+		},
+	});
+}
+
+function _draw_generated_documents(frm, $area, $pp_link, rows) {
+	// Idempotent: clear what a previous refresh added
+	$area.find('.bpp-gen-doc').remove();
+	if (!rows.length) return;
+
+	const esc = frappe.utils.escape_html;
+	const so_row = rows.find(d => d.sales_order === frm._gen_doc_so) || rows[0];
+	frm._gen_doc_so = so_row.sales_order;
+	if (!so_row.fg_items.includes(frm._gen_doc_fg)) frm._gen_doc_fg = '';
+	const fg = frm._gen_doc_fg;
+	const docs = fg ? so_row.by_fg[fg] : so_row.all;
+
+	const so_options = rows.map(d =>
+		`<option value="${esc(d.sales_order || '')}" ${d.sales_order === so_row.sales_order ? 'selected' : ''}>${esc(d.sales_order || '')}</option>`
+	).join('');
+	const fg_options = [`<option value="">${__('All FG')}</option>`].concat(
+		so_row.fg_items.map(i => `<option value="${esc(i)}" ${i === fg ? 'selected' : ''}>${esc(i)}</option>`)
+	).join('');
+
+	const select_css = 'width: auto; min-width: 190px; height: 28px; padding: 2px 8px;';
+	$area.prepend(`
+		<div class="bpp-gen-doc d-flex align-items-center flex-wrap"
+			style="gap: 16px; padding: 8px 12px; margin-bottom: 16px;
+				border: 1px solid var(--border-color); border-radius: var(--border-radius-md);
+				background: var(--subtle-fg);">
+			<span class="d-flex align-items-center text-muted small" style="gap: 4px;">
+				<svg class="icon icon-sm"><use href="#icon-filter"></use></svg>${__('Filters')}
+			</span>
+			<label class="d-flex align-items-center mb-0" style="gap: 8px;">
+				<span class="small text-muted">${__('Sales Order')}</span>
+				<select class="form-control input-xs bpp-gen-so" style="${select_css}">${so_options}</select>
+			</label>
+			<label class="d-flex align-items-center mb-0" style="gap: 8px;">
+				<span class="small text-muted">${__('FG Item')}</span>
+				<select class="form-control input-xs bpp-gen-fg" style="${select_css}">${fg_options}</select>
+			</label>
+		</div>
+	`);
+
+	// All tiles on one line with the Production Plan tile (its column is col-md-4 by default)
+	const $col = $pp_link.parent();
+	$col.removeClass('col-md-4').addClass('col-12 d-flex flex-wrap align-items-center').css('gap', '12px');
+	// Same as standard Connections: main count = all (incl. cancelled),
+	// side badge = active (not cancelled), each opening its own list
+	_GEN_DOC_TYPES.forEach(doctype => {
+		const d = docs[doctype] || { all: [], active: [] };
+		$col.append(`
+			<div class="document-link bpp-gen-doc" data-doctype="${doctype}">
+				<div class="document-link-badge" data-doctype="${doctype}">
+					<span class="count">${d.all.length}</span>
+					<a class="badge-link">${__(doctype)}</a>
+				</div>
+				${d.all.length ? `<span class="open-notification" data-doctype="${doctype}"
+					title="${__('Open {0}', [__(doctype)])}">${d.active.length}</span>` : ''}
+			</div>
+		`);
+	});
+
+	$area.find('.bpp-gen-so').on('change', function () {
+		frm._gen_doc_so = $(this).val();
+		frm._gen_doc_fg = '';
+		_draw_generated_documents(frm, $area, $pp_link, rows);
+	});
+	$area.find('.bpp-gen-fg').on('change', function () {
+		frm._gen_doc_fg = $(this).val();
+		_draw_generated_documents(frm, $area, $pp_link, rows);
+	});
+
+	const open_list = (doctype, only_active) => {
+		const names = (docs[doctype] || {})[only_active ? 'active' : 'all'] || [];
+		if (!names.length) {
+			frappe.show_alert({ message: __('No {0} for this selection', [__(doctype)]), indicator: 'orange' });
+			return;
+		}
+		// production_plan is in the item table for PO / MR; the List view resolves it
+		const opts = fg ? { name: ['in', names] } : { production_plan: so_row.production_plan };
+		if (only_active && !fg) opts.docstatus = ['!=', 2];
+		frappe.route_options = opts;
+		frappe.set_route('List', doctype);
+	};
+	$col.find('.bpp-gen-doc .document-link-badge').on('click', function () {
+		open_list($(this).attr('data-doctype'), false);
+	});
+	$col.find('.bpp-gen-doc .open-notification').on('click', function () {
+		open_list($(this).attr('data-doctype'), true);
 	});
 }

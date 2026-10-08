@@ -1,0 +1,90 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "rm_used",
+  "item_name",
+  "column_break_1",
+  "rm_rate_per_kg",
+  "gross_wt_per_pc",
+  "gross_rm_cost_per_pc",
+  "bom"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "rm_used",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "RM Used",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "rm_used.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "description": "The BOM this RM row was pulled from \u2014 lets you trace which sub-assembly's BOM this raw material belongs to.",
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "Source BOM",
+   "options": "BOM",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "Auto-fetched from the item's last purchase rate when RM Used is picked. Editable.",
+   "fieldname": "rm_rate_per_kg",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "RM Rate / Kg",
+   "precision": "3"
+  },
+  {
+   "columns": 2,
+   "description": "Shown to 6 decimals \u2014 component weights per piece are often a small fraction of a kg, and 3 decimals hides too much to visually verify Rate \u00d7 Weight = Cost.",
+   "fieldname": "gross_wt_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Gross Wt / Pc (Kg)",
+   "precision": "6"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "fieldname": "gross_rm_cost_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Gross RM Cost / Pc",
+   "precision": "3",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-08 13:47:15.134225",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Cost Estimation RM Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -37,12 +37,13 @@ from ujwal_industries.overrides import work_order_override
 app_include_css = [
     "/assets/ujwal_industries/css/custom_modal.css?V=0.1.29",
     "/assets/ujwal_industries/css/list_view_revamp.css?V=0.1.3",
+    "/assets/ujwal_industries/css/sales_order_list.css?V=0.1.1",
 ]
 app_include_js = [
 	"/assets/ujwal_industries/js/custom_dialog.js?V=0.1.29",
 	"/assets/ujwal_industries/js/manage_dates_dialog.js?V=0.1.30",
 	"/assets/ujwal_industries/js/parallel_manage_dates_dialog.js?V=0.1.40",
-	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.2",
+	"/assets/ujwal_industries/js/list_view_revamp.js?V=0.1.4",
 	"/assets/ujwal_industries/js/rate_visibility.js?V=0.1.2",
 	# "/assets/ujwal_industries/js/grid_custom_icons.js",
 ]
@@ -62,7 +63,7 @@ app_include_js = [
 
 # include js in doctype views
 doctype_js = {
-	"Production Plan": "public/js/production_plan_subcontracting.js",
+	"Production Plan": ["public/js/production_plan_subcontracting.js", "public/js/production_plan.js"],
 	"Supplier": "public/js/supplier.js",
 	"Supplier Quotation": "public/js/supplier_quotation.js",
 	"Material Request": "public/js/material_request.js",
@@ -71,7 +72,7 @@ doctype_js = {
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Job Card": "public/js/job_card.js",
 	"Workstation": "public/js/workstation.js",
- 	"Work Order": "public/js/work_order_scrap.js",
+ 	"Work Order": ["public/js/work_order_scrap.js", "public/js/work_order.js"],
   	"Stock Entry": "public/js/stock_entry.js",
 	"Production Plan Importer": "public/js/production_plan_importer.js",
 	"BOM": "public/js/bom.js",
@@ -89,6 +90,10 @@ doctype_tree_js = {
 doctype_list_js = {
 	"Production Plan": "public/js/production_plan_list.js",
 	"Sales Order": "public/js/sales_order_list.js",
+	"Job Card": "public/js/job_card_list.js",
+	"BOM": "public/js/bom_list.js",
+	"Work Order": "public/js/work_order_list.js",
+	"Cost Estimation": "public/js/cost_estimation_list.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -170,10 +175,12 @@ permission_query_conditions = {
 	"Workstation": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_workstation",
 	"Job Card": "ujwal_industries.ujwal_industries.overrides.workstation.has_permission_query_job_card",
 	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_query_work_order",
+	"Purchase Order": "ujwal_industries.ujwal_industries.overrides.purchase_order.has_permission_query_purchase_order",
 }
 #
 has_permission = {
 	"Work Order": "ujwal_industries.ujwal_industries.overrides.work_order.has_permission_work_order",
+	"Purchase Order": "ujwal_industries.ujwal_industries.overrides.purchase_order.has_permission_purchase_order",
 }
 
 # DocType Class
@@ -193,9 +200,13 @@ doc_events = {
 	"Item": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname",
+		"on_update": "ujwal_industries.ujwal_industries.overrides.item.sync_subcontract_cost_to_boms",
 	},
 	"Asset": {
 		"autoname": "ujwal_industries.ujwal_industries.overrides.asset.autoname"
+	},
+	"Workstation": {
+		"validate": "ujwal_industries.ujwal_industries.overrides.workstation.calculate_day_cost"
 	},
 
 	"Customer": {
@@ -230,6 +241,7 @@ doc_events = {
 			# "ujwal_industries.ujwal_industries.overrides.production_plan.set_item_type_in_production_plan",
 		],
 		"on_trash": "ujwal_industries.ujwal_industries.overrides.production_plan.on_trash_production_plan",
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.production_plan.on_cancel_production_plan",
 	},
 	"Supplier": {
 		"before_save": "ujwal_industries.api.supplier_gstin_check.check_duplicate_gstin",
@@ -285,9 +297,15 @@ doc_events = {
 		"validate": "ujwal_industries.ujwal_industries.overrides.data_import.validate_production_plan_import"
 	},
 	"Work Order":{
-		"before_insert": "ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+		"before_insert": [
+			"ujwal_industries.ujwal_industries.overrides.work_order.set_wip_before_insert",
+			"ujwal_industries.ujwal_industries.overrides.work_order.set_planned_end_date_from_production_plan",
+		],
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_production_supervisor_on_work_order_create",
-		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+		"on_submit": [
+			"ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
+			"ujwal_industries.ujwal_industries.overrides.work_order.preserve_production_plan_end_date",
+		],
 	},
 	"Subcontracting Order": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_outsource_store_manager_on_subcontract_create",
@@ -299,8 +317,18 @@ doc_events = {
   		"on_update_after_submit": "ujwal_industries.overrides.bom.validate_default_tool",
 		"validate": [
       					"ujwal_industries.overrides.bom.validate_bom",
-      					# "ujwal_industries.overrides.bom.validate_change_bom_value",
-					],			
+						"ujwal_industries.ujwal_industries.overrides.bom_subcontract_cost.set_subcontract_operation_cost",
+						"ujwal_industries.overrides.bom_change_log.track_changes",
+					],
+		# Frappe never calls "validate" when editing an already-submitted doc --
+		# it runs before_update_after_submit instead -- so both cost recalculation
+		# and the change log need their own hooks here, or a submitted-BOM edit
+		# leaves costs stale and goes untracked. Recalc must run first so the
+		# change log diffs against the true final values being saved.
+		"before_update_after_submit": [
+			"ujwal_industries.overrides.bom.recalculate_on_update_after_submit",
+			"ujwal_industries.overrides.bom_change_log.track_changes",
+		],
 		"autoname": "ujwal_industries.overrides.bom.autoname",
 		"before_save": "ujwal_industries.overrides.bom.before_save",
 		"after_insert": "ujwal_industries.overrides.bom.after_insert",
@@ -376,11 +404,13 @@ override_doctype_dashboards = {
 # Request Events
 # ----------------
 # before_request = ["ujwal_industries.utils.before_request"]
+before_request = ["ujwal_industries.ujwal_industries.overrides.report_patches.apply"]
 # after_request = ["ujwal_industries.utils.after_request"]
 
 # Job Events
 # ----------
 # before_job = ["ujwal_industries.utils.before_job"]
+before_job = ["ujwal_industries.ujwal_industries.overrides.report_patches.apply"]
 # after_job = ["ujwal_industries.utils.after_job"]
 
 # User Data Protection
@@ -469,13 +499,59 @@ fixtures = [
 				"in",
 				(
 					"Store Manager",
-					"Sales Executive"
+					"Sales Executive",
 					"Super Approver",
 					"Store Incharge",
 					"Outsource Store Manager",
-					
+					"Production Master User",
 				),
 			]
+		],
+	},
+	# All BOM + BOM Item/Operation/Scrap Item/Explosion Item customizations
+	# (allow_on_submit, field_order, track_views, etc.) -- scoped to just these
+	# doctypes so it never sweeps in unrelated site customizations made
+	# directly on a live server for other doctypes.
+	{
+		"doctype": "Property Setter",
+		"filters": [
+			[
+				"doc_type",
+				"in",
+				("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item", "BOM Explosion Item"),
+			],
+		],
+	},
+	# Row-level permissions added for Production Master User (full access to BOM
+	# except permlevel-1 money fields) and permlevel-1 grants for Manufacturing
+	# User/Manager so their access to cost fields is unaffected. Also grants
+	# Production Master User read/write on Workstation, Operation and
+	# Workstation Type -- BOM Operation's Link fields need read on their target
+	# doctype or the Link value won't render in the BOM form. BOM's role
+	# permissions are managed as Custom DocPerm on this site, so new grants must
+	# go there too or get_valid_perms() ignores plain DocPerm rows for BOM.
+	# Scoped to just these row names so it never sweeps in unrelated rows.
+	{
+		"doctype": "Custom DocPerm",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"3aneba4qm9",
+					"3anfd3597j",
+					"3aorc58uc7",
+					"sp0iv7vn90",
+					"t2c86orkon",
+					"t2cqejfh75",
+				),
+			],
+		],
+	},
+	{
+		"doctype": "Custom Field",
+		"filters": [
+			["dt", "in", ("BOM", "BOM Item", "BOM Operation", "BOM Scrap Item")],
 		],
 	},
 	# {

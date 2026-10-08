@@ -224,9 +224,26 @@ class StockRequirementsList {
 			section.innerHTML = `<div class="srl-loading"><div class="srl-spinner"></div><span>Loading data for ${itemCode}…</span></div>`;
 		}
 
+		// Resolve the item's own default warehouse (e.g. raw materials are kept in
+		// RM Store while the root finished good is kept in FG Store) so the
+		// MRP table looks at the warehouse where this item's stock actually moves.
+		frappe.call({
+			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_default_warehouse',
+			args: { item_code: itemCode },
+			callback: wr => {
+				const warehouse = wr.message || this._rootWarehouse;
+				this._loadMrpForItem(itemCode, itemName, warehouse, section);
+			},
+			error: () => {
+				this._loadMrpForItem(itemCode, itemName, this._rootWarehouse, section);
+			},
+		});
+	}
+
+	_loadMrpForItem(itemCode, itemName, warehouse, section) {
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_stock_requirements',
-			args: { item_code: itemCode, warehouse: this._rootWarehouse },
+			args: { item_code: itemCode, warehouse },
 			callback: r => {
 				const data = r.message || null;
 				this._activeItemCode = itemCode;
@@ -333,6 +350,7 @@ class StockRequirementsList {
 				<span class="srl-active-item-label">Showing data for:</span>
 				<span class="srl-active-item-code">${d.item_code}</span>
 				<span class="srl-active-item-name">${d.item_name || ''}</span>
+				${d.warehouse ? `<span class="srl-active-item-wh">@ ${d.warehouse}</span>` : ''}
 				${!isRoot ? `<button class="btn btn-default srl-back-btn" data-back-to-root="1">← Back to ${this._rootItemCode}</button>` : ''}
 			</div>
 		`;
@@ -675,6 +693,7 @@ class StockRequirementsList {
 .srl-active-item-label { color: var(--text-muted, #6b7280); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .5px; }
 .srl-active-item-code { font-weight: 700; color: var(--heading-color, #111827); }
 .srl-active-item-name { color: var(--text-muted, #6b7280); }
+.srl-active-item-wh { color: var(--text-muted, #9ca3af); font-size: 11px; }
 .srl-back-btn {
 	margin-left: auto;
 	height: 26px; padding: 0 12px; font-size: 12px; border-radius: 6px;

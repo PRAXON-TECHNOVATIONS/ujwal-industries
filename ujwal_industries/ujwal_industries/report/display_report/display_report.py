@@ -3,6 +3,7 @@
 
 import frappe
 from frappe import _
+from frappe.utils import add_days, nowdate
 
 
 def execute(filters=None):
@@ -58,6 +59,13 @@ def get_conditions(filters):
 		conditions.append("jc.expected_end_date <= %(to_date)s")
 		values["to_date"] = filters.get("to_date")
 
+	if not filters.get("from_date") and not filters.get("to_date"):
+		# default window: anything overdue/ongoing through 3 days from today
+		conditions.append(
+			"DATE(COALESCE(jc.expected_start_date, wo.planned_start_date)) <= %(window_end)s"
+		)
+		values["window_end"] = add_days(nowdate(), 3)
+
 	condition_str = ("where " + " and ".join(conditions)) if conditions else ""
 	return condition_str, values
 
@@ -80,6 +88,7 @@ def get_data(filters):
 		from `tabJob Card` jc
 		left join `tabItem` item on item.name = jc.production_item
 		left join `tabWorkstation` ws on ws.name = jc.workstation
+		left join `tabWork Order` wo on wo.name = jc.work_order
 		{condition_str}
 		order by jc.expected_start_date desc
 		""",

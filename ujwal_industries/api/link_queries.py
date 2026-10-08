@@ -2,11 +2,19 @@ import frappe
 from frappe import whitelist, validate_and_sanitize_search_inputs
 
 
+# Link-field dropdowns default to a small page_len (10-20), which hides most
+# matches for a broad search term. Raise it to a high-but-bounded cap instead
+# of removing the limit outright, so a very generic term can't return an
+# unbounded result set and stall the dropdown or the DB.
+MAX_SEARCH_RESULTS = 500
+
+
 @whitelist()
 @validate_and_sanitize_search_inputs
 def item_query(doctype, txt, searchfield, start, page_len, filters):
-	"""Search Item by item_code (name) or item_name — both shown in dropdown."""
+	"""Search Item by item_code (name), item_name, or custom_part_number — all shown in dropdown."""
 	txt = (txt or "").strip()
+	page_len = MAX_SEARCH_RESULTS
 	if isinstance(filters, str):
 		import json
 		filters = json.loads(filters)
@@ -15,16 +23,36 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 	extra_values = []
 	if isinstance(filters, dict):
 		for field, value in filters.items():
-			extra_where += f" AND `tab{doctype}`.`{field}` = %s"
-			extra_values.append(value)
+			if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[0], str):
+				operator, operand = value
+				operator = operator.upper()
+				if operator == "!=" and operand == "":
+					extra_where += f" AND `tab{doctype}`.`{field}` IS NOT NULL AND `tab{doctype}`.`{field}` != ''"
+				elif operator in ("=", "!=", ">", "<", ">=", "<=", "LIKE"):
+					extra_where += f" AND `tab{doctype}`.`{field}` {operator} %s"
+					extra_values.append(operand)
+				elif operator == "IN" and isinstance(operand, (list, tuple)):
+					placeholders = ", ".join(["%s"] * len(operand))
+					extra_where += f" AND `tab{doctype}`.`{field}` IN ({placeholders})"
+					extra_values.extend(operand)
+				else:
+					frappe.throw(f"Unsupported filter operator: {operator}")
+			else:
+				extra_where += f" AND `tab{doctype}`.`{field}` = %s"
+				extra_values.append(value)
 
 	sql = f"""
 		SELECT
 			`tabItem`.`name`,
-			`tabItem`.`item_name`
+			`tabItem`.`item_name`,
+			`tabItem`.`custom_part_number`
 		FROM `tabItem`
 		WHERE `tabItem`.`disabled` = 0
-		  AND (`tabItem`.`name` LIKE %s OR `tabItem`.`item_name` LIKE %s)
+		  AND (
+		  	`tabItem`.`name` LIKE %s
+		  	OR `tabItem`.`item_name` LIKE %s
+		  	OR `tabItem`.`custom_part_number` LIKE %s
+		  )
 		  {extra_where}
 		ORDER BY
 			CASE WHEN `tabItem`.`name` LIKE %s THEN 0 ELSE 1 END,
@@ -32,7 +60,7 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 		LIMIT %s OFFSET %s
 	"""
 	like = f"%{txt}%"
-	return frappe.db.sql(sql, [like, like] + extra_values + [like, page_len, start])
+	return frappe.db.sql(sql, [like, like, like] + extra_values + [like, page_len, start])
 
 
 @whitelist()
@@ -40,6 +68,7 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 def customer_query(doctype, txt, searchfield, start, page_len, filters):
 	"""Search Customer by name (ID) or customer_name — both shown in dropdown."""
 	txt = (txt or "").strip()
+	page_len = MAX_SEARCH_RESULTS
 	if isinstance(filters, str):
 		import json
 		filters = json.loads(filters)
@@ -48,8 +77,23 @@ def customer_query(doctype, txt, searchfield, start, page_len, filters):
 	extra_values = []
 	if isinstance(filters, dict):
 		for field, value in filters.items():
-			extra_where += f" AND `tabCustomer`.`{field}` = %s"
-			extra_values.append(value)
+			if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[0], str):
+				operator, operand = value
+				operator = operator.upper()
+				if operator == "!=" and operand == "":
+					extra_where += f" AND `tabCustomer`.`{field}` IS NOT NULL AND `tabCustomer`.`{field}` != ''"
+				elif operator in ("=", "!=", ">", "<", ">=", "<=", "LIKE"):
+					extra_where += f" AND `tabCustomer`.`{field}` {operator} %s"
+					extra_values.append(operand)
+				elif operator == "IN" and isinstance(operand, (list, tuple)):
+					placeholders = ", ".join(["%s"] * len(operand))
+					extra_where += f" AND `tabCustomer`.`{field}` IN ({placeholders})"
+					extra_values.extend(operand)
+				else:
+					frappe.throw(f"Unsupported filter operator: {operator}")
+			else:
+				extra_where += f" AND `tabCustomer`.`{field}` = %s"
+				extra_values.append(value)
 
 	sql = f"""
 		SELECT

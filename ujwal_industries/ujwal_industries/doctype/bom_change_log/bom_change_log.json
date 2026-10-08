@@ -7,6 +7,8 @@
  "engine": "InnoDB",
  "field_order": [
   "filed_name",
+  "old_value",
+  "new_value",
   "column_break_tjdq",
   "reason"
  ],
@@ -16,6 +18,20 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Filed Name"
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Old Value",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "New Value",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_tjdq",

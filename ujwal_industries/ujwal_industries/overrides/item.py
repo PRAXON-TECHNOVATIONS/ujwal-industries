@@ -5,13 +5,39 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+
+def sync_subcontract_cost_to_boms(doc: Document, method: str | None = None) -> None:
+    """Whenever an Item's subcontract data is saved, refresh
+    custom_subcontract_operation_cost (and cascade to parent BOMs) on every
+    active, submitted BOM for this item — so BOM's Total Cost reflects the
+    item's current default Subcontract rate without anyone needing to
+    manually revisit each BOM. Cheap and idempotent, so this just always
+    re-syncs rather than trying to detect exactly what changed."""
+    if not doc.get("custom_subcontracting_suppliers"):
+        return
+
+    from ujwal_industries.ujwal_industries.overrides.bom_subcontract_cost import (
+        refresh_subcontract_operation_cost,
+    )
+
+    bom_names = frappe.get_all(
+        "BOM", filters={"item": doc.name, "docstatus": 1, "is_active": 1}, pluck="name"
+    )
+    for bom_name in bom_names:
+        refresh_subcontract_operation_cost(bom_name)
+
 def validate_subcontracting_suppliers(doc: Document, method: str | None = None) -> None:
     """
     Validate Item Subcontracting Supplier table.
 
     Rules:
-    1. Only ONE default supplier per (item, company) combination
-    2. No duplicate (company, supplier) combinations
+    1. Exactly one default row per custom_type (In House / Subcontract /
+       In House - Vendor), across the whole item regardless of Company.
+       This is a safety net for the same rule the Item form's client-side JS
+       enforces interactively -- it self-corrects here (rather than blocking
+       the save) so rows created outside the form (Data Import, API, bulk
+       edit) can't leave a type with zero or multiple defaults.
+    2. No duplicate (company, supplier) combinations.
 
     Args:
         doc: Item document
@@ -20,11 +46,10 @@ def validate_subcontracting_suppliers(doc: Document, method: str | None = None) 
     if not doc.get("custom_subcontracting_suppliers"):
         return
 
-    # Track defaults per company
-    company_defaults: dict[str, str] = {}
-
     # Track unique (company, supplier) combinations
     seen_combinations: set[tuple[str, str]] = set()
+
+    rows_by_type: dict[str, list] = {}
 
     for idx, row in enumerate(doc.custom_subcontracting_suppliers, start=1):
         # Check for duplicate (company, supplier)
@@ -37,24 +62,27 @@ def validate_subcontracting_suppliers(doc: Document, method: str | None = None) 
             )
         seen_combinations.add(key)
 
-        # Check for multiple defaults per company
-        if row.is_default:
-            if row.company in company_defaults:
-                frappe.throw(
-                    _("Row #{0}: Only one default subcontracting supplier is allowed per company. "
-                      "Company '{1}' already has '{2}' marked as default.").format(
-                        idx,
-                        frappe.bold(row.company),
-                        frappe.bold(company_defaults[row.company])
-                    )
-                )
-            company_defaults[row.company] = row.supplier
-
         # Validate lead_time_days is non-negative
         if row.lead_time_days and row.lead_time_days < 0:
             frappe.throw(
                 _("Row #{0}: Lead Time Days cannot be negative").format(idx)
             )
+
+        if row.custom_type:
+            rows_by_type.setdefault(row.custom_type, []).append(row)
+
+    for type_rows in rows_by_type.values():
+        defaults = [row for row in type_rows if row.is_default]
+
+        if len(defaults) == 0:
+            # No default for this type -- pick the first row as default,
+            # same as the "auto-default the first row" behaviour on the form.
+            type_rows[0].is_default = 1
+        elif len(defaults) > 1:
+            # Multiple defaults for this type -- keep only the last one
+            # (matches the form's "ticking a new default clears the old one").
+            for row in defaults[:-1]:
+                row.is_default = 0
 
 
 

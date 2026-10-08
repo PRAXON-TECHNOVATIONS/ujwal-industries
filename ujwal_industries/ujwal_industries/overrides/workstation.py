@@ -8,6 +8,26 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.model.document import Document  # type: ignore[import-untyped]
+from frappe.utils import flt
+
+
+def calculate_day_cost(doc: Document, method: str | None = None) -> None:
+    """Roll up the per-day cost fields into Total Cost per Day and Cost per
+    Min, used as the default Shift Rate per Min on Cost Estimation."""
+    doc.custom_total_cost_per_day = (
+        flt(doc.custom_machine_emi_per_day)
+        + flt(doc.custom_wages_per_shift)
+        + flt(doc.custom_electricity_per_shift)
+        + flt(doc.custom_factory_expenses_per_day)
+        + flt(doc.custom_finance_cost_per_day)
+        + flt(doc.custom_admin_cost_per_day)
+        + flt(doc.custom_selling_dist_cost_per_day)
+    )
+
+    shift_hours = flt(doc.custom_shift_hours)
+    doc.custom_cost_per_min = (
+        doc.custom_total_cost_per_day / 60 / shift_hours if shift_hours else 0
+    )
 
 
 @frappe.whitelist()
@@ -83,7 +103,12 @@ def has_permission_query_workstation(user: str) -> str | None:
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
+    if (
+        "Manufacturing Manager" in roles
+        or "System Manager" in roles
+        or "Planning supervisor" in roles
+        or "Production Master User" in roles
+    ):
         # Full access - can see all workstations
         return None
 
@@ -295,7 +320,12 @@ def has_permission_workstation(doc: Document, user: str, permission_type: str) -
     # Check if user has Manufacturing Manager or System Manager role
     roles = frappe.get_roles(user)
 
-    if "Manufacturing Manager" in roles or "System Manager" in roles or "Planning supervisor" in roles:
+    if (
+        "Manufacturing Manager" in roles
+        or "System Manager" in roles
+        or "Planning supervisor" in roles
+        or "Production Master User" in roles
+    ):
         # Full access
         return True
 

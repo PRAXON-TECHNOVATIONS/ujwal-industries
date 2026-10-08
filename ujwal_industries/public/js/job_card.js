@@ -17,6 +17,16 @@ frappe.ui.form.on("Job Card", {
 		if (!frm.is_new()) {
 			render_tool_summary(frm);
 			update_balance_qty(frm);
+			add_material_return_button(frm);
+		}
+
+		// The "Completed" status is reused as a pre-submit signal (see
+		// apply_order_completed_status in job_card.py) so reports/displays that
+		// filter on status="Completed" keep working unchanged. Once the document
+		// is actually submitted, show "Submitted" on the page badge only — the
+		// underlying status field stays "Completed" in the database.
+		if (frm.doc.docstatus === 1 && frm.doc.status === "Completed") {
+			frm.page.set_indicator(__("Submitted"), "blue");
 		}
 	},
 
@@ -190,6 +200,24 @@ frappe.ui.form.on("Job Card", {
 		// This is a workaround since we can't call super() in Frappe
 		_original_prepare_timer_buttons(frm);
 
+		// Data-integrity guard: the core button logic above only looks at
+		// started_time/current_time/status, not at whether a time log row is
+		// actually open. If the job card claims to be running but has no open
+		// (to_time unset) row, "Pause Job" has nothing to close and pausing
+		// throws server-side. Show "Resume Job" instead so the operator can
+		// recover by creating a fresh open row.
+		const time_logs = frm.doc.time_logs || [];
+		const has_open_time_log = time_logs.some((tl) => !tl.to_time);
+		const appears_running = frm.doc.started_time || frm.doc.current_time;
+
+		if (appears_running && frm.doc.status != "On Hold" && !has_open_time_log) {
+			frm.page.remove_inner_button(__("Pause Job"));
+			frm.page.remove_inner_button(__("Complete Job"));
+			frm.add_custom_button(__("Resume Job"), () => {
+				frm.events.start_job(frm, "Resume Job", frm.doc.employee);
+			}).addClass("btn-primary");
+		}
+
 		//  CHECK DOWNTIME
 		const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
 
@@ -204,7 +232,7 @@ frappe.ui.form.on("Job Card", {
 
 		// Now override the Pause Job button behavior
 		if (frm.doc.started_time || frm.doc.current_time) {
-			if (frm.doc.status != "On Hold") {
+			if (frm.doc.status != "On Hold" && has_open_time_log) {
 				// Remove the default Pause Job button
 				frm.page.remove_inner_button(__("Pause Job"));
 
@@ -216,6 +244,62 @@ frappe.ui.form.on("Job Card", {
 		}
 	},
 });
+
+/**
+ * "Material Return" button.
+ *
+ * The operator clicks this when the job can't continue (e.g. machine breakdown) and the
+ * remaining transferred raw material has to be returned to store. It records whatever was
+ * produced so far, stops the job, and sets the Job Card status to "Material Return" — a
+ * signal for the Store Incharge (visible on the Store Display) to make the Manufacture
+ * Stock Entry for the produced qty and return the leftover raw material.
+ *
+ * Shown always on a draft Job Card (even when not running / 0 qty produced), and hidden
+ * once it is already in Material Return / Completed.
+ */
+function add_material_return_button(frm) {
+	if (frm.doc.docstatus !== 0) return;
+	if (frm.doc.status === "Material Return" || frm.doc.status === "Completed") return;
+
+	frm.add_custom_button(__("Material Return"), () => {
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Float",
+					label: __("Quantity Produced So Far"),
+					fieldname: "completed_qty",
+					default: flt(frm.doc.total_completed_qty),
+					description: __(
+						"This qty stays on the Job Card. Store will make a Manufacture Stock Entry for it and return the remaining raw material."
+					),
+				},
+			],
+			(values) => {
+				frappe.call({
+					method: "ujwal_industries.ujwal_industries.overrides.job_card.material_return_stop_job",
+					args: {
+						args: {
+							job_card_id: frm.doc.name,
+							completed_qty: flt(values.completed_qty),
+							complete_time: frappe.datetime.now_datetime(),
+						},
+					},
+					freeze: true,
+					freeze_message: __("Marking Material Return..."),
+					callback: () => {
+						frappe.show_alert({
+							message: __("Job Card marked for Material Return"),
+							indicator: "orange",
+						});
+						frm.reload_doc();
+					},
+				});
+			},
+			__("Material Return"),
+			__("Confirm")
+		);
+	}).addClass("btn-danger");
+}
 
 function hide_button(frm) {
 	const requires_tool = frm.doc.__onload && frm.doc.__onload.operation_requires_tool;
@@ -248,10 +332,12 @@ function hide_job_card_timer(frm) {
 function show_pause_reason_dialog(frm) {
 	let tool_cavities = 1;
 
-	// Default start counter = end counter of last time log (machine counter continuity),
-	// falling back to 0 if no previous log exists.
+	// Default start counter = end counter of last completed time log (machine counter continuity),
+	// falling back to 0 if no previous completed log exists. The current (resumed) row has no
+	// to_time yet and must be excluded, otherwise its unset end counter (0) wins instead.
 	const time_logs = frm.doc.time_logs || [];
-	const last_log = time_logs.length ? time_logs[time_logs.length - 1] : null;
+	const completed_logs = time_logs.filter((log) => log.to_time);
+	const last_log = completed_logs.length ? completed_logs[completed_logs.length - 1] : null;
 	const default_start_counter = flt(last_log && last_log.custom_end_counter || 0);
 
 	const d = new frappe.ui.Dialog({

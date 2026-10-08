@@ -1,0 +1,390 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "CE-.####",
+ "creation": "2026-08-11 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item",
+  "item_name",
+  "part_no",
+  "column_break_hdr1",
+  "company",
+  "estimation_date",
+  "qty",
+  "bom",
+  "last_pulled_bom",
+  "last_pulled_qty",
+  "item_tree_json",
+  "rm_section",
+  "rm_items",
+  "total_gross_rm_cost_per_pc",
+  "scrap_section",
+  "scrap_items",
+  "total_scrap_price_per_pc",
+  "section_break_rm2",
+  "net_rm_cost_per_pc",
+  "operations_tab",
+  "operation_items",
+  "total_labour_cost_per_pc",
+  "other_costs_tab",
+  "inventory_carrying_pct",
+  "packing_forwarding_pct",
+  "rejection_pct",
+  "column_break_oc1",
+  "inventory_carrying_cost",
+  "packing_forwarding_cost",
+  "rejection_cost",
+  "summary_section",
+  "total_cost_per_pc",
+  "column_break_sum1",
+  "profit_mode",
+  "profit_pct",
+  "profit_amount",
+  "total_component_cost",
+  "total_component_cost_for_qty",
+  "summary_tab",
+  "summary_html",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Part Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "item.item_code",
+   "fieldname": "part_no",
+   "fieldtype": "Data",
+   "label": "Part No",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hdr1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "estimation_date",
+   "fieldtype": "Date",
+   "label": "Estimation Date",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Quantity",
+   "precision": "3"
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "BOM",
+   "options": "BOM",
+   "description": "Auto-set to the item's default BOM when you pick an Item, and RM/Scrap/Operations fill in immediately. Switch to a different active BOM here if needed — on Save, RM/Scrap/Operations will be refreshed from it."
+  },
+  {
+   "fieldname": "last_pulled_bom",
+   "fieldtype": "Data",
+   "label": "Last Pulled BOM",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — tracks which BOM the RM/Scrap/Operations tables were last generated from, so Save only re-pulls when the BOM field has actually changed."
+  },
+  {
+   "fieldname": "last_pulled_qty",
+   "fieldtype": "Float",
+   "label": "Last Pulled Qty",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — tracks the Quantity that RM/Scrap weights were last scaled to, so Save re-pulls when Quantity changes just like it does for the BOM field."
+  },
+  {
+   "fieldname": "item_tree_json",
+   "fieldtype": "Long Text",
+   "label": "Item Tree (JSON)",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "report_hide": 1,
+   "description": "Internal — every (item, parent item) pair visited while pulling from the BOM, including items with no operations of their own. Lets the Summary render Operations as a full nested BOM tree even where operation rows alone would leave gaps (a pure-container assembly with no operations of its own)."
+  },
+  {
+   "fieldname": "rm_section",
+   "fieldtype": "Section Break",
+   "label": "Raw Material"
+  },
+  {
+   "fieldname": "rm_items",
+   "fieldtype": "Table",
+   "label": "RM Items",
+   "options": "Cost Estimation RM Item"
+  },
+  {
+   "fieldname": "total_gross_rm_cost_per_pc",
+   "fieldtype": "Float",
+   "label": "Total Gross RM Cost / Pc",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scrap_section",
+   "fieldtype": "Section Break",
+   "label": "Scrap"
+  },
+  {
+   "fieldname": "scrap_items",
+   "fieldtype": "Table",
+   "label": "Scrap Items",
+   "options": "Cost Estimation Scrap Item"
+  },
+  {
+   "fieldname": "total_scrap_price_per_pc",
+   "fieldtype": "Float",
+   "label": "Total Scrap Price / Pc",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_rm2",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "net_rm_cost_per_pc",
+   "fieldtype": "Float",
+   "label": "Net RM Cost / Pc",
+   "precision": "3",
+   "read_only": 1,
+   "bold": 1
+  },
+  {
+   "fieldname": "operations_tab",
+   "fieldtype": "Tab Break",
+   "label": "Operations"
+  },
+  {
+   "fieldname": "operation_items",
+   "fieldtype": "Table",
+   "label": "Operations",
+   "options": "Cost Estimation Operation Item"
+  },
+  {
+   "fieldname": "total_labour_cost_per_pc",
+   "fieldtype": "Float",
+   "label": "Total Labour Cost / Pc",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "other_costs_tab",
+   "fieldtype": "Tab Break",
+   "label": "Other Costs"
+  },
+  {
+   "fieldname": "inventory_carrying_pct",
+   "fieldtype": "Percent",
+   "label": "Inventory Carrying %",
+   "description": "% of RM rate × Gross Wt"
+  },
+  {
+   "fieldname": "packing_forwarding_pct",
+   "fieldtype": "Percent",
+   "label": "Packing & Forwarding %",
+   "description": "% of (Net RM Cost + Total Labour Cost)"
+  },
+  {
+   "fieldname": "rejection_pct",
+   "fieldtype": "Percent",
+   "label": "Rejection %",
+   "description": "% of (Net RM Cost + Total Labour Cost)"
+  },
+  {
+   "fieldname": "column_break_oc1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "inventory_carrying_cost",
+   "fieldtype": "Float",
+   "label": "Inventory Carrying Cost",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "packing_forwarding_cost",
+   "fieldtype": "Float",
+   "label": "Packing & Forwarding Cost",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rejection_cost",
+   "fieldtype": "Float",
+   "label": "Rejection Cost",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "total_cost_per_pc",
+   "fieldtype": "Float",
+   "label": "Total Cost / Pc",
+   "precision": "3",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Net RM Cost + Total Labour Cost + Inventory Carrying + Packing & Forwarding + Rejection"
+  },
+  {
+   "fieldname": "column_break_sum1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Percentage",
+   "fieldname": "profit_mode",
+   "fieldtype": "Select",
+   "label": "Profit Mode",
+   "options": "Percentage\nFlat Amount"
+  },
+  {
+   "depends_on": "eval:doc.profit_mode == 'Percentage'",
+   "fieldname": "profit_pct",
+   "fieldtype": "Percent",
+   "label": "Profit %",
+   "description": "% of (Net RM Cost + Total Labour Cost)"
+  },
+  {
+   "fieldname": "profit_amount",
+   "fieldtype": "Float",
+   "label": "Profit Amount",
+   "precision": "3",
+   "read_only_depends_on": "eval:doc.profit_mode == 'Percentage'",
+   "description": "Auto-computed when Profit Mode is Percentage. Type directly when Flat Amount."
+  },
+  {
+   "fieldname": "total_component_cost",
+   "fieldtype": "Float",
+   "label": "Total Component Cost",
+   "precision": "3",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Total Cost / Pc + Profit Amount"
+  },
+  {
+   "fieldname": "total_component_cost_for_qty",
+   "fieldtype": "Float",
+   "label": "Total Component Cost (for Qty)",
+   "precision": "3",
+   "read_only": 1,
+   "bold": 1,
+   "description": "Total Component Cost × Quantity"
+  },
+  {
+   "fieldname": "summary_tab",
+   "fieldtype": "Tab Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "summary_html",
+   "fieldtype": "HTML",
+   "label": "Cost Summary"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Cost Estimation",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-11 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Cost Estimation",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing User",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "item, part_no",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_name"
+}

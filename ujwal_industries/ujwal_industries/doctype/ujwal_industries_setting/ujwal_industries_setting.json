@@ -7,7 +7,14 @@
  "field_order": [
   "settings_section",
   "machine_conflict_validation",
-  "create_work_order_and_material_request_on_submit"
+  "create_work_order_and_material_request_on_submit",
+  "auto_submit_production_plan_from_bulk_pp",
+  "default_service_item",
+  "consider_spm_for_split",
+  "cost_estimation_section",
+  "assembly_operation_names",
+  "purchase_order_visibility_section",
+  "po_visibility_rules"
  ],
  "fields": [
   {
@@ -24,17 +31,62 @@
   },
   {
    "default": "0",
-   "description": "In Production Plan",
+   "description": "In Production Plan. If checked, submitting a Production Plan will NOT auto-create anything — create Work Orders / Purchase Orders / Material Requests manually from the Production Plan buttons. If unchecked (default), submit auto-creates Work Orders (In House / In House - Vendor), Subcontract Purchase Orders (Subcontract), Service Purchase Orders (In House - Vendor) and draft Material Requests (raw materials).",
    "fieldname": "create_work_order_and_material_request_on_submit",
    "fieldtype": "Check",
    "label": "By Pass Create Work Order and Material Request on submit"
+  },
+  {
+   "default": "0",
+   "description": "In Bulk Pre Production Plan. If checked, 'Create Production Plan' also submits the Production Plan and always creates draft Work Orders, Subcontract / Service Purchase Orders and Material Requests (the 'By Pass' setting above is ignored for this). If anything fails, nothing is created and the error is shown on the Bulk PP. If unchecked, the Production Plan is created as Draft for the user to submit.",
+   "fieldname": "auto_submit_production_plan_from_bulk_pp",
+   "fieldtype": "Check",
+   "label": "Auto Submit Production Plan from Bulk PP"
+  },
+  {
+   "default": "Job Work",
+   "description": "In Bulk Pre Production Plan. Service item used when 'Create Production Plan' auto-creates a missing Subcontracting BOM (1 Finished Good = 1 Service Item) for Subcontract / In House - Vendor rows. Must be a non-stock item.",
+   "fieldname": "default_service_item",
+   "fieldtype": "Link",
+   "label": "Default Service Item for Subcontracting BOM",
+   "options": "Item"
+  },
+  {
+   "default": "0",
+   "description": "In Bulk Pre Production Plan. If unchecked, In House / In House - Vendor rows with no tool load qty and no fixed lot capacity are scheduled as a single unsplit batch instead of falling back to SPM-based splitting. Subcontract rows are unaffected by this setting.",
+   "fieldname": "consider_spm_for_split",
+   "fieldtype": "Check",
+   "label": "Consider SPM for Split"
+  },
+  {
+   "fieldname": "cost_estimation_section",
+   "fieldtype": "Section Break",
+   "label": "Cost Estimation"
+  },
+  {
+   "fieldname": "assembly_operation_names",
+   "fieldtype": "Small Text",
+   "label": "Assembly Operation Names",
+   "description": "Comma-separated BOM Operation names (e.g. \"Assembly, Sub Assembly\") that represent putting together multiple manufactured sub-parts by hand, one at a time — rather than one machine cycle producing one output. For these operations, Cost Estimation splits the single BOM Operation into one cost line per sub-assembly component it consumes (each with its own bom_no), multiplying that component's Rate/Pc by how many of it go into one unit of the parent assembly (its BOM Item quantity) — instead of costing the operation once per parent unit. Plain raw materials/fasteners with no BOM of their own are not fanned out this way."
+  },
+  {
+   "fieldname": "purchase_order_visibility_section",
+   "fieldtype": "Section Break",
+   "label": "Purchase Order Visibility"
+  },
+  {
+   "fieldname": "po_visibility_rules",
+   "fieldtype": "Table",
+   "label": "PO Visibility Rules",
+   "options": "PO Visibility Rule",
+   "description": "Users having any role listed here see only the PO types ticked for their roles (union if they have several listed roles). Users with none of these roles, System Manager and Administrator see all Purchase Orders. Applies to PO list, form, link fields, Report View and Purchase Order Analysis."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-11 17:41:25.246958",
+ "modified": "2026-10-07 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",

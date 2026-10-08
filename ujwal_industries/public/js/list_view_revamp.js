@@ -6,7 +6,6 @@
 	const META_MAX_WIDTH = 220;
 	const SUBJECT_MIN_WIDTH = 160;
 	const SALES_ORDER_COLUMNS = [
-		{ key: "custom_customer_names", label: __("Customer") },
 		{ key: "item_code", label: __("Item Code") },
 		{ key: "item_name", label: __("Item Name") },
 	];
@@ -112,30 +111,55 @@
 	}
 
 	function add_sales_order_headers(listview) {
-		const $headerLeft = listview.$result.find(".list-row-head .level-left");
+		// Use .list-header-subject specifically: the header has two .level-left
+		// elements (subject + checkbox-actions) and align_list_view() measures
+		// columns from .list-header-subject > .list-row-col.
+		const $headerLeft = listview.$result.find(".list-row-head .list-header-subject");
 		if (!$headerLeft.length) return;
 
+		// Insert the extra columns right after the subject (Customer Name) column so
+		// the order becomes: Customer Name -> Item Code -> Item Name -> standard fields.
+		let $anchor = $headerLeft.children(".list-row-col").first();
 		SALES_ORDER_COLUMNS.forEach((column) => {
-			if ($headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`).length) return;
+			if ($headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`).length) {
+				$anchor = $headerLeft.find(`.ujwal-so-extra-col[data-key="${column.key}"]`);
+				return;
+			}
 
-			$headerLeft.append(
+			const $col = $(
 				`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
 					<span>${frappe.utils.escape_html(column.label)}</span>
 				</div>`
 			);
+			if ($anchor.length) {
+				$col.insertAfter($anchor);
+			} else {
+				$headerLeft.append($col);
+			}
+			$anchor = $col;
 		});
 	}
 
 	function add_sales_order_row_columns(listview, salesOrder, values) {
-		const $matched = listview.$result
-			.find(".list-row-container [data-name], .list-row[data-name]")
+		// The row's data-name lives on .list-row-checkbox and is URL-encoded, so match
+		// against both the raw and encoded name, then walk up to the .list-row.
+		const encoded = encodeURIComponent(salesOrder);
+		const $checkbox = listview.$result
+			.find(".list-row-container [data-name]")
 			.filter(function () {
-				return $(this).attr("data-name") === salesOrder;
-			});
-		const $row = $matched.hasClass("list-row") ? $matched.first() : $matched.find(".list-row").first();
-		const $rowLeft = $row.find(".level-left");
+				const name = $(this).attr("data-name");
+				return name === salesOrder || name === encoded;
+			})
+			.first();
+		if (!$checkbox.length) return;
+
+		const $row = $checkbox.closest(".list-row");
+		const $rowLeft = $row.find(".level-left").first();
 		if (!$rowLeft.length) return;
 
+		// Mirror the header: insert after the subject column so rows line up by index
+		// with the header in align_list_view().
+		let $anchor = $rowLeft.children(".list-row-col").first();
 		SALES_ORDER_COLUMNS.forEach((column) => {
 			const value = values[column.key] || "";
 			const html = `<span class="ellipsis">${frappe.utils.escape_html(value)}</span>`;
@@ -143,13 +167,21 @@
 
 			if ($existing.length) {
 				$existing.html(html);
-			} else {
-				$rowLeft.append(
-					`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
-						${html}
-					</div>`
-				);
+				$anchor = $existing;
+				return;
 			}
+
+			const $col = $(
+				`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
+					${html}
+				</div>`
+			);
+			if ($anchor.length) {
+				$col.insertAfter($anchor);
+			} else {
+				$rowLeft.append($col);
+			}
+			$anchor = $col;
 		});
 	}
 
@@ -179,7 +211,6 @@
 			docs.forEach((doc) => {
 				const itemsForSalesOrder = itemsBySalesOrder[doc.name] || [];
 				add_sales_order_row_columns(listview, doc.name, {
-					custom_customer_names: doc.customer_name_ || doc.customer_name || "",
 					item_code: get_unique_values(itemsForSalesOrder, "item_code").join(", "),
 					item_name: get_unique_values(itemsForSalesOrder, "item_name").join(", "),
 				});

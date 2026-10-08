@@ -13,15 +13,28 @@ from erpnext.manufacturing.doctype.production_plan.production_plan import (
     set_default_warehouses,
 )
 
+from ujwal_industries.ujwal_industries.overrides.pp_utils import throw_if_supplier_missing
+
 
 class CustomProductionPlan(ProductionPlan):
-    
+
+    def before_submit(self):
+        # Always enforced (even with "By Pass" setting) — the manual Create buttons
+        # run the same make_work_order() and need the supplier too.
+        throw_if_supplier_missing(
+            self.po_items,
+            self.sub_assembly_items,
+            fg_type_field="custom_manufacturing_type",
+            context_msg=_("Cannot submit Production Plan {0}.").format(self.name),
+        )
+
     def on_submit(self):
         self.update_bin_qty()
         self.update_sales_order()
         
         ui_setting = frappe.get_doc("Ujwal Industries Setting","Ujwal Industries Setting")
-        if ui_setting.create_work_order_and_material_request_on_submit == 1:
+        # Auto-submit from Bulk PP always creates the documents; By Pass applies to manual submit only.
+        if ui_setting.create_work_order_and_material_request_on_submit == 1 and not self.flags.from_bulk_pp:
             return
         else:
             self.make_work_order()
@@ -146,10 +159,10 @@ class CustomProductionPlan(ProductionPlan):
         for _key, item in items_data.items():
             # Check if this FG item is marked for subcontracting
             # Note: get_production_items() returns 'production_item', not 'item_code'
-            item_code = item.get("production_item")
+            production_plan_item = item.get("production_plan_item")
             fg_row = None
             for po_item in self.po_items:
-                if po_item.item_code == item_code:
+                if po_item.name == production_plan_item:
                     fg_row = po_item
                     break
 
@@ -172,7 +185,7 @@ class CustomProductionPlan(ProductionPlan):
                 else:
                     frappe.msgprint(
                         _("FG Item {0} is marked for Subcontract but has no supplier. Skipping.").format(
-                            item_code
+                            fg_row.item_code
                         )
                     )
                 continue
@@ -323,11 +336,36 @@ class CustomProductionPlan(ProductionPlan):
                 continue
 
             po.set_service_items_for_finished_goods()
+            self._fill_missing_service_items(po)
             po.set_missing_values()
             po.flags.ignore_mandatory = True
             po.flags.ignore_validate = True
             po.insert()
             purchase_orders.append(po.name)
+
+    @staticmethod
+    def _fill_missing_service_items(po):
+        """
+        Set the service item on any Subcontract PO line still without one.
+        ERPNext's set_service_items_for_finished_goods passes a set to
+        get_subcontracting_boms_for_finished_goods, which only handles a list, so it
+        can leave lines empty; the PO is inserted with ignore_validate, so nothing
+        else fills them.
+        """
+        from erpnext.subcontracting.doctype.subcontracting_bom.subcontracting_bom import (
+            get_subcontracting_boms_for_finished_goods,
+        )
+
+        fg_items = list({d.fg_item for d in po.items if not d.item_code and d.fg_item})
+        if not fg_items:
+            return
+        sub_boms = get_subcontracting_boms_for_finished_goods(fg_items)
+        for d in po.items:
+            sb = sub_boms.get(d.fg_item) if not d.item_code else None
+            if sb:
+                d.item_code = sb.service_item
+                d.qty = flt(d.fg_item_qty) * flt(sb.conversion_factor)
+                d.uom = sb.service_item_uom
 
     def make_vendor_purchase_orders(self, vendor_po_dict, purchase_orders):
         """
@@ -342,6 +380,10 @@ class CustomProductionPlan(ProductionPlan):
             po.company = self.company
             po.supplier = supplier
             po.is_subcontracted = 0
+            # In House - Vendor: item is manufactured in our premises (Work Order),
+            # but the vendor is paid for the labor/process via a Service PO.
+            # This flag drives the "Service PO" naming series (see purchase_order.autoname).
+            po.custom_service_po = 1
 
             # Get schedule date from first item
             first_item = item_list[0]
@@ -358,16 +400,17 @@ class CustomProductionPlan(ProductionPlan):
                 item_code = row.get("item_code")
                 bom_no = row.get("bom_no")
                 
-                # Fetch Subcontracting BOM
+                # Fetch Subcontracting BOM — by finished good only (ERPNext allows one
+                # active per item, and the service is the same whichever BOM is used)
                 sub_bom = frappe.db.get_value(
-                    "Subcontracting BOM", 
-                    {"finished_good": item_code, "finished_good_bom": bom_no, "is_active": 1},
+                    "Subcontracting BOM",
+                    {"finished_good": item_code, "is_active": 1},
                     ["name", "service_item", "conversion_factor"],
                     as_dict=True
                 )
                 
                 if not sub_bom:
-                    frappe.msgprint(_("No active Subcontracting BOM found for Item {0} and BOM {1}").format(item_code, bom_no))
+                    frappe.msgprint(_("No active Subcontracting BOM found for Item {0}").format(item_code))
                     continue
                 
                 service_item = sub_bom.service_item
@@ -387,7 +430,9 @@ class CustomProductionPlan(ProductionPlan):
                 po.append("items", {
                     "item_code": srv_item,
                     "qty": srv_data["qty"],
-                    "schedule_date": srv_data["schedule_date"]
+                    "schedule_date": srv_data["schedule_date"],
+                    # Link back so the Service PO shows in PP / Bulk PP connections
+                    "production_plan": self.name,
                 })
 
             if po.items:
@@ -433,23 +478,35 @@ class CustomProductionPlan(ProductionPlan):
                 else:
                     workstation_list.append(ws)
 
-            if workstation_list:
+            if workstation_list and wo.operations:
+                # The PP custom_workstation only overrides the FIRST operation (the
+                # sending/Blanking step). All later operations keep the machines that
+                # come from their own BOM Operation rows. If custom_workstation lists
+                # multiple machines, the first operation is split in parallel across
+                # them (time divided), while the rest are left untouched.
                 final_operation = []
                 row_count = len(workstation_list)
                 idx = 1
 
-                for operation_row in wo.operations:
-                    base_time = flt(operation_row.time_in_mins)
-                    split_time = base_time if operation_row.fixed_time else base_time / row_count
-                    op_dict = operation_row.as_dict()
+                first_op = wo.operations[0]
+                base_time = flt(first_op.time_in_mins)
+                split_time = base_time if first_op.fixed_time else base_time / row_count
+                first_op_dict = first_op.as_dict()
 
-                    for workstation in workstation_list:
-                        temp = op_dict.copy()
-                        temp['workstation'] = workstation
-                        temp['time_in_mins'] = split_time
-                        temp['idx'] = idx
-                        idx += 1
-                        final_operation.append(temp)
+                for workstation in workstation_list:
+                    temp = first_op_dict.copy()
+                    temp['workstation'] = workstation
+                    temp['time_in_mins'] = split_time
+                    temp['idx'] = idx
+                    idx += 1
+                    final_operation.append(temp)
+
+                # Keep operations 2..N exactly as built from the BOM (machine + time).
+                for operation_row in wo.operations[1:]:
+                    rec = operation_row.as_dict()
+                    rec['idx'] = idx
+                    idx += 1
+                    final_operation.append(rec)
 
                 wo.operations = []
                 for rec in final_operation:

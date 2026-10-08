@@ -1,0 +1,89 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "scrap_description",
+  "item_name",
+  "scrap_rate_per_kg",
+  "scrap_wt_per_pc",
+  "column_break_1",
+  "scrap_price_per_pc",
+  "bom"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "scrap_description",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Scrap Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "scrap_description.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "description": "The BOM this scrap row was pulled from \u2014 lets you trace which sub-assembly's BOM this scrap belongs to.",
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "Source BOM",
+   "options": "BOM",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "scrap_rate_per_kg",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Scrap Rate / Kg",
+   "precision": "3"
+  },
+  {
+   "columns": 2,
+   "description": "Shown to 6 decimals \u2014 component weights per piece are often a small fraction of a kg, and 3 decimals hides too much to visually verify Rate \u00d7 Weight = Cost.",
+   "fieldname": "scrap_wt_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Scrap Wt / Pc (Kg)",
+   "precision": "6"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "fieldname": "scrap_price_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Scrap Price / Pc",
+   "precision": "3",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-08 13:48:05.600739",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Cost Estimation Scrap Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

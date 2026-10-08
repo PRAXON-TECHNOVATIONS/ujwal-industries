@@ -385,6 +385,41 @@ frappe.ui.form.on("Work Order", {
 // ============================================================================
 // Total Process Time Calculation
 // ============================================================================
+/**
+ * "Return Material" button.
+ *
+ * Shows when a Job Card on this Work Order is in "Material Return" status (operator
+ * stopped the job and the leftover transferred raw material needs to go back to store).
+ * Opens a pre-filled draft Material Transfer Stock Entry that moves the leftover
+ * (transferred − consumed) of each required item from the WIP warehouse back to its
+ * source RM store, for the Store Incharge to review and submit.
+ */
+function add_return_material_button(frm) {
+    if (frm.doc.docstatus !== 1) return;
+
+    frappe.call({
+        method: "ujwal_industries.ujwal_industries.overrides.work_order.has_material_return_job_card",
+        args: { work_order: frm.doc.name },
+        callback(r) {
+            if (!r.message) return;
+
+            frm.add_custom_button(__("Return Material"), () => {
+                frappe.call({
+                    method: "ujwal_industries.ujwal_industries.overrides.work_order.make_material_return_stock_entry",
+                    args: { work_order: frm.doc.name },
+                    freeze: true,
+                    freeze_message: __("Preparing return entry..."),
+                    callback(res) {
+                        if (!res.message) return;
+                        const doc = frappe.model.sync(res.message)[0];
+                        frappe.set_route("Form", doc.doctype, doc.name);
+                    },
+                });
+            }, __("Create")).addClass("btn-warning");
+        },
+    });
+}
+
 frappe.ui.form.on('Work Order', {
     onload(frm) {
         if (!frm.is_new()) {
@@ -395,6 +430,7 @@ frappe.ui.form.on('Work Order', {
     refresh(frm) {
         if (!frm.is_new()) {
             calculate_and_show_process_time(frm);
+            add_return_material_button(frm);
         }
 
         // Original scrap tracking code

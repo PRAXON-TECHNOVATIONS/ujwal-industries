@@ -1,0 +1,30 @@
+{
+ "content": null,
+ "creation": "2026-06-24 14:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-06-24 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "dispatch_display",
+ "owner": "Administrator",
+ "page_name": "Dispatch Display",
+ "roles": [
+  {
+   "role": "Store Incharge"
+  },
+  {
+   "role": "Store Manager"
+  },
+  {
+   "role": "Manufacturing Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "No",
+ "system_page": 0,
+ "title": "Dispatch Display"
+}

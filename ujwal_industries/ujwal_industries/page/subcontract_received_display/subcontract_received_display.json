@@ -1,0 +1,33 @@
+{
+ "content": null,
+ "creation": "2026-06-24 13:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-06-24 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "subcontract_received_display",
+ "owner": "Administrator",
+ "page_name": "Subcontract Received Display",
+ "roles": [
+  {
+   "role": "Store Incharge"
+  },
+  {
+   "role": "Store Manager"
+  },
+  {
+   "role": "Outsource Store Manager"
+  },
+  {
+   "role": "Purchase Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "No",
+ "system_page": 0,
+ "title": "Subcontract Received Display"
+}

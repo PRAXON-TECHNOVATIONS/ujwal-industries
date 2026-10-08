@@ -22,7 +22,7 @@ class DocumentSeriesSettings(Document):
             if key in seen:
                 frappe.throw(f"Duplicate Document Type not allowed: {row.document_type}")
 
-            seen.add(row.document_type)
+            seen.add(key)
             if row.start_number:
                 if int(row.start_number) >= int(row.end_number):
                     frappe.throw(f"Start Number must be less than End Number for {row.document_type}")
@@ -34,9 +34,11 @@ def get_next_number(doctype):
     settings_doc = frappe.get_doc("Document Series Settings")
 
     for row in settings_doc.document_series:
-        if not row.type:
-            return
-        
+        if row.type:
+            # Rows with a Type are handled by their own doctype autoname
+            # logic (e.g. Purchase Order Service/Sub Con PO), skip them here.
+            continue
+
         if row.document_type == doctype:
 
             start = int(row.start_number)

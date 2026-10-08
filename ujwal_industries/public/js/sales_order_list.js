@@ -1,9 +1,63 @@
 (function () {
 	frappe.listview_settings['Sales Order'] = frappe.listview_settings['Sales Order'] || {};
 
+	function add_quick_filter(listview, { label, filter_doctype, filter_fieldname, fieldtype, options, condition }) {
+		// Append into the same .standard-filter-section as the built-in filters
+		// (ID, Customer, Date, Delivery Status, Billing Status) instead of the
+		// default page_form, so this field continues that row left-to-right
+		// instead of landing in a separate block next to the Filter/Sort buttons.
+		const $standard_filter_section = listview.page.page_form.find('.standard-filter-section');
+		const field = listview.page.add_field({
+			fieldtype: fieldtype || 'Data',
+			options: options,
+			fieldname: filter_fieldname,
+			doctype: filter_doctype,
+			condition: condition || 'like',
+			label: __(label),
+		}, $standard_filter_section.length ? $standard_filter_section : undefined);
+
+		if (fieldtype === 'Link') {
+			field.df.change = () => listview.filter_area.debounced_refresh_list_view();
+		} else {
+			field.$input.on('input', () => listview.filter_area.debounced_refresh_list_view());
+		}
+	}
+
+	function remove_standard_filter(listview, fieldname) {
+		const field = listview.page.fields_dict && listview.page.fields_dict[fieldname];
+		if (!field) return;
+		$(field.wrapper).remove();
+		delete listview.page.fields_dict[fieldname];
+	}
+
 	const _orig_onload = frappe.listview_settings['Sales Order'].onload;
 	frappe.listview_settings['Sales Order'].onload = function (listview) {
 		if (_orig_onload) _orig_onload(listview);
+
+		// Marker class so the filter-bar grid CSS below only applies here, not
+		// to every list view's page_form.
+		listview.page.page_form.addClass('ujwal-so-filter-grid');
+
+		// Customer Name is redundant with Customer, and Company is rarely filtered
+		// on here — drop both so Item Code / Customer's PO No fit cleanly in the
+		// filter bar instead of wrapping into a misaligned row.
+		remove_standard_filter(listview, 'customer_name');
+		remove_standard_filter(listview, 'company');
+
+		add_quick_filter(listview, {
+			label: 'Item Code',
+			filter_doctype: 'Sales Order Item',
+			filter_fieldname: 'item_code',
+			fieldtype: 'Link',
+			options: 'Item',
+			condition: '=',
+		});
+
+		add_quick_filter(listview, {
+			label: "Customer's PO No",
+			filter_doctype: 'Sales Order',
+			filter_fieldname: 'po_no',
+		});
 
 		const $btn = listview.page.add_button(
 			__('Create Bulk Pre Production'),
@@ -43,117 +97,8 @@
 		);
 	};
 
-	const EXTRA_COLUMNS = [
-		{ key: 'custom_customer_names', label: __('Customer') },
-		{ key: 'item_code', label: __('Item Code') },
-		{ key: 'item_name', label: __('Item Name') },
-	];
-
-	frappe.listview_settings['Sales Order'] = frappe.listview_settings['Sales Order'] || {};
-	frappe.listview_settings['Sales Order'].add_fields = [
-		...new Set([
-			...(frappe.listview_settings['Sales Order'].add_fields || []),
-			'customer',
-			'customer_name',
-			'customer_name_',
-		]),
-	];
-
-	const original_refresh = frappe.listview_settings['Sales Order'].refresh;
-	frappe.listview_settings['Sales Order'].refresh = function (listview) {
-		if (original_refresh) {
-			original_refresh(listview);
-		}
-		requestAnimationFrame(() => render_sales_order_extra_columns(listview));
-	};
-
-	function render_sales_order_extra_columns(listview) {
-		if (!listview?.$result?.length || listview.view_name !== 'List') {
-			return;
-		}
-
-		const docs = listview.data || [];
-		const sales_orders = docs.map((doc) => doc.name).filter(Boolean);
-		if (!sales_orders.length) {
-			return;
-		}
-
-		frappe.call({
-			method: 'ujwal_industries.api.sales_order_tracking.get_so_items_for_list',
-			args: { sales_orders: sales_orders },
-		}).then((r) => {
-			const items = r.message || [];
-			const items_by_so = {};
-			items.forEach((item) => {
-				if (item.parent) {
-					items_by_so[item.parent] = items_by_so[item.parent] || [];
-					items_by_so[item.parent].push(item);
-				}
-			});
-
-			add_headers(listview);
-
-			docs.forEach((doc) => {
-				const items_for_so = items_by_so[doc.name] || [];
-				add_row_columns(listview, doc.name, {
-					custom_customer_names: doc.customer_name_ || doc.customer_name || '',
-					item_code: get_unique_values(items_for_so, 'item_code').join(', '),
-					item_name: get_unique_values(items_for_so, 'item_name').join(', '),
-				});
-			});
-
-			if (frappe.views.ListView.__ujwal_revamp_patched) {
-				requestAnimationFrame(() => $(window).trigger('resize'));
-			}
-		});
-	}
-
-	function get_unique_values(rows, fieldname) {
-		return [...new Set((rows || []).map((r) => r[fieldname]).filter(Boolean))];
-	}
-
-	function add_headers(listview) {
-		const $header_left = listview.$result.find('.list-row-head .level-left');
-		if (!$header_left.length || $header_left.find('.ujwal-so-extra-col').length) {
-			return;
-		}
-		EXTRA_COLUMNS.forEach((column) => {
-			$header_left.append(
-				`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
-					<span>${frappe.utils.escape_html(column.label)}</span>
-				</div>`
-			);
-		});
-	}
-
-	function add_row_columns(listview, sales_order, values) {
-		const $elem = listview.$result.find('[data-name]').filter(function () {
-			return $(this).attr('data-name') === sales_order;
-		}).first();
-
-		if (!$elem.length) return;
-
-		let $row_left = $elem.find('.level-left').first();
-		if (!$row_left.length) {
-			$row_left = $elem.closest('.list-row, .list-row-container').find('.level-left').first();
-		}
-		if (!$row_left.length) return;
-
-		EXTRA_COLUMNS.forEach((column) => {
-			const value = values[column.key] || '';
-			const $existing = $row_left.find(`.ujwal-so-extra-col[data-key="${column.key}"]`);
-			const html = `<span class="ellipsis">${frappe.utils.escape_html(value)}</span>`;
-
-			if ($existing.length) {
-				$existing.html(html);
-				return;
-			}
-
-			$row_left.append(
-				`<div class="list-row-col ellipsis hidden-xs ujwal-so-extra-col" data-key="${frappe.utils.escape_html(column.key)}">
-					${html}
-				</div>`
-			);
-		});
-	}
+	// NOTE: The Item Code / Item Name extra columns (and their header/row alignment)
+	// are rendered by list_view_revamp.js, which patches ListView.after_render and
+	// also handles the scrollable layout. Don't duplicate that logic here or the
+	// columns get inserted twice and fight the alignment pass.
 })();

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import frappe
+from frappe import _
 from frappe.model.document import Document  # type: ignore[import-untyped]
 from frappe.utils import add_days, getdate, get_datetime, now_datetime
 
@@ -1563,3 +1564,64 @@ def calculate_production_time_from_bom(bom_no: str) -> dict[str, Any]:
         total_minutes += (time_in_mins / batchsize) * bom_qty
 
     return {"production_minutes": total_minutes}
+
+
+# ============================================================================
+# SUPPLIER VALIDATION — Subcontract / In House - Vendor rows
+# ============================================================================
+
+SUPPLIER_REQUIRED_TYPES = ("Subcontract", "In House - Vendor")
+
+
+def get_rows_missing_supplier(fg_rows, sfg_rows, fg_type_field: str) -> list[str]:
+    """
+    Return a message line for every FG / SFG row marked Subcontract or In House - Vendor
+    that has no supplier.
+
+    Args:
+        fg_rows: FG rows (supplier in `custom_supplier`)
+        sfg_rows: SFG rows (manufacturing type in `type_of_manufacturing`, supplier in `supplier`)
+        fg_type_field: FG manufacturing-type field — `manufacturing_type` (Bulk PP)
+            or `custom_manufacturing_type` (Production Plan)
+    """
+    missing = []
+    for row in fg_rows or []:
+        mfg_type = row.get(fg_type_field)
+        if mfg_type in SUPPLIER_REQUIRED_TYPES and not row.get("custom_supplier"):
+            missing.append(_("Row #{0} FG — <b>{1}</b> ({2})").format(row.idx, row.get("item_code"), mfg_type))
+
+    for row in sfg_rows or []:
+        mfg_type = row.get("type_of_manufacturing")
+        if mfg_type in SUPPLIER_REQUIRED_TYPES and not row.get("supplier"):
+            missing.append(_("Row #{0} SFG — <b>{1}</b> ({2})").format(row.idx, row.get("production_item"), mfg_type))
+
+    return missing
+
+
+def throw_validation_sections(context_msg: str, sections: list[tuple[str, list[str]]]) -> None:
+    """Throw one combined error listing every non-empty (heading, lines) section."""
+    sections = [(heading, lines) for heading, lines in sections if lines]
+    if not sections:
+        return
+
+    body = "".join(
+        "<b>{0}</b><ul>{1}</ul>".format(heading, "".join(f"<li>{line}</li>" for line in lines))
+        for heading, lines in sections
+    )
+    frappe.throw(
+        "{0}<br><br>{1}{2}".format(context_msg, body, _("Fix these and try again.")),
+        title=_("Cannot Proceed"),
+    )
+
+
+def throw_if_supplier_missing(fg_rows, sfg_rows, fg_type_field: str, context_msg: str) -> None:
+    """
+    Throw if any FG / SFG row marked Subcontract or In House - Vendor has no supplier.
+
+    Without a supplier the Subcontract PO / Service PO cannot be created, so Production
+    Plan submit is blocked.
+    """
+    throw_validation_sections(
+        context_msg,
+        [(_("Supplier is missing for:"), get_rows_missing_supplier(fg_rows, sfg_rows, fg_type_field))],
+    )

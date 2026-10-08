@@ -108,6 +108,87 @@ def apply_bom_overrides():
         frappe.log_error("Failed to import BOM for monkey patching", "BOM Override Error")
 
 
+def recalculate_on_update_after_submit(doc, method):
+    """
+    Frappe skips the normal "validate" event entirely when editing an already
+    submitted document (it runs before_update_after_submit instead), so BOM's
+    own cost recalculation -- normally triggered from validate() -- never runs
+    when a submitted BOM's Items/Operations/Scrap Items are edited in place.
+
+    We deliberately do NOT call doc.validate() or calculate_rm_cost() here:
+    calculate_rm_cost() unconditionally re-fetches each item's Rate from the
+    item master (Valuation/Last Purchase/Price List, per rm_cost_as_per),
+    which would silently overwrite a rate that was correct and deliberately
+    fixed at submission time just because qty or something else changed.
+
+    Instead, only recompute pure arithmetic from whatever values are already
+    on the rows: amount = qty * rate, and the cost rollups derived from that.
+    Rate itself is only ever changed by an explicit edit to Rate, which is
+    what gets logged in the Change Log.
+    """
+    conversion_rate = flt(doc.conversion_rate) or 1.0
+
+    total_rm_cost = 0.0
+    base_total_rm_cost = 0.0
+    for row in doc.get("items") or []:
+        row.base_rate = flt(row.rate) * conversion_rate
+        row.amount = flt(row.rate, row.precision("rate")) * flt(row.qty, row.precision("qty"))
+        row.base_amount = flt(row.amount) * conversion_rate
+        if flt(doc.quantity):
+            row.qty_consumed_per_unit = flt(row.stock_qty, row.precision("stock_qty")) / flt(
+                doc.quantity, doc.precision("quantity")
+            )
+        total_rm_cost += flt(row.amount)
+        base_total_rm_cost += flt(row.base_amount)
+
+    doc.raw_material_cost = total_rm_cost
+    doc.base_raw_material_cost = base_total_rm_cost
+
+    total_sm_cost = 0.0
+    base_total_sm_cost = 0.0
+    for row in doc.get("scrap_items") or []:
+        row.base_rate = flt(row.rate, row.precision("rate")) * conversion_rate
+        row.amount = flt(row.rate, row.precision("rate")) * flt(row.stock_qty, row.precision("stock_qty"))
+        row.base_amount = flt(row.amount, row.precision("amount")) * conversion_rate
+        total_sm_cost += flt(row.amount)
+        base_total_sm_cost += flt(row.base_amount)
+
+    doc.scrap_material_cost = total_sm_cost
+    doc.base_scrap_material_cost = base_total_sm_cost
+
+    total_op_cost = 0.0
+    base_total_op_cost = 0.0
+    if doc.get("with_operations"):
+        for row in doc.get("operations") or []:
+            if flt(row.hour_rate) and flt(row.time_in_mins):
+                row.base_hour_rate = flt(row.hour_rate) * conversion_rate
+                row.operating_cost = flt(row.hour_rate) * flt(row.time_in_mins) / 60.0
+                row.base_operating_cost = flt(row.operating_cost) * conversion_rate
+                batch_size = flt(row.get("custom_batchsize") or row.batch_size or 1.0) or 1.0
+                row.cost_per_unit = flt(row.operating_cost) / batch_size
+                row.base_cost_per_unit = flt(row.base_operating_cost) / batch_size
+
+            operating_cost = row.operating_cost
+            base_operating_cost = row.base_operating_cost
+            if row.set_cost_based_on_bom_qty:
+                operating_cost = flt(row.cost_per_unit) * flt(doc.quantity)
+                base_operating_cost = flt(row.base_cost_per_unit) * flt(doc.quantity)
+
+            total_op_cost += flt(operating_cost)
+            base_total_op_cost += flt(base_operating_cost)
+    elif doc.get("fg_based_operating_cost"):
+        total_op_cost = flt(doc.quantity) * flt(doc.operating_cost_per_bom_quantity)
+        base_total_op_cost = flt(total_op_cost * conversion_rate, 2)
+
+    doc.operating_cost = total_op_cost
+    doc.base_operating_cost = base_total_op_cost
+
+    doc.total_cost = doc.operating_cost + doc.raw_material_cost - doc.scrap_material_cost
+    doc.base_total_cost = (
+        doc.base_operating_cost + doc.base_raw_material_cost - doc.base_scrap_material_cost
+    )
+
+
 def validate_default_tool(doc, method):
     operation_default_map = {}
 
