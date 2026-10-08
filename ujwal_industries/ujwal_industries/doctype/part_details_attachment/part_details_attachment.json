@@ -1,0 +1,46 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-10-08 17:03:04.500352",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "part_attachment",
+  "column_break_gcmy",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "part_attachment",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Part Attachment"
+  },
+  {
+   "fieldname": "column_break_gcmy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Description"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-08 17:20:00.688487",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Part Details Attachment",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
