@@ -653,24 +653,35 @@ def _apply_rm_received_overrides(
 		for r in doc.mr_items
 		if r.sales_order == so_name and getattr(r, "custom_rm_received_override", None)
 	}
+	# A Receive By in the past = material already there → today (unless backdating is allowed),
+	# so the SFG / FG are never planned in the past
+	_no_backdate = not _get_allow_backdated_setting()
+	_today = getdate()
 	for mr_r in mr_rows_out:
-		if flt(mr_r.get("qty", 0)) <= 0:
-			continue
-		# Row's own date wins over the bulk date; Order By = Receive By = that date
+		# Row's own date wins over the bulk date; Order By = Receive By = that date.
+		# Also on stock-covered rows (qty 0): the user plans when that material is used, so
+		# the SFG / FG follow it. Qty stays 0 — no Material Request is made for it.
 		override_date = row_overrides.get(mr_r.get("row_name")) or bulk_date
+		if override_date and _no_backdate and getdate(override_date) < _today:
+			override_date = _today
 		if override_date:
 			mr_r["end_date"] = str(snap_end(get_datetime(override_date), shift_config))
 			mr_r["start_date"] = str(snap_start(get_datetime(override_date), shift_config))
 			if row_overrides.get(mr_r.get("row_name")):
 				mr_r["rm_override"] = 1
+			if flt(mr_r.get("qty", 0)) <= 0:
+				mr_r["planned_date_only"] = 1
 	return True
 
 
 def _get_rm_end_map(mr_rows_out: list[dict]) -> dict[str, datetime]:
-	"""item_code → latest Receive By of the schedule RM rows that are actually ordered."""
+	"""item_code → latest Receive By of the schedule RM rows that are ordered, or that are
+	stock-covered but got a planned date through the RM received date override."""
 	rm_end_map: dict[str, datetime] = {}
 	for mr_r in mr_rows_out:
-		if flt(mr_r.get("qty", 0)) <= 0 or not mr_r.get("end_date"):
+		if not mr_r.get("end_date"):
+			continue
+		if flt(mr_r.get("qty", 0)) <= 0 and not mr_r.get("planned_date_only"):
 			continue
 		end_dt = get_datetime(mr_r["end_date"])
 		code = mr_r.get("item_code")
@@ -869,13 +880,15 @@ def _get_existing_fg_workstation_map(doc: Document, so_name: str) -> dict[str, d
 	for row in doc.get("po_items") or []:
 		if row.sales_order != so_name or not row.sales_order_item:
 			continue
-		if getattr(row, "custom_workstations_csv", None) or getattr(row, "tool", None):
-			result[row.sales_order_item] = {
-				"bom_no": getattr(row, "bom_no", "") or "",
-				"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
-				"custom_shift_types_csv": getattr(row, "custom_shift_types_csv", "") or "",
-				"tool": getattr(row, "tool", "") or "",
-			}
+		result[row.sales_order_item] = {
+			"bom_no": getattr(row, "bom_no", "") or "",
+			"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
+			"custom_shift_types_csv": getattr(row, "custom_shift_types_csv", "") or "",
+			"tool": getattr(row, "tool", "") or "",
+			# user's Type / Supplier must survive Calculate (regenerate)
+			"manufacturing_type": getattr(row, "manufacturing_type", "") or "",
+			"custom_supplier": getattr(row, "custom_supplier", "") or "",
+		}
 	return result
 
 
@@ -895,6 +908,9 @@ def _get_existing_sfg_workstation_map(doc: Document, so_name: str) -> dict[tuple
 			"custom_workstations_csv": getattr(row, "custom_workstations_csv", "") or "",
 			"custom_shift_types_csv": getattr(row, "custom_shift_types_csv", "") or "",
 			"tool": getattr(row, "tool", "") or "",
+			# user's Type / Supplier must survive Calculate (regenerate)
+			"type_of_manufacturing": getattr(row, "type_of_manufacturing", "") or "",
+			"supplier": getattr(row, "supplier", "") or "",
 		}
 	return result
 
@@ -4710,8 +4726,12 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 		# Add to po_items (FG items)
 		delivery_date = item.delivery_date or item.so_delivery_date
 
-		# Determine manufacturing type from the item's default subcontracting supplier row
-		manufacturing_type = get_default_manufacturing_type_for_item(item.item_code, doc.company)
+		# Manufacturing type: the user's choice on the existing row, else the item's default
+		# subcontracting supplier row (new rows)
+		manufacturing_type = (
+			existing_fg_ws.get("manufacturing_type")
+			or get_default_manufacturing_type_for_item(item.item_code, doc.company)
+		)
 
 		# Get warehouse - use item warehouse or fall back to company default
 		warehouse = item.warehouse
@@ -4740,9 +4760,9 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			'target_warehouse': target_warehouse_map.get(item.item_code),
 			'planned_start_date': delivery_date,
 			'manufacturing_type': manufacturing_type,
-			# Subcontract / In House - Vendor FG: supplier from the default subcontracting supplier row
+			# Subcontract / In House - Vendor FG: the user's supplier, else the default subcontracting supplier row
 			'custom_supplier': (
-				get_default_supplier_for_item(item.item_code, doc.company)
+				(existing_fg_ws.get("custom_supplier") or get_default_supplier_for_item(item.item_code, doc.company))
 				if manufacturing_type in ('Subcontract', 'In House - Vendor')
 				else None
 			),
@@ -4857,7 +4877,11 @@ def get_sub_assembly_items_from_bom(
 				bom_item.item_bom_no,
 				selected_tool=existing_sfg.get("tool") or None,
 			)
-			sfg_mfg_type = get_default_manufacturing_type_for_item(bom_item.item_code, doc.company)
+			# The user's Type on the existing row, else the item's default (new rows)
+			sfg_mfg_type = (
+				existing_sfg.get("type_of_manufacturing")
+				or get_default_manufacturing_type_for_item(bom_item.item_code, doc.company)
+			)
 			# Sub assembly item — use actual required_qty (qty_per_unit × parent qty)
 			doc.append('sub_assembly_items', {
 				'sales_order': so_name,
@@ -4878,9 +4902,9 @@ def get_sub_assembly_items_from_bom(
 				'stock_uom': bom_item.stock_uom,
 				'schedule_date': delivery_date,
 				'type_of_manufacturing': sfg_mfg_type,
-				# Subcontract / In House - Vendor SFG: supplier from the default subcontracting supplier row
+				# Subcontract / In House - Vendor SFG: the user's supplier, else the default subcontracting supplier row
 				'supplier': (
-					get_default_supplier_for_item(bom_item.item_code, doc.company)
+					(existing_sfg.get("supplier") or get_default_supplier_for_item(bom_item.item_code, doc.company))
 					if sfg_mfg_type in ('Subcontract', 'In House - Vendor')
 					else None
 				),
@@ -5640,10 +5664,14 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	_bulk_rm_date = getattr(_so_row_obj, "custom_rm_received_date", None) if _so_row_obj else None
 	_rm_override_on = bool(_so_row_obj and (_bulk_rm_date or cint(getattr(_so_row_obj, "custom_rm_override", 0))))
 	if _rm_override_on:
+		# Also stock-covered rows (qty 0): the date only plans when the SFG / FG start
 		for mr_row in doc.mr_items:
-			if mr_row.sales_order != so_name or flt(mr_row.quantity) <= 0:
+			if mr_row.sales_order != so_name:
 				continue
 			_ovr_date = getattr(mr_row, "custom_rm_received_override", None) or _bulk_rm_date
+			# Past Receive By = material already there → today (unless backdating is allowed)
+			if _ovr_date and not allow_backdated and getdate(_ovr_date) < today:
+				_ovr_date = today
 			if _ovr_date:
 				mr_row.schedule_date = getdate(_ovr_date)
 				mr_row.custom_start_date = _to_datetime(getdate(_ovr_date))
@@ -5654,7 +5682,8 @@ def calculate_dates_for_sales_order(doc: Document, so_name: str):
 	# then cascade up through nested SFGs.
 	rm_schedules: dict[str, Any] = {}
 	for mr_row in doc.mr_items:
-		if mr_row.sales_order == so_name and mr_row.schedule_date and flt(mr_row.quantity) > 0:
+		if (mr_row.sales_order == so_name and mr_row.schedule_date
+				and (flt(mr_row.quantity) > 0 or _rm_override_on)):
 			rm_schedules[mr_row.item_code] = getdate(mr_row.schedule_date)
 
 	if rm_schedules:

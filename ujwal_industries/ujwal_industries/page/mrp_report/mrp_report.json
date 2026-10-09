@@ -7,13 +7,13 @@
  "modified": "2026-06-15 14:00:52.983207",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
- "name": "stock-requirements",
+ "name": "mrp-report",
  "owner": "Administrator",
- "page_name": "stock-requirements",
+ "page_name": "mrp-report",
  "roles": [],
  "script": null,
  "standard": "Yes",
  "style": null,
  "system_page": 0,
- "title": "Stock Requirements"
+ "title": "MRP Report"
 }
