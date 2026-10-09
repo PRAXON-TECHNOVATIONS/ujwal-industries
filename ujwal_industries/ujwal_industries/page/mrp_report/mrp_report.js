@@ -1,7 +1,7 @@
-frappe.pages['stock-requirements'].on_page_load = function (wrapper) {
+frappe.pages['mrp-report'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: 'Stock / Requirements List',
+		title: 'MRP Report',
 		single_column: true,
 	});
 	new StockRequirementsList(wrapper, page);
@@ -15,6 +15,11 @@ const ICONS = {
 	so: { label: 'Sales Order',          color: '#be185d', bg: '#fce7f3', border: '#f9a8d4', symbol: 'SO' },
 	mr: { label: 'Material Request',     color: '#b45309', bg: '#fef3c7', border: '#fcd34d', symbol: 'MR' },
 	se: { label: 'Stock Entry',          color: '#1d4ed8', bg: '#dbeafe', border: '#93c5fd', symbol: 'SE' },
+	grn: { label: 'Purchase Receipt',      color: '#0e7490', bg: '#cffafe', border: '#67e8f9', symbol: 'GRN' },
+	sco: { label: 'Subcontracting Order',  color: '#9a3412', bg: '#ffedd5', border: '#fdba74', symbol: 'SCO' },
+	scr: { label: 'Subcontracting Receipt',color: '#854d0e', bg: '#fef9c3', border: '#fde047', symbol: 'SCR' },
+	jc: { label: 'Job Card',               color: '#3f6212', bg: '#ecfccb', border: '#bef264', symbol: 'JC' },
+	dn: { label: 'Delivery Note',          color: '#9f1239', bg: '#ffe4e6', border: '#fda4af', symbol: 'DN' },
 };
 
 class StockRequirementsList {
@@ -22,6 +27,7 @@ class StockRequirementsList {
 		this.wrapper = wrapper;
 		this.page = page;
 		this.data = null;
+		this._relatedHidden = new Set(); // statuses unticked in the status filter (kept across items)
 		this._injectStyles();
 		this._buildFilterBar();
 	}
@@ -34,7 +40,7 @@ class StockRequirementsList {
 		bar.className = 'srl-filter-bar';
 		bar.innerHTML = `
 			<div class="srl-filter-group">
-				<label class="srl-label">Item Code</label>
+				<label class="srl-label">Item Code <span class="srl-reqd">*</span></label>
 				<div id="srl-item-field" class="srl-link-wrapper"></div>
 			</div>
 			<div class="srl-filter-group">
@@ -63,7 +69,7 @@ class StockRequirementsList {
 
 		this._whField = frappe.ui.form.make_control({
 			parent: bar.querySelector('#srl-wh-field'),
-			df: { fieldtype: 'Link', options: 'Warehouse', fieldname: 'warehouse', placeholder: 'e.g. Stores - UI' },
+			df: { fieldtype: 'Link', options: 'Warehouse', fieldname: 'warehouse', placeholder: 'All Warehouses' },
 			render_input: true,
 		});
 
@@ -95,6 +101,16 @@ class StockRequirementsList {
 			const backBtn = e.target.closest('[data-back-to-root="1"]');
 			if (backBtn) {
 				this._showRootMrp();
+				return;
+			}
+
+			const statusChip = e.target.closest('[data-status-chip]');
+			if (statusChip) {
+				const st = statusChip.dataset.statusChip;
+				if (st === '__all__') this._relatedHidden.clear();
+				else if (this._relatedHidden.has(st)) this._relatedHidden.delete(st);
+				else this._relatedHidden.add(st);
+				this._applyStatusFilter();
 				return;
 			}
 
@@ -133,14 +149,14 @@ class StockRequirementsList {
 	_load() {
 		const item = this._itemField.get_value();
 		const wh   = this._whField.get_value();
-		if (!item || !wh) {
-			frappe.msgprint({ title: 'Required', message: 'Please enter both Item Code and Warehouse.', indicator: 'orange' });
+		if (!item) {
+			frappe.msgprint({ title: 'Required', message: 'Please enter Item Code.', indicator: 'orange' });
 			return;
 		}
 		this._resultDiv.innerHTML = `<div class="srl-loading"><div class="srl-spinner"></div><span>Loading data…</span></div>`;
 
 		this._rootItemCode = item;
-		this._rootWarehouse = wh;
+		this._rootWarehouse = wh || '';
 		this._mrpData = null;
 		this._bomData = null;
 		this._mrpLoaded = false;
@@ -150,7 +166,7 @@ class StockRequirementsList {
 		this._rootMrpData = null;
 
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_stock_requirements',
+			method: 'ujwal_industries.ujwal_industries.page.mrp_report.mrp_report.get_stock_requirements',
 			args: { item_code: item, warehouse: wh },
 			callback: r => {
 				this._mrpData = r.message || null;
@@ -167,7 +183,7 @@ class StockRequirementsList {
 		});
 
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_bom_tree',
+			method: 'ujwal_industries.ujwal_industries.page.mrp_report.mrp_report.get_bom_tree',
 			args: { item_code: item },
 			callback: r => {
 				this._bomData = r.message || null;
@@ -216,7 +232,7 @@ class StockRequirementsList {
 
 	// ── Switch the MRP table to show a clicked BOM-tree item's data ───────
 	_selectBomItem(itemCode, itemName) {
-		if (!itemCode || !this._rootWarehouse) return;
+		if (!itemCode) return;
 		if (itemCode === this._activeItemCode) return; // already showing this item
 
 		const section = this._resultDiv.querySelector('#srl-mrp-section');
@@ -227,8 +243,13 @@ class StockRequirementsList {
 		// Resolve the item's own default warehouse (e.g. raw materials are kept in
 		// RM Store while the root finished good is kept in FG Store) so the
 		// MRP table looks at the warehouse where this item's stock actually moves.
+		// With no warehouse selected the report spans all warehouses, so keep it that way.
+		if (!this._rootWarehouse) {
+			this._loadMrpForItem(itemCode, itemName, '', section);
+			return;
+		}
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_default_warehouse',
+			method: 'ujwal_industries.ujwal_industries.page.mrp_report.mrp_report.get_default_warehouse',
 			args: { item_code: itemCode },
 			callback: wr => {
 				const warehouse = wr.message || this._rootWarehouse;
@@ -242,7 +263,7 @@ class StockRequirementsList {
 
 	_loadMrpForItem(itemCode, itemName, warehouse, section) {
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_stock_requirements',
+			method: 'ujwal_industries.ujwal_industries.page.mrp_report.mrp_report.get_stock_requirements',
 			args: { item_code: itemCode, warehouse },
 			callback: r => {
 				const data = r.message || null;
@@ -284,7 +305,7 @@ class StockRequirementsList {
 		}
 
 		frappe.call({
-			method: 'ujwal_industries.ujwal_industries.page.stock_requirements.stock_requirements.get_stock_requirements',
+			method: 'ujwal_industries.ujwal_industries.page.mrp_report.mrp_report.get_stock_requirements',
 			args: { item_code: this._rootItemCode, warehouse: this._rootWarehouse },
 			callback: r => {
 				const data = r.message || null;
@@ -337,7 +358,7 @@ class StockRequirementsList {
 		if (!d) return '<p class="srl-empty">No data returned.</p>';
 
 		const rows = d.rows || [];
-		this._mrpRows  = rows;
+		this._mrpAllRows = rows;
 		this._mrpUom   = d.stock_uom || '';
 		this._mrpToday = frappe.datetime.get_today();
 		if (!this._mrpPageSize) this._mrpPageSize = 25;
@@ -350,7 +371,7 @@ class StockRequirementsList {
 				<span class="srl-active-item-label">Showing data for:</span>
 				<span class="srl-active-item-code">${d.item_code}</span>
 				<span class="srl-active-item-name">${d.item_name || ''}</span>
-				${d.warehouse ? `<span class="srl-active-item-wh">@ ${d.warehouse}</span>` : ''}
+				<span class="srl-active-item-wh">@ ${d.warehouse || 'All Warehouses'}</span>
 				${!isRoot ? `<button class="btn btn-default srl-back-btn" data-back-to-root="1">← Back to ${this._rootItemCode}</button>` : ''}
 			</div>
 		`;
@@ -358,7 +379,7 @@ class StockRequirementsList {
 		// ── Legend ────────────────────────────────────────────────────────
 		const legendHtml = `
 			<div class="srl-legend">
-				${Object.values(ICONS).map(ic => `
+				${Object.keys(ICONS).filter(k => rows.some(r => r.icon === k)).map(k => ICONS[k]).map(ic => `
 					<span class="srl-legend-item">
 						<span class="srl-badge" style="background:${ic.bg};color:${ic.color};border-color:${ic.border}">${ic.symbol}</span>
 						${ic.label}
@@ -367,15 +388,48 @@ class StockRequirementsList {
 		`;
 
 		if (!rows.length) {
-			return '<div class="srl-section-title">Stock / Requirements</div>' + bannerHtml + legendHtml + '<p class="srl-empty">No open MRP elements found for this item/warehouse.</p>';
+			this._mrpRows = [];
+			return '<div class="srl-section-title">Documents &amp; Stock Projection</div>' + bannerHtml + '<p class="srl-empty">No documents found for this item.</p>';
 		}
+		this._mrpRows = this._filteredRows();
 
 		return `
-			<div class="srl-section-title">Stock / Requirements</div>
+			<div class="srl-section-title">Documents &amp; Stock Projection</div>
 			${bannerHtml}
+			<div id="srl-status-filter-area">${this._statusFilterHtml()}</div>
 			${legendHtml}
 			<div id="srl-mrp-table-area"></div>
 		`;
+	}
+
+	// ── Status filter (multi-select chips, all on by default) ──────────────
+	_filteredRows() {
+		return (this._mrpAllRows || []).filter(r => !this._relatedHidden.has(r.status || '—'));
+	}
+
+	_statusFilterHtml() {
+		const esc = frappe.utils.escape_html;
+		const counts = {};
+		(this._mrpAllRows || []).forEach(r => { counts[r.status || '—'] = (counts[r.status || '—'] || 0) + 1; });
+		const statuses = Object.keys(counts).sort((a, b) => (a === 'Draft' ? -1 : b === 'Draft' ? 1 : a.localeCompare(b)));
+		return `
+			<div class="srl-status-filter">
+				<span class="srl-status-filter-label">Status:</span>
+				<button class="srl-chip ${this._relatedHidden.size ? '' : 'srl-chip-on'}" data-status-chip="__all__">All</button>
+				${statuses.map(st => `
+					<button class="srl-chip ${this._relatedHidden.has(st) ? '' : 'srl-chip-on'}" data-status-chip="${esc(st)}">
+						<span class="srl-chip-tick">${this._relatedHidden.has(st) ? '' : '✓'}</span>${esc(st)} <span class="srl-chip-count">${counts[st]}</span>
+					</button>`).join('')}
+			</div>`;
+	}
+
+	_applyStatusFilter() {
+		const area = this._resultDiv.querySelector('#srl-status-filter-area');
+		if (!area) return;
+		area.innerHTML = this._statusFilterHtml();
+		this._mrpRows = this._filteredRows();
+		this._mrpPage = 1;
+		this._renderMrpTablePage();
 	}
 
 	// ── Re-render just the table body + pagination for the current page ───
@@ -400,18 +454,20 @@ class StockRequirementsList {
 			const isReq     = r.direction === 'requirement';
 			const isPast    = r.date && r.date < today;
 			const isToday   = r.date === today;
+			const hasAvail  = r.available_qty !== null && r.available_qty !== undefined;
 			const avail     = flt(r.available_qty);
 			const availCls  = avail < 0 ? 'srl-avail-neg' : avail === 0 ? 'srl-avail-zero' : 'srl-avail-pos';
-			const rowCls    = isPast ? 'srl-row-past' : isToday ? 'srl-row-today' : '';
-			const qtySign   = isReq ? '-' : '+';
-			const qtyCls    = isReq ? 'srl-qty-req' : 'srl-qty-rec';
+			// past/today highlighting only for open elements that drive the balance
+			const rowCls    = !r.in_mrp ? '' : isPast ? 'srl-row-past' : isToday ? 'srl-row-today' : '';
+			const qtySign   = isReq ? '-' : r.direction === 'receipt' ? '+' : '';
+			const qtyCls    = (isReq ? 'srl-qty-req' : r.direction === 'receipt' ? 'srl-qty-rec' : '') + (r.in_mrp ? '' : ' srl-qty-info');
 
 			return `
-				<tr class="srl-row ${rowCls}" data-name="${r.document_name}" data-doctype="${r.document_type}">
+				<tr class="srl-row ${rowCls}" data-name="${r.document_name}" data-doctype="${r.doctype || r.document_type}">
 					<td class="srl-td srl-td-date">
 						<div class="srl-date-cell">
-							${isPast ? '<span class="srl-overdue-dot" title="Past due"></span>' : ''}
-							${isToday ? '<span class="srl-today-dot" title="Today"></span>' : ''}
+							${r.in_mrp && isPast ? '<span class="srl-overdue-dot" title="Past due"></span>' : ''}
+							${r.in_mrp && isToday ? '<span class="srl-today-dot" title="Today"></span>' : ''}
 							<span>${_fmtDate(r.date)}</span>
 						</div>
 					</td>
@@ -419,12 +475,13 @@ class StockRequirementsList {
 						<span class="srl-badge" style="background:${ic.bg};color:${ic.color};border-color:${ic.border}" title="${ic.label}">${ic.symbol}</span>
 					</td>
 					<td class="srl-td srl-td-doc">
-						<a class="srl-doc-link" href="#" onclick="frappe.set_route('Form','${r.document_type}','${r.document_name}');return false;">${r.document_name}</a>
-						${r.sub_type ? `<span class="srl-sub-type">${r.sub_type}</span>` : ''}
+						${_docLink(r.doctype || r.document_type, r.document_name)}
+						${r.sub_type ? `<span class="srl-sub-type">${frappe.utils.escape_html(r.sub_type)}</span>` : ''}
+						${r.ref_name ? `<span class="srl-sub-type">← ${_docLink(r.ref_doctype, r.ref_name)}</span>` : ''}
 					</td>
 					<td class="srl-td srl-td-party">
-						${r.party ? r.party : '—'}
-						${r.party_name && r.party_name !== r.party ? `<span class="srl-sub-type">${r.party_name}</span>` : ''}
+						${frappe.utils.escape_html(r.party_name || r.party || '—')}
+						${r.party_name && r.party && r.party_name !== r.party ? `<span class="srl-sub-type">${frappe.utils.escape_html(r.party)}</span>` : ''}
 					</td>
 					<td class="srl-td srl-td-status">
 						${r.status ? `<span class="srl-status-pill srl-status-${_statusCls(r.status)}">${r.status}</span>` : '—'}
@@ -433,7 +490,7 @@ class StockRequirementsList {
 						${qtySign}${_fmtQty(Math.abs(flt(r.qty)))} ${r.uom || uom}
 					</td>
 					<td class="srl-td srl-td-avail">
-						<span class="srl-avail ${availCls}">${_fmtQty(avail)}</span>
+						${hasAvail ? `<span class="srl-avail ${availCls}">${_fmtQty(avail)}</span>` : '<span class="srl-avail-none" title="Not counted in the available-qty projection">—</span>'}
 					</td>
 				</tr>
 			`;
@@ -511,7 +568,7 @@ class StockRequirementsList {
 	_bomNodeHtml(node, isRoot) {
 		const hasChildren = node.children && node.children.length;
 		const bomTag = node.bom_no
-			? `<a href="#" class="srl-bom-tag" title="${node.bom_no}" onclick="event.stopPropagation();frappe.set_route('Form','BOM','${node.bom_no}');return false;">${node.bom_no}</a>`
+			? `<a href="${_docUrl('BOM', node.bom_no)}" class="srl-bom-tag" title="${node.bom_no}">${node.bom_no}</a>`
 			: '';
 
 		const itemName = (node.item_name || '').replace(/"/g, '&quot;');
@@ -520,7 +577,7 @@ class StockRequirementsList {
 			<li class="srl-bom-node ${isRoot ? 'srl-bom-node-root' : ''}" data-item-code="${node.item_code}">
 				<div class="srl-bom-row ${hasChildren ? 'srl-bom-has-children' : ''}">
 					<span class="srl-bom-caret ${hasChildren ? 'srl-bom-caret-toggle' : 'srl-bom-caret-leaf'}" ${hasChildren ? 'data-toggle="1"' : ''}>${hasChildren ? '▾' : ''}</span>
-					<span class="srl-bom-item-main" data-select-item="1" data-item-code="${node.item_code}" data-item-name="${itemName}" title="Click to view Stock/Requirements for this item">
+					<span class="srl-bom-item-main" data-select-item="1" data-item-code="${node.item_code}" data-item-name="${itemName}" title="Click to view documents and stock projection for this item">
 						<span class="srl-bom-code">${node.item_code}</span>
 						<span class="srl-bom-name">${node.item_name || ''}</span>
 					</span>
@@ -545,10 +602,10 @@ class StockRequirementsList {
 /* ─── Layout ─────────────────────────────────────────────────────────── */
 .srl-filter-bar {
 	display: flex;
-	align-items: flex-end;
+	align-items: flex-start;
 	gap: 12px;
 	flex-wrap: wrap;
-	padding: 16px 20px 12px;
+	padding: 0 20px 12px;
 	background: var(--card-bg, #fff);
 	border-bottom: 1px solid var(--border-color, #e5e7eb);
 	margin-bottom: 16px;
@@ -556,9 +613,18 @@ class StockRequirementsList {
 .srl-filter-group { display: flex; flex-direction: column; gap: 2px; }
 .srl-filter-btn-group { flex-shrink: 0; }
 .srl-btn-row { display: flex; gap: 8px; height: 32px; align-items: center; }
+.srl-reqd { color: var(--red-500, #ef4444); }
+/* pull the filter bar up under the page title */
+#page-mrp-report .layout-main-section { padding-top: 0; }
+#page-mrp-report .page-head { margin-bottom: 0; }
 .srl-label { font-size: 11px; font-weight: 600; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: .5px; line-height: 14px; margin-bottom: 2px; }
 .srl-link-wrapper { min-width: 220px; }
 .srl-link-wrapper .form-group { margin-bottom: 0 !important; }
+.srl-link-wrapper .frappe-control { margin-bottom: 0 !important; }
+.srl-link-wrapper .help-box { display: none; }
+/* the control's own (empty) label and clearfix push the input down; our .srl-label is the label */
+.srl-link-wrapper .control-label,
+.srl-link-wrapper .clearfix { display: none !important; }
 .srl-link-wrapper .control-input-wrapper,
 .srl-link-wrapper .control-input { margin: 0 !important; padding: 0 !important; }
 .srl-link-wrapper input {
@@ -569,8 +635,8 @@ class StockRequirementsList {
 	box-sizing: border-box !important;
 	margin: 0 !important;
 }
-.srl-go-btn { height: 30px; padding: 0 16px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; border-radius: 6px; box-sizing: border-box; }
-.srl-clear-btn { height: 30px; padding: 0 14px; font-size: 13px; border-radius: 6px; box-sizing: border-box; display: flex; align-items: center; }
+.srl-go-btn { height: 32px; padding: 0 16px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; border-radius: 6px; box-sizing: border-box; }
+.srl-clear-btn { height: 32px; padding: 0 14px; font-size: 13px; border-radius: 6px; box-sizing: border-box; display: flex; align-items: center; }
 
 /* ─── Legend ─────────────────────────────────────────────────────────── */
 .srl-legend {
@@ -751,6 +817,24 @@ class StockRequirementsList {
 	text-decoration: none; cursor: pointer;
 }
 .srl-bom-tag:hover { background: #ddd6fe; text-decoration: underline; color: #6d28d9; }
+
+/* ─── Status filter ─────────────────────────────────────────────────── */
+.srl-status-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 16px 10px; }
+.srl-status-filter-label { font-size: 12px; font-weight: 600; color: var(--text-muted, #6b7280); margin-right: 2px; }
+.srl-chip {
+	display: inline-flex; align-items: center; gap: 5px;
+	font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+	border: 1px solid var(--border-color, #d1d5db);
+	background: var(--card-bg, #fff); color: var(--text-muted, #6b7280);
+}
+.srl-chip-on { background: #ede9fe; border-color: #a78bfa; color: #5b21b6; font-weight: 600; }
+.srl-chip-tick { font-size: 10px; }
+.srl-chip-count {
+	font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 999px;
+	background: var(--bg-gray, #f3f4f6); color: var(--text-muted, #6b7280);
+}
+.srl-qty-info { color: var(--text-muted, #6b7280); }
+.srl-avail-none { color: var(--text-muted, #9ca3af); }
 		`;
 		document.head.appendChild(s);
 	}
@@ -758,6 +842,15 @@ class StockRequirementsList {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function flt(v) { return parseFloat(v) || 0; }
+
+// Real hrefs: frappe's router opens plain clicks in-app, Ctrl/Cmd/middle-click open a new tab
+function _docUrl(doctype, name) {
+	return `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
+}
+
+function _docLink(doctype, name) {
+	return `<a class="srl-doc-link" href="${_docUrl(doctype, name)}">${frappe.utils.escape_html(name)}</a>`;
+}
 
 function _fmtDate(d) {
 	if (!d || d === 'None' || d === 'null' || d === '') return '—';
@@ -771,7 +864,7 @@ function _fmtDate(d) {
 function _fmtQty(v) {
 	const n = flt(v);
 	if (Number.isInteger(n)) return n.toLocaleString('en-IN');
-	return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+	return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: Math.abs(n) < 1 ? 6 : 3 });
 }
 
 function _statusCls(status) {
