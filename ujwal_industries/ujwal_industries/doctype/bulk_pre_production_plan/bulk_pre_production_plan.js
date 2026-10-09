@@ -1469,9 +1469,9 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 	_make_vertically_resizable(sfg_el);
 	const sfg_grid = agGrid.createGrid(sfg_el, {
 		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
-		columnDefs: _arrange_fg_columns(sfg_cols, 22),   // sort + filter icons in the header
+		columnDefs: _arrange_fg_columns(sfg_cols),
 		rowData: so_data.sfg,
-		defaultColDef: { resizable: true, sortable: true, filter: true },
+		defaultColDef: { resizable: true, sortable: true, filter: false },   // no filter (≡) icon in headers
 		suppressMovableColumns: false,
 		rowHeight: 38,
 		headerHeight: 40,
@@ -1558,10 +1558,8 @@ const _RM_CONTENT_WIDTHS = {
 };
 
 function _arrange_rm_columns(cols) {
-	// RM grid has sort + filter on every column → leave room for those header icons
 	return _arrange_columns(cols, _RM_COLUMN_ORDER, _RM_CONTENT_WIDTHS, {
 		pin: ['Item Code', 'Item Name'],
-		header_extra: 22,
 	});
 }
 
@@ -1636,7 +1634,7 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			batchsize:              Number(item.batchsize || 0),
 			machine_count:          Number(item.machine_count || _parse_csv_list(item.custom_workstations_csv).length || 0),
 			spm:                    Number(item.spm || 0),
-			type:                   item.custom_manufacturing_type || item.manufacturing_type || 'In House',
+			type:                   item.manufacturing_type || item.custom_manufacturing_type || 'In House',
 			supplier:               item.custom_supplier || '',
 			supplier_list:          item.supplier_list || [],
 			supplier_name:          item.supplier_name || '',
@@ -1884,8 +1882,9 @@ function _on_seq_fg_cell_changed(frm, params) {
 	}
 
 	if (fieldname === 'type') {
-		frappe.model.set_value(doc_row.doctype, doc_row.name, 'custom_manufacturing_type', params.newValue).then(() => {
-			doc_row.custom_manufacturing_type = params.newValue;
+		// Bulk PP Item's field is manufacturing_type (custom_manufacturing_type does not exist → change was lost on save)
+		frappe.model.set_value(doc_row.doctype, doc_row.name, 'manufacturing_type', params.newValue).then(() => {
+			doc_row.manufacturing_type = params.newValue;
 			if (['Subcontract', 'In House - Vendor'].includes(params.newValue)) {
 				frappe.call({
 					method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_default_supplier_for_item',
@@ -6121,7 +6120,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 			// Parallel / Consolidated: only with the override ticked. Sequential: always
 			// (ticked → saved as the RM's override date and SFG / FG follow it)
 			editable: p => _par
-				? (chk.checked && Number(p.data?.qty) > 0)
+				? chk.checked   // incl. stock-covered (qty 0) rows: planning date for the SFG / FG
 				: true,
 			cellEditor: RmReceiveDateEditor,
 			cellEditorPopup: true,
@@ -6157,7 +6156,7 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 		popupParent: document.body,   // editor popups are not cut off at the table's bottom edge
 		columnDefs: _arrange_rm_columns(mr_cols),
 		rowData: mr_items,
-		defaultColDef: { resizable: true, sortable: true, filter: true },
+		defaultColDef: { resizable: true, sortable: true, filter: false },   // no filter (≡) icon in headers
 		rowHeight: 36,
 		headerHeight: 40,
 		onCellValueChanged: p => {
