@@ -35,6 +35,11 @@ def set_total_ot_hours(doc, method=None):
 
 def set_ot_earning(doc):
     try:
+        # Fresh slip (e.g. from Payroll Entry): pull structure components first, otherwise
+        # adding the OT row makes HRMS skip loading the salary structure in validate.
+        if not (doc.get("earnings") or doc.get("deductions")):
+            doc.get_emp_and_working_day_details()
+
         ot_rate = flt(frappe.get_cached_value("Employee", doc.employee, "custom_ot_rate"))
         ot_amount = flt(flt(doc.custom_total_ot_hours) * ot_rate, 2)
 
