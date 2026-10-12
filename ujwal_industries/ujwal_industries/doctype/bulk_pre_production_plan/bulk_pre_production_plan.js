@@ -5009,23 +5009,186 @@ function _create_inline_shift_editor(initial_csv, onchange) {
  * AG Grid cell editor — inline tag autocomplete (no popup).
  */
 
-// Popup date picker for the RM 'Receive By' override (value kept as YYYY-MM-DD)
+// 'DD-MM-YYYY' (also '/' or '.', or 8 digits) → 'YYYY-MM-DD'; '' when empty; null when invalid
+function _parse_ddmmyyyy(text) {
+	const s = String(text || '').trim();
+	if (!s) return '';
+	const m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/) || s.match(/^(\d{2})(\d{2})(\d{4})$/);
+	if (!m) return null;
+	const [d, mo, y] = [+m[1], +m[2], +m[3]];
+	const dt = new Date(y, mo - 1, d);
+	if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+	return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/**
+ * Date box the user can type into as DD-MM-YYYY, with a calendar button.
+ * A native <input type="date"> shows the browser's locale format (e.g. 07-Oct-2026)
+ * and can't be forced to DD-MM-YYYY, so it is only used, hidden, for the picker.
+ * on_pick(iso) fires when a date is chosen from the calendar.
+ */
+function _create_ddmmyyyy_date_input({ value = '', border = '#86efac', color = '#15803d', on_pick } = {}) {
+	const wrap = document.createElement('span');
+	wrap.style.cssText = `display:inline-flex;align-items:center;position:relative;background:#fff;border:1px solid ${border};border-radius:4px;`;
+
+	const input = document.createElement('input');
+	input.type = 'text';
+	input.placeholder = 'DD-MM-YYYY';
+	input.maxLength = 10;
+	input.value = _format_bpp_date(value, '');
+	input.inputMode = 'numeric';
+	input.style.cssText = `width:92px;font-size:12px;padding:2px 6px;border:none;outline:none;background:transparent;color:${color};font-weight:600;`;
+
+	// Segment editing like a native date box: the dashes are fixed; click / ← → selects
+	// DD, MM or YYYY, typing fills the selected part and moves on, Backspace blanks it.
+	// Every edit is applied by hand, so 'input' / 'change' are dispatched here.
+	const BLANK = 'DD-MM-YYYY';
+	const SEGS = [[0, 2, 'DD'], [3, 5, 'MM'], [6, 10, 'YYYY']];
+	let seg = 0, buf = '', value_at_focus = '';
+	const seg_at = pos => (pos <= 2 ? 0 : pos <= 5 ? 1 : 2);
+	const select_seg = i => { seg = i; buf = ''; input.setSelectionRange(SEGS[i][0], SEGS[i][1]); };
+	const set_seg_text = (i, txt) => {
+		const [a, b] = SEGS[i];
+		input.value = input.value.slice(0, a) + txt + input.value.slice(b);
+		input.setSelectionRange(a, b);
+	};
+	const ensure_mask = () => { if (!/^.{2}-.{2}-.{4}$/.test(input.value)) input.value = BLANK; };
+	const fire = type => input.dispatchEvent(new Event(type, { bubbles: true }));
+
+	input.addEventListener('focus', () => {
+		value_at_focus = input.value;
+		ensure_mask();
+		select_seg(0);
+	});
+	input.addEventListener('click', () => select_seg(seg_at(input.selectionStart)));
+	input.addEventListener('blur', () => {
+		if (input.value === BLANK) input.value = '';
+		if (input.value !== value_at_focus) fire('change');
+	});
+	input.addEventListener('keydown', e => {
+		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+			e.preventDefault();
+			select_seg(Math.min(2, Math.max(0, seg + (e.key === 'ArrowLeft' ? -1 : 1))));
+		}
+	});
+	input.addEventListener('beforeinput', e => {
+		if (e.inputType === 'insertFromPaste') return;   // handled by 'paste'
+		e.preventDefault();
+		ensure_mask();
+		const cur = seg_at(input.selectionStart);
+		if (cur !== seg) { seg = cur; buf = ''; }
+		const [a, b, ph] = SEGS[seg];
+
+		if (e.inputType.startsWith('delete')) {
+			// Backspace on an already blank part steps back to the previous part
+			const was_blank = input.value.slice(a, b) === ph;
+			set_seg_text(seg, ph);
+			if (was_blank && e.inputType === 'deleteContentBackward' && seg > 0) select_seg(seg - 1);
+			else buf = '';
+		} else if (e.inputType === 'insertText' && e.data) {
+			for (const ch of e.data) {
+				if (/\d/.test(ch)) {
+					buf += ch;
+					set_seg_text(seg, buf.padStart(b - a, '0'));
+					const full = buf.length >= b - a || (seg === 0 && +buf[0] > 3) || (seg === 1 && +buf[0] > 1);
+					if (full) {
+						if (seg < 2) select_seg(seg + 1);
+						else buf = '';
+					}
+				} else if (/[-\/. ]/.test(ch) && buf && seg < 2) {
+					select_seg(seg + 1);   // e.g. "7-" → 07, next part
+				}
+			}
+		} else {
+			return;
+		}
+		fire('input');
+	});
+	input.addEventListener('paste', e => {
+		e.preventDefault();
+		const text = (e.clipboardData || window.clipboardData).getData('text').trim();
+		const iso = _parse_ddmmyyyy(text) || (/^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null);
+		if (!iso) return;
+		input.value = _format_bpp_date(iso, '');
+		select_seg(0);
+		fire('input');
+	});
+	input.addEventListener('cut', e => e.preventDefault());
+	input.addEventListener('drop', e => e.preventDefault());
+
+	const picker = document.createElement('input');
+	picker.type = 'date';
+	picker.tabIndex = -1;
+	picker.style.cssText = 'position:absolute;left:0;bottom:0;width:100%;height:0;opacity:0;border:0;padding:0;pointer-events:none;';
+	picker.addEventListener('change', () => {
+		if (!picker.value) return;
+		input.value = _format_bpp_date(picker.value, '');
+		input.style.color = color;
+		if (on_pick) on_pick(picker.value);
+	});
+
+	const btn = document.createElement('button');
+	btn.type = 'button';
+	btn.tabIndex = -1;
+	btn.title = __('Pick date');
+	btn.innerHTML = '<i class="fa fa-calendar"></i>';
+	btn.style.cssText = `border:none;background:transparent;color:${color};padding:2px 6px;cursor:pointer;font-size:12px;`;
+	btn.addEventListener('mousedown', e => e.preventDefault());   // keep focus (and the grid editor) on the text box
+	btn.addEventListener('click', e => {
+		e.stopPropagation();
+		picker.value = _parse_ddmmyyyy(input.value) || '';
+		try { picker.showPicker(); } catch (err) { picker.focus(); picker.click(); }
+	});
+
+	wrap.appendChild(input);
+	wrap.appendChild(btn);
+	wrap.appendChild(picker);
+	return {
+		el: wrap,
+		input,
+		// 'YYYY-MM-DD', '' when empty, null when what is typed is not a valid DD-MM-YYYY date
+		get_value: () => (input.value === BLANK ? '' : _parse_ddmmyyyy(input.value)),
+		set_value: v => { input.value = _format_bpp_date(v, ''); },
+		set_disabled: v => { input.disabled = v; btn.disabled = v; },
+		mark_invalid: v => { input.style.color = v ? '#dc2626' : color; wrap.style.borderColor = v ? '#dc2626' : border; },
+		focus: () => input.focus(),
+	};
+}
+
+// Popup date editor for the RM 'Receive By' override — typed DD-MM-YYYY or picked; value kept as YYYY-MM-DD
 class RmReceiveDateEditor {
 	init(params) {
 		this.original = params.value;
-		this.changed = false;
-		this.input = document.createElement('input');
-		this.input.type = 'date';
-		this.input.value = params.value ? String(params.value).split(' ')[0] : '';
-		this.input.addEventListener('change', () => { this.changed = true; });
-		this.input.style.cssText = 'font-size:12px;padding:4px 6px;border:1px solid #fdba74;border-radius:4px;';
-		// Escape/blur without a change keeps the old value; clearing the date removes the override
-		this.input.addEventListener('keydown', e => { if (e.key === 'Enter') params.stopEditing(); });
+		this.original_iso = params.value ? String(params.value).split(' ')[0] : '';
+		this.date = _create_ddmmyyyy_date_input({
+			value: params.value ? String(params.value).split(' ')[0] : '',
+			border: '#fdba74',
+			color: '#842029',
+			on_pick: () => params.stopEditing(),
+		});
+		this.date.el.style.padding = '2px';
+		this.date.input.addEventListener('keydown', e => {
+			if (e.key === 'Enter' && this.date.get_value() === null) {
+				// Don't close on an invalid date — let the user fix it
+				e.preventDefault();
+				e.stopPropagation();
+				this.date.mark_invalid(true);
+			}
+		});
+		this.date.input.addEventListener('input', () => this.date.mark_invalid(false));
 	}
-	getGui() { return this.input; }
-	afterGuiAttached() { this.input.focus(); }
-	// Unchanged → keep the original value so no override is saved by just opening the picker
-	getValue() { return this.changed ? (this.input.value || '') : this.original; }
+	getGui() { return this.date.el; }
+	afterGuiAttached() { this.date.focus(); }
+	// Unchanged or invalid (e.g. DD-10-2026) → keep the original value; all parts blank removes the override
+	getValue() {
+		const v = this.date.get_value();
+		if (v === this.original_iso) return this.original;
+		if (v === null) {
+			frappe.show_alert({ message: __('Invalid date — use DD-MM-YYYY'), indicator: 'red' });
+			return this.original;
+		}
+		return v;
+	}
 	isPopup() { return true; }
 	getPopupPosition() { return 'under'; }
 }
@@ -5957,15 +6120,13 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	chk_label.textContent = 'Override RM Received Date';
 	chk_label.style.cssText = 'font-size:12px;font-weight:600;color:#15803d;cursor:pointer;margin:0;white-space:nowrap;';
 
-	const date_input = document.createElement('input');
-	date_input.type = 'date';
-	date_input.value = current_override ? current_override.split(' ')[0] : '';
-	date_input.style.cssText = [
-		`display:${override_on ? 'inline-block' : 'none'}`,
-		'font-size:12px', 'padding:2px 6px',
-		'border:1px solid #86efac', 'border-radius:4px',
-		'color:#15803d', 'font-weight:600',
-	].join(';');
+	// Typed as DD-MM-YYYY or picked from the calendar; saved on Enter / leaving the box / picking
+	let saved_override = current_override ? current_override.split(' ')[0] : '';
+	const date_input = _create_ddmmyyyy_date_input({
+		value: saved_override,
+		on_pick: iso => save_override(iso),
+	});
+	date_input.el.style.display = override_on ? 'inline-flex' : 'none';
 
 	const spinner = document.createElement('span');
 	spinner.style.cssText = 'display:none;font-size:11px;color:#64748b;';
@@ -5973,14 +6134,14 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 
 	override_bar.appendChild(chk);
 	override_bar.appendChild(chk_label);
-	override_bar.appendChild(date_input);
+	override_bar.appendChild(date_input.el);
 	override_bar.appendChild(spinner);
 	container.appendChild(override_bar);
 
 	// Checkbox change: show/hide date input; unchecking clears the override
 	chk.addEventListener('change', () => {
 		if (chk.checked) {
-			date_input.style.display = 'inline-block';
+			date_input.el.style.display = 'inline-flex';
 			date_input.focus();
 			frappe.call({
 				method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.enable_rm_override',
@@ -5989,8 +6150,10 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 				callback: () => { if (so_row) so_row.custom_rm_override = 1; },
 			});
 		} else {
-			date_input.style.display = 'none';
-			date_input.value = '';
+			date_input.el.style.display = 'none';
+			date_input.set_value('');
+			date_input.mark_invalid(false);
+			saved_override = '';
 			spinner.style.display = 'inline';
 			chk.disabled = true;
 			frappe.call({
@@ -6011,28 +6174,44 @@ function _append_mr_section(container, mr_items, frm, so_name, prefix) {
 	});
 
 	// Date change: save override and recalculate via atomic server call
-	date_input.addEventListener('change', () => {
-		const date_val = date_input.value;
-		if (!date_val) return;
+	function save_override(date_val) {
+		if (!date_val || date_val === saved_override) return;
+		saved_override = date_val;
 		spinner.style.display = 'inline';
-		date_input.disabled = true;
+		date_input.set_disabled(true);
 		chk.disabled = true;
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.set_rm_received_date',
 			args: { docname: frm.doc.name, so_name, rm_received_date: date_val },
 			callback: () => {
 				spinner.style.display = 'none';
-				date_input.disabled = false;
+				date_input.set_disabled(false);
 				chk.disabled = false;
 				frm.reload_doc();
 			},
 			error: () => {
 				spinner.style.display = 'none';
-				date_input.disabled = false;
+				date_input.set_disabled(false);
 				chk.disabled = false;
+				saved_override = '';   // allow retrying the same date
 				frappe.msgprint({ title: 'Error', message: 'Could not set RM Received Date.', indicator: 'red' });
 			},
 		});
+	}
+
+	// Typed date: save when the user presses Enter or leaves the box
+	date_input.input.addEventListener('keydown', e => { if (e.key === 'Enter') date_input.input.blur(); });
+	date_input.input.addEventListener('input', () => date_input.mark_invalid(false));
+	date_input.input.addEventListener('change', () => {
+		const date_val = date_input.get_value();
+		if (date_val === null) {
+			date_input.mark_invalid(true);
+			frappe.show_alert({ message: __('Invalid date — use DD-MM-YYYY'), indicator: 'red' });
+			return;
+		}
+		if (!date_val) { date_input.set_value(saved_override); return; }   // cleared → untick to remove the override
+		date_input.set_value(date_val);   // normalise e.g. 7/10/2026 → 07-10-2026
+		save_override(date_val);
 	});
 
 	// If no MR items, the override bar is enough — skip the grid

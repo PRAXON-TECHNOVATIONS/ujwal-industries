@@ -9,6 +9,7 @@
   "machine_conflict_validation",
   "create_work_order_and_material_request_on_submit",
   "auto_submit_production_plan_from_bulk_pp",
+  "auto_submit_material_request_from_bulk_pp",
   "default_service_item",
   "consider_spm_for_split",
   "cost_estimation_section",
@@ -42,6 +43,14 @@
    "fieldname": "auto_submit_production_plan_from_bulk_pp",
    "fieldtype": "Check",
    "label": "Auto Submit Production Plan from Bulk PP"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.auto_submit_production_plan_from_bulk_pp",
+   "description": "In Bulk Pre Production Plan. Works with 'Auto Submit Production Plan from Bulk PP'. If checked, the Material Requests created when the Production Plan is auto-submitted are also submitted. Work Orders and Purchase Orders stay Draft. If any Material Request fails to submit, nothing is created for that Sales Order and the error is shown on the Bulk PP.",
+   "fieldname": "auto_submit_material_request_from_bulk_pp",
+   "fieldtype": "Check",
+   "label": "Auto Submit Material Request from Bulk PP"
   },
   {
    "default": "Job Work",
@@ -86,7 +95,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-07 10:00:00.000000",
+ "modified": "2026-10-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",

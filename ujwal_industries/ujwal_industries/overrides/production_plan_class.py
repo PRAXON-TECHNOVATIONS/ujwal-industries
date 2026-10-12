@@ -38,6 +38,9 @@ class CustomProductionPlan(ProductionPlan):
             return
         else:
             self.make_work_order()
+            # Bulk PP can submit the MRs; WOs / POs always stay Draft.
+            if self.flags.from_bulk_pp and cint(ui_setting.auto_submit_material_request_from_bulk_pp):
+                self.submit_material_request = 1
             self.make_material_request()
     
     
