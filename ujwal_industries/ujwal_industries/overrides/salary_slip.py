@@ -3,8 +3,6 @@ from frappe import _
 from frappe.query_builder.functions import Coalesce, Sum
 from frappe.utils import flt, formatdate
 
-OT_COMPONENT = "OT Rate"
-
 
 def set_total_ot_hours(doc, method=None):
     doc.custom_total_ot_hours = 0
@@ -42,14 +40,28 @@ def set_ot_earning(doc):
 
         ot_rate = flt(frappe.get_cached_value("Employee", doc.employee, "custom_ot_rate"))
         ot_amount = flt(flt(doc.custom_total_ot_hours) * ot_rate, 2)
+        ot_component = frappe.db.get_single_value("Ujwal Industries Setting", "ot_salary_component")
 
-        ot_rows = [d for d in doc.get("earnings", []) if d.salary_component == OT_COMPONENT]
+        ot_rows = [d for d in doc.get("earnings", []) if ot_component and d.salary_component == ot_component]
 
         if not ot_amount:
             for row in ot_rows:
                 doc.remove(row)
             return
+    except Exception:
+        throw_with_error_log(doc, "OT amount")
 
+    if not ot_component:
+        frappe.throw(
+            _("Employee {0} has {1} OT hours but no OT Salary Component is set. Please set it in {2}.").format(
+                frappe.bold(doc.employee),
+                doc.custom_total_ot_hours,
+                frappe.utils.get_link_to_form("Ujwal Industries Setting", "Ujwal Industries Setting"),
+            ),
+            title=_("OT Salary Component Missing"),
+        )
+
+    try:
         for extra_row in ot_rows[1:]:
             doc.remove(extra_row)
 
@@ -57,15 +69,15 @@ def set_ot_earning(doc):
             row = ot_rows[0]
         else:
             row = doc.append("earnings", {
-                "salary_component": OT_COMPONENT,
-                "abbr": frappe.get_cached_value("Salary Component", OT_COMPONENT, "salary_component_abbr"),
+                "salary_component": ot_component,
+                "abbr": frappe.get_cached_value("Salary Component", ot_component, "salary_component_abbr"),
             })
 
         row.amount = ot_amount
         row.default_amount = ot_amount
 
     except Exception:
-        throw_with_error_log(doc, "OT Rate amount")
+        throw_with_error_log(doc, "OT amount")
 
 
 def throw_with_error_log(doc, what):
