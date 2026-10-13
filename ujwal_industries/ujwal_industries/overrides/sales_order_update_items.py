@@ -6,6 +6,7 @@ from frappe import _
 from frappe.utils import flt
 
 from erpnext.controllers.accounts_controller import update_child_qty_rate as erpnext_update_child_qty_rate
+from erpnext.stock.get_item_details import get_conversion_factor, get_item_tax_map, get_item_tax_template
 
 
 ORDER_CONFIG = {
@@ -28,6 +29,24 @@ PENDING_APPROVAL_STATUS = "Pending Approval"
 APPROVED_STATUS = "Approved"
 
 POSITION_FIELDNAME = "custom_po_no"
+
+# Once any of these is non-zero on a row, other documents reference that row's
+# item, so the item can no longer be swapped.
+ITEM_SWAP_BLOCKING_FIELDS = {
+	"Sales Order": {
+		"delivered_qty": "Delivered Qty",
+		"billed_amt": "Billed Amount",
+		"returned_qty": "Returned Qty",
+		"production_plan_qty": "Production Plan Qty",
+		"work_order_qty": "Work Order Qty",
+		"ordered_qty": "Ordered Qty",
+	},
+	"Purchase Order": {
+		"received_qty": "Received Qty",
+		"billed_amt": "Billed Amount",
+		"returned_qty": "Returned Qty",
+	},
+}
 
 
 @frappe.whitelist()
@@ -52,6 +71,15 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 
 	before_rows = _get_row_snapshots(doc, child_docname, parent_doctype)
 
+	# Core update_child_qty_rate never changes item_code on an existing row,
+	# so apply item swaps ourselves; the swapped rows then flow through the
+	# normal change detection -> Pending Approval path below.
+	item_code_changes = _get_item_code_changes(doc, child_docname, incoming_items)
+	if item_code_changes:
+		_validate_item_code_changes(doc, item_code_changes, validate_new_item=True)
+		_apply_item_code_changes(doc, item_code_changes)
+		trans_items = frappe.as_json(incoming_items)
+
 	if parent_doctype == "Sales Order":
 		with _position_number_not_mandatory():
 			result = erpnext_update_child_qty_rate(
@@ -67,6 +95,9 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 			parent_doctype_name=parent_doctype_name,
 			child_docname=child_docname,
 		)
+
+	if item_code_changes:
+		_refresh_bins_for_replaced_items(parent_doctype, item_code_changes)
 
 	updated_doc = frappe.get_doc(parent_doctype, parent_doctype_name)
 
@@ -119,6 +150,11 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 
 	reverted_items = _build_reverted_items_payload(doc, doctype, pending_rows)
 
+	item_code_changes = _get_item_code_changes(doc, "items", reverted_items)
+	if item_code_changes:
+		_validate_item_code_changes(doc, item_code_changes, validate_new_item=False)
+		_apply_item_code_changes(doc, item_code_changes)
+
 	frappe.flags.ujwal_skip_item_update_approval = True
 	try:
 		erpnext_update_child_qty_rate(
@@ -129,6 +165,9 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 		)
 	finally:
 		frappe.flags.ujwal_skip_item_update_approval = False
+
+	if item_code_changes:
+		_refresh_bins_for_replaced_items(doctype, item_code_changes)
 
 	reverted_doc = frappe.get_doc(doctype, docname)
 	reverted_names = {row.name for row in reverted_doc.get("items", [])}
@@ -167,6 +206,155 @@ def _ensure_no_item_deletions(doc, child_docname, incoming_items):
 	missing_docnames = existing_docnames - incoming_docnames
 	if missing_docnames:
 		frappe.throw(_("Deleting items through this approval flow is not supported."))
+
+
+def _get_item_code_changes(doc, child_docname, incoming_items):
+	rows_by_name = {row.name: row for row in doc.get(child_docname, [])}
+	changes = []
+	for incoming in incoming_items:
+		row = rows_by_name.get(incoming.get("docname"))
+		new_item_code = incoming.get("item_code")
+		if row and new_item_code and new_item_code != row.item_code:
+			changes.append(
+				frappe._dict(
+					row=row,
+					incoming=incoming,
+					old_item_code=row.item_code,
+					new_item_code=new_item_code,
+				)
+			)
+	return changes
+
+
+def _validate_item_code_changes(doc, changes, validate_new_item):
+	errors = []
+
+	if doc.doctype == "Purchase Order" and doc.get("is_subcontracted"):
+		frappe.throw(_("Item Code cannot be changed on a subcontracted Purchase Order."))
+
+	for change in changes:
+		row = change.row
+		row_label = _("Row #{0} ({1} -> {2})").format(row.idx, change.old_item_code, change.new_item_code)
+
+		blocking = [
+			_(label)
+			for fieldname, label in ITEM_SWAP_BLOCKING_FIELDS[doc.doctype].items()
+			if flt(row.get(fieldname)) > 0
+		]
+		if row.get("blanket_order"):
+			blocking.append(_("Blanket Order"))
+		if doc.doctype == "Purchase Order":
+			if row.get("material_request_item"):
+				blocking.append(_("Material Request"))
+			if row.get("sales_order_item"):
+				blocking.append(_("Sales Order"))
+
+		if blocking:
+			errors.append(
+				_("{0}: Item Code cannot be changed because the row is already linked ({1}).").format(
+					row_label, ", ".join(blocking)
+				)
+			)
+			continue
+
+		if not validate_new_item:
+			continue
+
+		item = frappe.db.get_value(
+			"Item",
+			change.new_item_code,
+			["disabled", "has_variants", "is_sales_item", "is_purchase_item"],
+			as_dict=True,
+		)
+		if not item:
+			errors.append(_("{0}: Item {1} does not exist.").format(row_label, change.new_item_code))
+		elif item.disabled:
+			errors.append(_("{0}: Item {1} is disabled.").format(row_label, change.new_item_code))
+		elif item.has_variants:
+			errors.append(_("{0}: Item {1} is a template, select a variant.").format(row_label, change.new_item_code))
+		elif doc.doctype == "Sales Order" and not item.is_sales_item:
+			errors.append(_("{0}: Item {1} is not a sales item.").format(row_label, change.new_item_code))
+		elif doc.doctype == "Purchase Order" and not item.is_purchase_item:
+			errors.append(_("{0}: Item {1} is not a purchase item.").format(row_label, change.new_item_code))
+
+	if errors:
+		frappe.throw("<br>".join(errors))
+
+
+def _apply_item_code_changes(doc, changes):
+	"""Swap the item on existing rows and refresh everything that is derived
+	from the item (name, description, HSN, UOM, tax template, BOM, ...).
+	The incoming payload's uom / conversion_factor are aligned with what is
+	written here, so core update_child_qty_rate doesn't revert them."""
+
+	child_doctype = ORDER_CONFIG[doc.doctype]["child_doctype"]
+	meta = frappe.get_meta(child_doctype)
+
+	for change in changes:
+		row = change.row
+		item = frappe.get_cached_doc("Item", change.new_item_code)
+
+		values = {
+			"item_code": item.name,
+			"item_name": item.item_name,
+			"description": item.description or item.item_name,
+			"item_group": item.item_group,
+			"brand": item.brand,
+			"stock_uom": item.stock_uom,
+			"weight_per_unit": item.weight_per_unit,
+			"weight_uom": item.weight_uom,
+		}
+
+		# fetch_from fields: gst_hsn_code, image, and any custom item_code.* fetches
+		for df in meta.fields:
+			if df.fetch_from and df.fetch_from.startswith("item_code."):
+				values[df.fieldname] = item.get(df.fetch_from.split(".", 1)[1])
+
+		uom = change.incoming.get("uom") or row.uom
+		if uom != item.stock_uom and not any(d.uom == uom for d in item.get("uoms", [])):
+			uom = item.stock_uom
+		conversion_factor = flt(get_conversion_factor(item.name, uom).get("conversion_factor")) or 1
+		values.update({"uom": uom, "conversion_factor": conversion_factor})
+		change.incoming.update({"uom": uom, "conversion_factor": conversion_factor})
+
+		item_tax_template = get_item_tax_template(
+			{
+				"company": doc.company,
+				"tax_category": doc.get("tax_category"),
+				"transaction_date": doc.transaction_date,
+				"base_net_rate": row.base_net_rate,
+				"item_tax_template": row.item_tax_template,
+			},
+			item,
+		)
+		values["item_tax_template"] = item_tax_template
+		values["item_tax_rate"] = get_item_tax_map(doc.company, item_tax_template)
+
+		if doc.doctype == "Sales Order":
+			values["bom_no"] = item.default_bom
+			change.incoming.pop("bom_no", None)
+
+		values = {fieldname: value for fieldname, value in values.items() if meta.has_field(fieldname)}
+		frappe.db.set_value(child_doctype, row.name, values, update_modified=False)
+
+
+def _refresh_bins_for_replaced_items(doctype, changes):
+	"""Core update_child_qty_rate refreshes reserved / ordered qty only for the
+	items currently on the order, so recompute it for the replaced items."""
+
+	from erpnext.stock.stock_balance import get_ordered_qty, get_reserved_qty, update_bin_qty
+
+	for change in changes:
+		warehouse = change.row.warehouse
+		if not warehouse or not frappe.get_cached_value("Item", change.old_item_code, "is_stock_item"):
+			continue
+
+		if doctype == "Sales Order":
+			qty_dict = {"reserved_qty": get_reserved_qty(change.old_item_code, warehouse)}
+		else:
+			qty_dict = {"ordered_qty": get_ordered_qty(change.old_item_code, warehouse)}
+
+		update_bin_qty(change.old_item_code, warehouse, qty_dict)
 
 
 def _parse_trans_items(trans_items):
