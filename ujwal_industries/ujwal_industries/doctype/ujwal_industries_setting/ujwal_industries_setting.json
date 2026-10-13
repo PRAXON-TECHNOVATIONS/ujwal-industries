@@ -15,7 +15,9 @@
   "cost_estimation_section",
   "assembly_operation_names",
   "purchase_order_visibility_section",
-  "po_visibility_rules"
+  "po_visibility_rules",
+  "payroll_section",
+  "ot_salary_component"
  ],
  "fields": [
   {
@@ -89,13 +91,25 @@
    "label": "PO Visibility Rules",
    "options": "PO Visibility Rule",
    "description": "Users having any role listed here see only the PO types ticked for their roles (union if they have several listed roles). Users with none of these roles, System Manager and Administrator see all Purchase Orders. Applies to PO list, form, link fields, Report View and Purchase Order Analysis."
+  },
+  {
+   "fieldname": "payroll_section",
+   "fieldtype": "Section Break",
+   "label": "Payroll"
+  },
+  {
+   "description": "Earning component used to add Overtime amount (Total OT Hours × Employee OT Rate) in Salary Slip. Required when any employee has overtime in the payroll period.",
+   "fieldname": "ot_salary_component",
+   "fieldtype": "Link",
+   "label": "OT Salary Component",
+   "options": "Salary Component"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 10:00:00.000000",
+ "modified": "2026-10-13 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Ujwal Industries Setting",
