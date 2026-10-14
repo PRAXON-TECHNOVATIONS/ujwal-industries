@@ -361,6 +361,7 @@ class StockRequirementsList {
 		this._mrpAllRows = rows;
 		this._mrpUom   = d.stock_uom || '';
 		this._mrpToday = frappe.datetime.get_today();
+		this._mrpOpening = flt(d.opening_qty);
 		if (!this._mrpPageSize) this._mrpPageSize = 25;
 		this._mrpPage = 1;
 
@@ -389,7 +390,7 @@ class StockRequirementsList {
 
 		if (!rows.length) {
 			this._mrpRows = [];
-			return '<div class="srl-section-title">Documents &amp; Stock Projection</div>' + bannerHtml + '<p class="srl-empty">No documents found for this item.</p>';
+			return '<div class="srl-section-title">Documents &amp; Stock Projection</div>' + bannerHtml + `<p class="srl-empty">No documents found for this item. Current stock: ${_fmtQty(this._mrpOpening)} ${frappe.utils.escape_html(this._mrpUom)}</p>`;
 		}
 		this._mrpRows = this._filteredRows();
 
@@ -475,13 +476,17 @@ class StockRequirementsList {
 						<span class="srl-badge" style="background:${ic.bg};color:${ic.color};border-color:${ic.border}" title="${ic.label}">${ic.symbol}</span>
 					</td>
 					<td class="srl-td srl-td-doc">
-						${_docLink(r.doctype || r.document_type, r.document_name)}
+						${r.read_only ? _docReadOnly(r.document_name) : _docLink(r.doctype || r.document_type, r.document_name)}
 						${r.sub_type ? `<span class="srl-sub-type">${frappe.utils.escape_html(r.sub_type)}</span>` : ''}
-						${r.ref_name ? `<span class="srl-sub-type">← ${_docLink(r.ref_doctype, r.ref_name)}</span>` : ''}
+						${r.ref_name ? `<span class="srl-sub-type">← ${r.read_only ? frappe.utils.escape_html(r.ref_name) : _docLink(r.ref_doctype, r.ref_name)}</span>` : ''}
 					</td>
 					<td class="srl-td srl-td-party">
+						${r.for_item ? `
+						<span class="srl-for-item"><b>${frappe.utils.escape_html(r.for_item)}</b> ${frappe.utils.escape_html(r.for_item_name || '')}</span>
+						` : `
 						${frappe.utils.escape_html(r.party_name || r.party || '—')}
 						${r.party_name && r.party && r.party_name !== r.party ? `<span class="srl-sub-type">${frappe.utils.escape_html(r.party)}</span>` : ''}
+						`}
 					</td>
 					<td class="srl-td srl-td-status">
 						${r.status ? `<span class="srl-status-pill srl-status-${_statusCls(r.status)}">${r.status}</span>` : '—'}
@@ -495,6 +500,20 @@ class StockRequirementsList {
 				</tr>
 			`;
 		}).join('');
+
+		// MD04-style "Stock" row: current on-hand qty the running balance starts from
+		const opening = this._mrpOpening || 0;
+		const openingCls = opening < 0 ? 'srl-avail-neg' : opening === 0 ? 'srl-avail-zero' : 'srl-avail-pos';
+		const openingRow = this._mrpPage !== 1 ? '' : `
+				<tr class="srl-row srl-row-opening">
+					<td class="srl-td srl-td-date">${_fmtDate(today)}</td>
+					<td class="srl-td srl-td-type"><span class="srl-badge srl-badge-stock" title="Stock on hand">STK</span></td>
+					<td class="srl-td srl-td-doc">Opening Stock</td>
+					<td class="srl-td srl-td-party">—</td>
+					<td class="srl-td srl-td-status">—</td>
+					<td class="srl-td srl-td-qty"></td>
+					<td class="srl-td srl-td-avail"><span class="srl-avail ${openingCls}">${_fmtQty(opening)}</span></td>
+				</tr>`;
 
 		const tableHtml = `
 			<div class="srl-table-wrap">
@@ -510,7 +529,7 @@ class StockRequirementsList {
 							<th class="srl-th srl-th-r">Available Qty</th>
 						</tr>
 					</thead>
-					<tbody>${tableRows}</tbody>
+					<tbody>${openingRow}${tableRows}</tbody>
 				</table>
 			</div>
 		`;
@@ -668,6 +687,8 @@ class StockRequirementsList {
 .srl-row:hover { background: var(--fg-hover-color, #f9fafb) !important; }
 .srl-row-past  { background: #fff5f5; }
 .srl-row-today { background: #fffbeb; }
+.srl-row-opening { background: var(--subtle-fg, #f9fafb); font-weight: 600; }
+.srl-badge-stock { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
 
 .srl-td-qty, .srl-td-avail { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 
@@ -727,6 +748,8 @@ class StockRequirementsList {
 .srl-doc-link { color: var(--primary, #2563eb); font-weight: 500; text-decoration: none; }
 .srl-doc-link:hover { text-decoration: underline; }
 .srl-sub-type { font-size: 10px; color: var(--text-muted, #9ca3af); margin-left: 4px; }
+.srl-doc-ro { font-weight: 500; color: var(--text-color, #374151); user-select: all; }
+.srl-for-item b { margin-right: 4px; }
 
 /* ─── Misc ───────────────────────────────────────────────────────────── */
 .srl-loading {
@@ -846,6 +869,12 @@ function flt(v) { return parseFloat(v) || 0; }
 // Real hrefs: frappe's router opens plain clicks in-app, Ctrl/Cmd/middle-click open a new tab
 function _docUrl(doctype, name) {
 	return `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
+}
+
+// Consumption rows: ID only, no link. The order is opened from its parent (FG) item.
+function _docReadOnly(name) {
+	const n = frappe.utils.escape_html(name);
+	return `<span class="srl-doc-ro" title="Read only: open it from the parent item">${n}</span>`;
 }
 
 function _docLink(doctype, name) {

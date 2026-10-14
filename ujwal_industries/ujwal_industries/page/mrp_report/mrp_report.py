@@ -22,11 +22,22 @@ def get_stock_requirements(item_code, warehouse=None):
 
     # ── 2. Gather all MRP elements ────────────────────────────────────────
     rows += _get_purchase_orders(item_code, warehouse)
-    rows += _get_purchase_requisitions(item_code, warehouse)
+    rows += _get_subcontracted_po_receipts(item_code, warehouse)
+    rows += _get_material_request_receipts(item_code, warehouse)
     rows += _get_work_orders_receipt(item_code, warehouse)
-    rows += _get_stock_entries_receipt(item_code, warehouse)
+    rows += _get_subcontracting_receipts(item_code, warehouse)
+    rows += _get_stock_entries(item_code, warehouse)
     rows += _get_sales_orders(item_code, warehouse)
-    rows += _get_material_requests(item_code, warehouse)
+    rows += _get_work_order_requirements(item_code, warehouse)
+    rows += _get_subcontracting_requirements(item_code, warehouse)
+    rows += _get_material_request_requirements(item_code, warehouse)
+
+    for_items = {r["for_item"] for r in rows if r.get("for_item")}
+    if for_items:
+        names = dict(frappe.get_all("Item", {"name": ("in", list(for_items))}, ["name", "item_name"], as_list=True))
+        for r in rows:
+            if r.get("for_item"):
+                r["for_item_name"] = names.get(r["for_item"], "")
 
     # ── 3. Sort by date, then by direction (receipts before requirements on same day) ──
     def sort_key(r):
@@ -40,7 +51,8 @@ def get_stock_requirements(item_code, warehouse=None):
     # ── 4. Compute running available qty ─────────────────────────────────
     running = flt(opening_qty)
     for r in rows:
-        running += flt(r.get("qty", 0))
+        r["qty"] = flt(r.get("qty", 0), 6)
+        running = flt(running + r["qty"], 6)
         r["available_qty"] = running
         r["in_mrp"] = 1
 
@@ -105,7 +117,7 @@ def get_bom_tree(item_code):
     if not item_code:
         frappe.throw("Item Code is required")
 
-    # Root is shown at its BOM's batch quantity, so every level matches the BOM documents
+    # Root shows its BOM's quantity; every child shows its BOM Item qty as is
     root_bom = _get_bom(item_code)
     root_qty = flt(frappe.db.get_value("BOM", root_bom, "quantity")) if root_bom else 1
 
@@ -122,7 +134,7 @@ def _get_bom(item_code):
     ) or frappe.db.get_value("BOM", {"item": item_code, "is_active": 1}, "name")
 
 
-def _build_bom_node(item_code, qty, visited):
+def _build_bom_node(item_code, qty, visited, uom=None):
     item = frappe.db.get_value(
         "Item",
         item_code,
@@ -135,7 +147,7 @@ def _build_bom_node(item_code, qty, visited):
     node = {
         "item_code": item_code,
         "item_name": item.get("item_name", ""),
-        "uom": item.get("stock_uom", ""),
+        "uom": uom or item.get("stock_uom", ""),
         "qty": flt(qty),
         "bom_no": bom_no,
         "children": [],
@@ -149,23 +161,21 @@ def _build_bom_node(item_code, qty, visited):
         return node
     visited = visited | {bom_no}
 
-    # BOM Item qty is for the BOM's batch quantity (e.g. per 100), so scale it to 1 unit of the parent
-    bom_qty = flt(frappe.db.get_value("BOM", bom_no, "quantity")) or 1
-
     bom_items = frappe.db.sql("""
         SELECT
             bi.item_code,
-            bi.stock_qty AS qty
+            bi.qty,
+            bi.uom
         FROM `tabBOM Item` bi
         WHERE bi.parent = %s
           AND bi.docstatus < 2
         ORDER BY bi.idx
     """, (bom_no,), as_dict=True)
 
+    # Qty exactly as written in the BOM, not scaled to the parent
     for bi in bom_items:
-        child_qty = flt(bi.qty) / bom_qty * flt(qty)
         node["children"].append(
-            _build_bom_node(bi.item_code, child_qty, visited)
+            _build_bom_node(bi.item_code, flt(bi.qty), visited, uom=bi.uom)
         )
 
     return node
@@ -186,7 +196,8 @@ _RELATED_QUERIES = [
         SELECT p.name, p.transaction_date AS date, {_STATUS} AS status,
             SUM(c.stock_qty) AS qty, MAX(c.stock_uom) AS uom, '' AS party, '' AS party_name,
             p.material_request_type AS sub_type,
-            IF(MAX(p.work_order) IS NULL, NULL, 'Work Order') AS ref_doctype, MAX(p.work_order) AS ref_name
+            IF(MAX(p.work_order) IS NULL, NULL, 'Work Order') AS ref_doctype, MAX(p.work_order) AS ref_name,
+            (SELECT production_item FROM `tabWork Order` WHERE name = MAX(p.work_order)) AS for_item
         FROM `tabMaterial Request Item` c JOIN `tabMaterial Request` p ON p.name = c.parent
         WHERE c.item_code = %(item)s AND p.docstatus < 2 GROUP BY p.name"""),
     ("Purchase Order", "Item", f"""
@@ -217,7 +228,8 @@ _RELATED_QUERIES = [
             CASE WHEN p.work_order IS NOT NULL THEN 'Work Order'
                  WHEN p.subcontracting_order IS NOT NULL THEN 'Subcontracting Order'
                  WHEN p.purchase_order IS NOT NULL THEN 'Purchase Order' END AS ref_doctype,
-            COALESCE(p.work_order, p.subcontracting_order, p.purchase_order) AS ref_name
+            COALESCE(p.work_order, p.subcontracting_order, p.purchase_order) AS ref_name,
+            (SELECT production_item FROM `tabWork Order` WHERE name = p.work_order) AS for_item
         FROM `tabStock Entry Detail` c JOIN `tabStock Entry` p ON p.name = c.parent
         WHERE c.item_code = %(item)s AND p.docstatus < 2 GROUP BY p.name"""),
     ("Work Order", "Produces", f"""
@@ -228,7 +240,7 @@ _RELATED_QUERIES = [
         WHERE p.production_item = %(item)s AND p.docstatus < 2"""),
     ("Work Order", "Consumes (RM)", f"""
         SELECT p.name, p.planned_start_date AS date, {_STATUS} AS status,
-            SUM(c.required_qty) AS qty, '' AS uom, '' AS party, '' AS party_name, p.production_item AS sub_type,
+            SUM(c.required_qty) AS qty, '' AS uom, '' AS party, '' AS party_name, '' AS sub_type, p.production_item AS for_item,
             IF(p.production_plan IS NULL, NULL, 'Production Plan') AS ref_doctype, p.production_plan AS ref_name
         FROM `tabWork Order Item` c JOIN `tabWork Order` p ON p.name = c.parent
         WHERE c.item_code = %(item)s AND p.docstatus < 2 GROUP BY p.name"""),
@@ -247,7 +259,7 @@ _RELATED_QUERIES = [
     ("Subcontracting Order", "Supplied RM", f"""
         SELECT p.name, p.transaction_date AS date, {_STATUS} AS status,
             SUM(c.required_qty) AS qty, MAX(c.stock_uom) AS uom, p.supplier AS party, (SELECT COALESCE(NULLIF(custom_supplier_names, ''), supplier_name) FROM `tabSupplier` WHERE name = p.supplier) AS party_name,
-            MAX(c.main_item_code) AS sub_type,
+            '' AS sub_type, MAX(c.main_item_code) AS for_item,
             IF(p.purchase_order IS NULL, NULL, 'Purchase Order') AS ref_doctype, p.purchase_order AS ref_name
         FROM `tabSubcontracting Order Supplied Item` c JOIN `tabSubcontracting Order` p ON p.name = c.parent
         WHERE c.rm_item_code = %(item)s AND p.docstatus < 2 GROUP BY p.name"""),
@@ -260,7 +272,7 @@ _RELATED_QUERIES = [
     ("Subcontracting Receipt", "Consumed RM", f"""
         SELECT p.name, p.posting_date AS date, {_STATUS} AS status,
             SUM(c.consumed_qty) AS qty, MAX(c.stock_uom) AS uom, p.supplier AS party, (SELECT COALESCE(NULLIF(custom_supplier_names, ''), supplier_name) FROM `tabSupplier` WHERE name = p.supplier) AS party_name,
-            MAX(c.main_item_code) AS sub_type, NULL AS ref_doctype, NULL AS ref_name
+            '' AS sub_type, MAX(c.main_item_code) AS for_item, NULL AS ref_doctype, NULL AS ref_name
         FROM `tabSubcontracting Receipt Supplied Item` c JOIN `tabSubcontracting Receipt` p ON p.name = c.parent
         WHERE c.rm_item_code = %(item)s AND p.docstatus < 2 GROUP BY p.name"""),
     ("Sales Order", "Item", f"""
@@ -298,6 +310,14 @@ def get_related_documents(item_code):
                 "uom": r.uom or stock_uom,
             })
             docs.append(r)
+
+    # "For Item": the parent item the document consumes/supplies this item for
+    for_items = {r.get("for_item") for r in docs if r.get("for_item") and r.get("for_item") != item_code}
+    names = dict(frappe.get_all("Item", {"name": ("in", list(for_items))}, ["name", "item_name"], as_list=True)) if for_items else {}
+    for r in docs:
+        fi = r.get("for_item")
+        r["for_item"] = fi if fi and fi != item_code else None
+        r["for_item_name"] = names.get(fi, "") if r["for_item"] else ""
 
     docs.sort(key=lambda r: r["date"] or "", reverse=True)
     return docs
@@ -341,6 +361,10 @@ def _related_to_row(d):
         "sub_type": d.role if d.role != "Item" else d.sub_type,
         "ref_doctype": d.ref_doctype,
         "ref_name": d.ref_name,
+        "for_item": d.for_item,
+        "for_item_name": d.for_item_name,
+        # consumption rows are read-only: act on them from the parent (FG) item
+        "read_only": 1 if d.role in _REQUIREMENT_ROLES else 0,
         "available_qty": None,
         "in_mrp": 0,
     }
@@ -355,227 +379,348 @@ def _get_actual_stock(item_code, warehouse):
     return flt(result[0][0]) if result else 0.0
 
 
+# ─── MRP elements ─────────────────────────────────────────────────────────────
+# Every open quantity that will move the item's stock, like SAP MD04:
+#   receipts:     PO (drafts too), subcontracted PO FG until its SCO exists, Purchase / Customer Provided / Manufacture MR, Work Order
+#                 (submitted = production order, draft = planned order),
+#                 Subcontracting Order FG, draft Stock Entry, Transfer MR (in)
+#   requirements: Sales Order, Work Order RM (submitted = reservation,
+#                 draft = dependent requirement), Subcontracting supplied RM,
+#                 Issue MR, draft Stock Entry, Transfer MR (out)
+# All quantities are open quantities in the stock UOM.
+# Drafts that would double count an already-counted document (draft GRN/DN
+# against a PO/SO, draft Stock Entry of a WO/SCO) are skipped; a draft PO made
+# from an MR is taken off the MR's open qty instead.
+
+_SUPPLIER_NAME = "(SELECT COALESCE(NULLIF(custom_supplier_names, ''), supplier_name) FROM `tabSupplier` WHERE name = {0})"
+_CUSTOMER_NAME = "(SELECT COALESCE(NULLIF(custom_customer_names, ''), customer_name) FROM `tabCustomer` WHERE name = {0})"
+
+
+def _mrp_row(r, doctype, direction, icon, **extra):
+    qty = flt(r.qty)
+    row = {
+        "document_type": doctype,
+        "doctype": doctype,
+        "document_name": r.document_name,
+        "date": str(r.date)[:10] if r.date else None,
+        "qty": -qty if direction == "requirement" else qty,
+        "uom": r.get("uom") or "",
+        "party": r.get("party") or "",
+        "party_name": r.get("party_name") or "",
+        "status": "Draft" if r.get("docstatus") == 0 else r.get("status"),
+        "direction": direction,
+        "icon": icon,
+        "sub_type": r.get("sub_type") or "",
+        "ref_doctype": r.get("ref_doctype"),
+        "ref_name": r.get("ref_name"),
+        "for_item": r.get("for_item"),
+        "for_item_name": "",
+        "warehouse": r.get("warehouse") or "",
+        "read_only": 0,
+    }
+    row.update(extra)
+    return row
+
+
 # ─── Receipts ─────────────────────────────────────────────────────────────────
 
 def _get_purchase_orders(item_code, warehouse):
-    rows = frappe.db.sql("""
+    """Open PO lines, drafts included (like an unreleased PO in SAP)."""
+    rows = frappe.db.sql(f"""
         SELECT
             poi.parent          AS document_name,
             poi.schedule_date   AS date,
-            (poi.qty - poi.received_qty) AS qty,
-            poi.uom,
-            poi.rate,
+            (poi.qty - poi.received_qty) * poi.conversion_factor AS qty,
+            poi.stock_uom       AS uom,
+            poi.warehouse,
             po.supplier         AS party,
-            (SELECT COALESCE(NULLIF(custom_supplier_names, ''), supplier_name) FROM `tabSupplier` WHERE name = po.supplier) AS party_name,
-            po.status
+            {_SUPPLIER_NAME.format("po.supplier")} AS party_name,
+            po.docstatus, po.status,
+            IF(poi.material_request IS NULL, NULL, 'Material Request') AS ref_doctype,
+            poi.material_request AS ref_name
         FROM `tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
-        WHERE poi.item_code = %s
-          AND (%s = '' OR poi.warehouse = %s)
-          AND po.docstatus = 1
-          AND po.status NOT IN ('Completed', 'Cancelled', 'Closed')
-          AND (poi.qty - poi.received_qty) > 0
-    """, (item_code, warehouse, warehouse), as_dict=True)
-
-    return [
-        {
-            "document_type": "Purchase Order",
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": flt(r.qty),
-            "uom": r.uom,
-            "rate": flt(r.rate),
-            "party": r.party,
-            "party_name": r.party_name,
-            "status": r.status,
-            "direction": "receipt",
-            "icon": "po",
-        }
-        for r in rows
-        if flt(r.qty) > 0
-    ]
+        WHERE poi.item_code = %(item)s
+          AND (%(wh)s = '' OR poi.warehouse = %(wh)s)
+          AND (po.docstatus = 0
+               OR (po.docstatus = 1 AND po.status NOT IN ('Completed', 'Closed', 'Delivered')))
+          AND po.is_subcontracted = 0
+          AND poi.delivered_by_supplier = 0
+          AND poi.qty > poi.received_qty
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Purchase Order", "receipt", "po") for r in rows]
 
 
-def _get_purchase_requisitions(item_code, warehouse):
+def _get_subcontracted_po_receipts(item_code, warehouse):
+    """FG of a subcontracted PO (drafts included) that has no Subcontracting
+    Order yet; once the SCO exists the FG is counted through the SCO."""
+    rows = frappe.db.sql(f"""
+        SELECT
+            poi.parent          AS document_name,
+            poi.schedule_date   AS date,
+            poi.fg_item_qty     AS qty,
+            (SELECT stock_uom FROM `tabItem` WHERE name = poi.fg_item) AS uom,
+            poi.warehouse,
+            po.supplier         AS party,
+            {_SUPPLIER_NAME.format("po.supplier")} AS party_name,
+            po.docstatus, po.status,
+            'Subcontracted FG'  AS sub_type,
+            IF(poi.material_request IS NULL, NULL, 'Material Request') AS ref_doctype,
+            poi.material_request AS ref_name
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.fg_item = %(item)s
+          AND (%(wh)s = '' OR poi.warehouse = %(wh)s)
+          AND (po.docstatus = 0
+               OR (po.docstatus = 1 AND po.status NOT IN ('Completed', 'Closed', 'Delivered')))
+          AND po.is_subcontracted = 1
+          AND NOT EXISTS (SELECT 1 FROM `tabSubcontracting Order` sco
+                          WHERE sco.purchase_order = po.name AND sco.docstatus < 2)
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Purchase Order", "receipt", "po") for r in rows if flt(r.qty) > 0]
+
+
+def _get_material_request_receipts(item_code, warehouse):
+    """Purchase / Customer Provided / Manufacture MRs (drafts too) for their
+    open qty, plus the incoming side of a Material Transfer MR when a
+    warehouse is selected (across all warehouses a transfer nets to zero)."""
     rows = frappe.db.sql("""
         SELECT
             mri.parent          AS document_name,
             mri.schedule_date   AS date,
-            mri.qty,
-            mri.uom,
-            mr.docstatus,
-            mr.status
+            mri.stock_qty - IF(mr.material_request_type = 'Customer Provided',
+                               mri.received_qty, mri.ordered_qty)
+                - IF(mr.material_request_type = 'Purchase', (
+                    SELECT COALESCE(SUM(IF(po.is_subcontracted, poi.fg_item_qty, poi.stock_qty)), 0)
+                    FROM `tabPurchase Order Item` poi
+                    JOIN `tabPurchase Order` po ON po.name = poi.parent
+                    WHERE poi.material_request_item = mri.name AND po.docstatus = 0
+                  ), 0) AS qty,
+            mri.stock_uom       AS uom,
+            mri.warehouse,
+            mr.docstatus, mr.status,
+            mr.material_request_type AS sub_type,
+            IF(mr.work_order IS NULL, NULL, 'Work Order') AS ref_doctype,
+            mr.work_order       AS ref_name
         FROM `tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-        WHERE mri.item_code = %s
-          AND (%s = '' OR mri.warehouse = %s)
-          AND mr.docstatus IN (0, 1)
-          AND mr.material_request_type = 'Purchase'
-          AND mr.status NOT IN ('Ordered', 'Cancelled', 'Stopped')
-    """, (item_code, warehouse, warehouse), as_dict=True)
+        WHERE mri.item_code = %(item)s
+          AND (%(wh)s = '' OR mri.warehouse = %(wh)s)
+          AND mr.docstatus < 2
+          AND mr.status NOT IN ('Stopped', 'Cancelled')
+          AND (mr.material_request_type IN ('Purchase', 'Customer Provided', 'Manufacture')
+               OR (%(wh)s != '' AND mr.material_request_type = 'Material Transfer'
+                   AND COALESCE(NULLIF(mri.from_warehouse, ''), mr.set_from_warehouse, '') != %(wh)s))
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
 
-    return [
-        {
-            "document_type": "Purchase Requisition",
-            "doctype": "Material Request",  # PR is a label; the actual document is a Material Request
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": flt(r.qty),
-            "uom": r.uom,
-            "rate": 0,
-            "party": "",
-            "status": r.status if r.docstatus == 1 else "Draft",
-            "direction": "receipt",
-            "icon": "pr",
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        if flt(r.qty) <= 0:
+            continue
+        if r.sub_type == "Purchase":
+            out.append(_mrp_row(r, "Material Request", "receipt", "pr", document_type="Purchase Requisition"))
+        else:
+            out.append(_mrp_row(r, "Material Request", "receipt", "mr"))
+    return out
 
 
 def _get_work_orders_receipt(item_code, warehouse):
+    """Submitted WO = production order (qty still to produce);
+    draft WO = planned order (full qty)."""
     rows = frappe.db.sql("""
         SELECT
             wo.name             AS document_name,
-            wo.planned_end_date AS date,
-            (wo.qty - wo.produced_qty) AS qty,
+            COALESCE(wo.planned_end_date, wo.expected_delivery_date, wo.planned_start_date) AS date,
+            IF(wo.docstatus = 0, wo.qty, wo.qty - wo.produced_qty) AS qty,
             wo.stock_uom        AS uom,
-            wo.fg_warehouse     AS wh,
-            wo.status
+            wo.fg_warehouse     AS warehouse,
+            wo.docstatus, wo.status,
+            'Produces'          AS sub_type,
+            IF(wo.production_plan IS NULL, NULL, 'Production Plan') AS ref_doctype,
+            wo.production_plan  AS ref_name
         FROM `tabWork Order` wo
-        WHERE wo.production_item = %s
-          AND (%s = '' OR wo.fg_warehouse = %s)
-          AND wo.docstatus = 1
-          AND wo.status NOT IN ('Completed', 'Cancelled', 'Stopped')
-          AND (wo.qty - wo.produced_qty) > 0
-    """, (item_code, warehouse, warehouse), as_dict=True)
-
-    return [
-        {
-            "document_type": "Work Order",
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": flt(r.qty),
-            "uom": r.uom,
-            "rate": 0,
-            "party": "",
-            "status": r.status,
-            "direction": "receipt",
-            "icon": "wo",
-        }
-        for r in rows
-        if flt(r.qty) > 0
-    ]
+        WHERE wo.production_item = %(item)s
+          AND (%(wh)s = '' OR wo.fg_warehouse = %(wh)s)
+          AND wo.docstatus < 2
+          AND wo.status NOT IN ('Completed', 'Stopped', 'Closed', 'Cancelled')
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Work Order", "receipt", "wo") for r in rows if flt(r.qty) > 0]
 
 
-def _get_stock_entries_receipt(item_code, warehouse):
-    """Draft stock entries that will add stock (Material Receipt / Material Transfer In).
-    Across all warehouses a transfer just moves stock around, so it is skipped then."""
+def _get_subcontracting_receipts(item_code, warehouse):
+    rows = frappe.db.sql(f"""
+        SELECT
+            scoi.parent         AS document_name,
+            scoi.schedule_date  AS date,
+            (scoi.qty - scoi.received_qty) * scoi.conversion_factor AS qty,
+            scoi.stock_uom      AS uom,
+            scoi.warehouse,
+            sco.supplier        AS party,
+            {_SUPPLIER_NAME.format("sco.supplier")} AS party_name,
+            sco.docstatus, sco.status,
+            'Produces'          AS sub_type,
+            IF(sco.purchase_order IS NULL, NULL, 'Purchase Order') AS ref_doctype,
+            sco.purchase_order  AS ref_name
+        FROM `tabSubcontracting Order Item` scoi
+        JOIN `tabSubcontracting Order` sco ON sco.name = scoi.parent
+        WHERE scoi.item_code = %(item)s
+          AND (%(wh)s = '' OR scoi.warehouse = %(wh)s)
+          AND sco.docstatus < 2
+          AND sco.status NOT IN ('Completed', 'Closed', 'Cancelled')
+          AND scoi.qty > scoi.received_qty
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Subcontracting Order", "receipt", "sco") for r in rows]
+
+
+def _get_stock_entries(item_code, warehouse):
+    """Draft Stock Entries not linked to a WO / SCO (those are already counted
+    through the order). A row that only puts stock in is a receipt, one that
+    only takes stock out a requirement; with a warehouse selected, transfers
+    into / out of it count too."""
     rows = frappe.db.sql("""
         SELECT
             sed.parent          AS document_name,
             se.posting_date     AS date,
-            sed.qty,
-            sed.uom,
-            se.stock_entry_type AS entry_type
+            sed.transfer_qty    AS qty,
+            sed.stock_uom       AS uom,
+            sed.s_warehouse, sed.t_warehouse,
+            se.docstatus,
+            se.stock_entry_type AS sub_type
         FROM `tabStock Entry Detail` sed
         JOIN `tabStock Entry` se ON se.name = sed.parent
-        WHERE sed.item_code = %s
-          AND (%s = '' OR sed.t_warehouse = %s)
+        WHERE sed.item_code = %(item)s
           AND se.docstatus = 0
-          AND se.stock_entry_type IN ('Material Receipt', 'Material Transfer', 'Manufacture')
-          AND NOT (%s = '' AND se.stock_entry_type = 'Material Transfer')
-    """, (item_code, warehouse, warehouse, warehouse), as_dict=True)
+          AND se.work_order IS NULL
+          AND se.subcontracting_order IS NULL
+          AND COALESCE(se.purchase_order, '') = ''
+    """, {"item": item_code}, as_dict=True)
 
-    return [
-        {
-            "document_type": "Stock Entry",
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": flt(r.qty),
-            "uom": r.uom,
-            "rate": 0,
-            "party": "",
-            "status": "Draft",
-            "direction": "receipt",
-            "icon": "se",
-            "sub_type": r.entry_type,
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        s, t = r.s_warehouse or "", r.t_warehouse or ""
+        if warehouse:
+            if t == warehouse and s != warehouse:
+                out.append(_mrp_row(r, "Stock Entry", "receipt", "se", warehouse=t))
+            elif s == warehouse and t != warehouse:
+                out.append(_mrp_row(r, "Stock Entry", "requirement", "se", warehouse=s))
+        elif t and not s:
+            out.append(_mrp_row(r, "Stock Entry", "receipt", "se", warehouse=t))
+        elif s and not t:
+            out.append(_mrp_row(r, "Stock Entry", "requirement", "se", warehouse=s))
+    return out
 
 
 # ─── Requirements ─────────────────────────────────────────────────────────────
 
 def _get_sales_orders(item_code, warehouse):
-    rows = frappe.db.sql("""
+    rows = frappe.db.sql(f"""
         SELECT
-            soi.parent              AS document_name,
-            so.delivery_date        AS date,
-            (soi.qty - soi.delivered_qty) AS qty,
-            soi.uom,
-            soi.rate,
-            so.customer             AS party,
-            so.customer_name        AS party_name,
-            so.status
+            soi.parent          AS document_name,
+            COALESCE(soi.delivery_date, so.delivery_date) AS date,
+            (soi.qty - soi.delivered_qty) * soi.conversion_factor AS qty,
+            soi.stock_uom       AS uom,
+            soi.warehouse,
+            so.customer         AS party,
+            {_CUSTOMER_NAME.format("so.customer")} AS party_name,
+            so.docstatus, so.status
         FROM `tabSales Order Item` soi
         JOIN `tabSales Order` so ON so.name = soi.parent
-        WHERE soi.item_code = %s
-          AND (%s = '' OR soi.warehouse = %s)
+        WHERE soi.item_code = %(item)s
+          AND (%(wh)s = '' OR soi.warehouse = %(wh)s)
           AND so.docstatus = 1
-          AND so.status NOT IN ('Completed', 'Cancelled', 'Closed')
-          AND (soi.qty - soi.delivered_qty) > 0
-    """, (item_code, warehouse, warehouse), as_dict=True)
-
-    return [
-        {
-            "document_type": "Sales Order",
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": -flt(r.qty),
-            "uom": r.uom,
-            "rate": flt(r.rate),
-            "party": r.party,
-            "party_name": r.party_name,
-            "status": r.status,
-            "direction": "requirement",
-            "icon": "so",
-        }
-        for r in rows
-        if flt(r.qty) > 0
-    ]
+          AND so.status NOT IN ('Completed', 'Closed')
+          AND soi.delivered_by_supplier = 0
+          AND soi.qty > soi.delivered_qty
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Sales Order", "requirement", "so") for r in rows]
 
 
-def _get_material_requests(item_code, warehouse):
-    """Internal material requests of type Issue (consume stock)."""
+def _get_work_order_requirements(item_code, warehouse):
+    """RM of a Work Order. Draft WO = dependent requirement (full required qty);
+    submitted WO = reservation, open until consumed. With a warehouse selected,
+    material already transferred out of it (to WIP) is no longer required there."""
+    rows = frappe.db.sql("""
+        SELECT
+            wo.name             AS document_name,
+            wo.planned_start_date AS date,
+            SUM(CASE
+                WHEN wo.docstatus = 0 THEN woi.required_qty
+                WHEN %(wh)s = '' THEN woi.required_qty - woi.consumed_qty
+                ELSE woi.required_qty - GREATEST(woi.transferred_qty - woi.returned_qty, woi.consumed_qty)
+            END)                AS qty,
+            MAX(woi.stock_uom)  AS uom,
+            MAX(woi.source_warehouse) AS warehouse,
+            wo.docstatus, wo.status,
+            'Consumes (RM)'     AS sub_type,
+            wo.production_item  AS for_item,
+            IF(wo.production_plan IS NULL, NULL, 'Production Plan') AS ref_doctype,
+            wo.production_plan  AS ref_name
+        FROM `tabWork Order Item` woi
+        JOIN `tabWork Order` wo ON wo.name = woi.parent
+        WHERE woi.item_code = %(item)s
+          AND (%(wh)s = '' OR woi.source_warehouse = %(wh)s)
+          AND wo.docstatus < 2
+          AND wo.status NOT IN ('Completed', 'Stopped', 'Closed', 'Cancelled')
+        GROUP BY wo.name
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Work Order", "requirement", "wo", read_only=1) for r in rows if flt(r.qty) > 0]
+
+
+def _get_subcontracting_requirements(item_code, warehouse):
+    """RM to supply to the subcontractor, open until consumed in a
+    Subcontracting Receipt (stock sent to the supplier warehouse is still ours).
+    With a warehouse selected, material already sent out of it is no longer required there."""
+    rows = frappe.db.sql(f"""
+        SELECT
+            sco.name            AS document_name,
+            sco.schedule_date   AS date,
+            SUM(CASE
+                WHEN %(wh)s = '' THEN sosi.required_qty - sosi.consumed_qty
+                ELSE sosi.required_qty - GREATEST(sosi.supplied_qty - sosi.returned_qty, sosi.consumed_qty)
+            END)                AS qty,
+            MAX(sosi.stock_uom) AS uom,
+            MAX(sosi.reserve_warehouse) AS warehouse,
+            sco.supplier        AS party,
+            {_SUPPLIER_NAME.format("sco.supplier")} AS party_name,
+            sco.docstatus, sco.status,
+            'Supplied RM'       AS sub_type,
+            MAX(sosi.main_item_code) AS for_item,
+            IF(sco.purchase_order IS NULL, NULL, 'Purchase Order') AS ref_doctype,
+            sco.purchase_order  AS ref_name
+        FROM `tabSubcontracting Order Supplied Item` sosi
+        JOIN `tabSubcontracting Order` sco ON sco.name = sosi.parent
+        WHERE sosi.rm_item_code = %(item)s
+          AND (%(wh)s = '' OR sosi.reserve_warehouse = %(wh)s)
+          AND sco.docstatus < 2
+          AND sco.status NOT IN ('Completed', 'Closed', 'Cancelled')
+        GROUP BY sco.name
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Subcontracting Order", "requirement", "sco", read_only=1) for r in rows if flt(r.qty) > 0]
+
+
+def _get_material_request_requirements(item_code, warehouse):
+    """Material Issue MRs (drafts too) for the qty not yet issued, plus the
+    outgoing side of a Material Transfer MR when a warehouse is selected."""
     rows = frappe.db.sql("""
         SELECT
             mri.parent          AS document_name,
             mri.schedule_date   AS date,
-            mri.qty,
-            mri.uom,
-            mr.docstatus,
-            mr.status
+            mri.stock_qty - mri.ordered_qty AS qty,
+            mri.stock_uom       AS uom,
+            IF(mr.material_request_type = 'Material Transfer',
+               COALESCE(NULLIF(mri.from_warehouse, ''), mr.set_from_warehouse), mri.warehouse) AS warehouse,
+            mr.docstatus, mr.status,
+            mr.material_request_type AS sub_type,
+            IF(mr.work_order IS NULL, NULL, 'Work Order') AS ref_doctype,
+            mr.work_order       AS ref_name
         FROM `tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-        WHERE mri.item_code = %s
-          AND (%s = '' OR mri.warehouse = %s)
-          AND mr.docstatus IN (0, 1)
-          AND mr.material_request_type = 'Material Issue'
-          AND mr.status NOT IN ('Transferred', 'Issued', 'Cancelled', 'Stopped')
-    """, (item_code, warehouse, warehouse), as_dict=True)
-
-    return [
-        {
-            "document_type": "Material Request",
-            "document_name": r.document_name,
-            "date": str(r.date) if r.date else None,
-            "qty": -flt(r.qty),
-            "uom": r.uom,
-            "rate": 0,
-            "party": "",
-            "status": r.status if r.docstatus == 1 else "Draft",
-            "direction": "requirement",
-            "icon": "mr",
-        }
-        for r in rows
-    ]
+        WHERE mri.item_code = %(item)s
+          AND mr.docstatus < 2
+          AND mr.status NOT IN ('Stopped', 'Cancelled')
+          AND ((mr.material_request_type = 'Material Issue' AND (%(wh)s = '' OR mri.warehouse = %(wh)s))
+               OR (%(wh)s != '' AND mr.material_request_type = 'Material Transfer'
+                   AND COALESCE(NULLIF(mri.from_warehouse, ''), mr.set_from_warehouse) = %(wh)s
+                   AND mri.warehouse != %(wh)s))
+    """, {"item": item_code, "wh": warehouse}, as_dict=True)
+    return [_mrp_row(r, "Material Request", "requirement", "mr") for r in rows if flt(r.qty) > 0]
