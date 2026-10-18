@@ -90,8 +90,8 @@ class TestBulkPreProductionPlan(TestCase):
 
 		with (
 			patch(
-				"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan._get_projected_qty_for_requirement",
-				side_effect=lambda item_code, warehouse: stock_by_item_warehouse.get((item_code, warehouse), 0),
+				"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan._get_available_qty_for_requirement",
+				side_effect=lambda item_code, warehouse, *args: stock_by_item_warehouse.get((item_code, warehouse), 0),
 			),
 			patch(
 				"ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan._fetch_bom_component_map",

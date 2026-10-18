@@ -948,16 +948,161 @@ def _get_stock_warehouse_for_requirement_row(row: Any, item_code: str, target_wa
 	)
 
 
-def _get_projected_qty_for_requirement(item_code: str | None, warehouse: str | None) -> float:
-	"""Return non-negative projected quantity for an item in a warehouse."""
+def _get_available_qty_for_requirement(
+	item_code: str | None,
+	warehouse: str | None,
+	own_pps: list[str] | None = None,
+	own_demand_qty: float = 0.0,
+) -> float:
+	"""
+	Stock that can cover a requirement row: the MRP Report end balance (stock + open
+	receipts − open requirements, drafts included — Bin.projected_qty misses every draft
+	WO / PO / MR, and all Bulk PP output stays Draft), corrected for the plan being netted:
+	- `own_pps`: Production Plans already made for these rows — their WO / PO / MR would
+	  otherwise count as supply for (and consume stock from) the very demand they cover.
+	- `own_demand_qty`: the rows' own Sales Order demand, already inside the balance —
+	  without adding it back that demand is subtracted twice.
+	"""
 	if not item_code or not warehouse:
 		return 0.0
 
-	bin_data = get_bin_data(item_code, warehouse)
-	if not bin_data:
+	from ujwal_industries.ujwal_industries.page.mrp_report.mrp_report import get_available_qty
+
+	available = (
+		flt(get_available_qty(item_code, warehouse))
+		- _get_production_plans_net_supply(item_code, warehouse, own_pps)
+		+ flt(own_demand_qty)
+	)
+	return max(available, 0.0)
+
+
+def _get_production_plans_net_supply(item_code: str, warehouse: str, production_plans: list[str] | None) -> float:
+	"""
+	Open receipts − open requirements of `item_code` in `warehouse` coming from the
+	WO / PO / MR of `production_plans`, counted the way the MRP Report counts them.
+	"""
+	production_plans = [pp for pp in (production_plans or []) if pp]
+	if not production_plans:
 		return 0.0
 
-	return max(flt(bin_data[0].get("projected_qty") or 0), 0.0)
+	args = {"item": item_code, "wh": warehouse, "pps": production_plans}
+	receipts = frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(IF(wo.docstatus = 0, wo.qty, wo.qty - wo.produced_qty)), 0)
+		FROM `tabWork Order` wo
+		WHERE wo.production_item = %(item)s AND wo.fg_warehouse = %(wh)s
+			AND wo.production_plan IN %(pps)s
+			AND wo.docstatus < 2
+			AND wo.status NOT IN ('Completed', 'Stopped', 'Closed', 'Cancelled')
+		""",
+		args,
+	)[0][0]
+	receipts += frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(IF(po.is_subcontracted, poi.fg_item_qty,
+			(poi.qty - poi.received_qty) * poi.conversion_factor)), 0)
+		FROM `tabPurchase Order Item` poi
+		JOIN `tabPurchase Order` po ON po.name = poi.parent
+		WHERE IF(po.is_subcontracted, poi.fg_item, poi.item_code) = %(item)s
+			AND poi.warehouse = %(wh)s
+			AND poi.production_plan IN %(pps)s
+			AND (po.docstatus = 0
+				OR (po.docstatus = 1 AND po.status NOT IN ('Completed', 'Closed', 'Delivered')))
+			AND poi.delivered_by_supplier = 0
+			AND IF(po.is_subcontracted,
+				NOT EXISTS (SELECT 1 FROM `tabSubcontracting Order` sco
+					WHERE sco.purchase_order = po.name AND sco.docstatus < 2),
+				poi.qty > poi.received_qty)
+		""",
+		args,
+	)[0][0]
+	receipts += frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(GREATEST(
+			mri.stock_qty - IF(mr.material_request_type = 'Customer Provided', mri.received_qty, mri.ordered_qty)
+			- IF(mr.material_request_type = 'Purchase', (
+				SELECT COALESCE(SUM(IF(po.is_subcontracted, poi.fg_item_qty, poi.stock_qty)), 0)
+				FROM `tabPurchase Order Item` poi
+				JOIN `tabPurchase Order` po ON po.name = poi.parent
+				WHERE poi.material_request_item = mri.name AND po.docstatus = 0
+			), 0), 0)), 0)
+		FROM `tabMaterial Request Item` mri
+		JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+		WHERE mri.item_code = %(item)s AND mri.warehouse = %(wh)s
+			AND mri.production_plan IN %(pps)s
+			AND mr.docstatus < 2
+			AND mr.status NOT IN ('Stopped', 'Cancelled')
+			AND mr.material_request_type IN ('Purchase', 'Customer Provided', 'Manufacture')
+		""",
+		args,
+	)[0][0]
+	requirements = frappe.db.sql(
+		"""
+		SELECT COALESCE(SUM(GREATEST(CASE
+			WHEN wo.docstatus = 0 THEN woi.required_qty
+			ELSE woi.required_qty - GREATEST(woi.transferred_qty - woi.returned_qty, woi.consumed_qty)
+		END, 0)), 0)
+		FROM `tabWork Order Item` woi
+		JOIN `tabWork Order` wo ON wo.name = woi.parent
+		WHERE woi.item_code = %(item)s AND woi.source_warehouse = %(wh)s
+			AND wo.production_plan IN %(pps)s
+			AND wo.docstatus < 2
+			AND wo.status NOT IN ('Completed', 'Stopped', 'Closed', 'Cancelled')
+		""",
+		args,
+	)[0][0]
+	return flt(receipts) - flt(requirements)
+
+
+def _get_own_production_plans(bulk_pp: str | None, sales_orders: list[str]) -> list[str]:
+	"""Live Production Plans this Bulk PP already made for `sales_orders`."""
+	sales_orders = [so for so in (sales_orders or []) if so]
+	if not bulk_pp or not sales_orders:
+		return []
+	return frappe.db.sql_list(
+		"""
+		SELECT DISTINCT pp.name
+		FROM `tabProduction Plan` pp
+		JOIN `tabProduction Plan Item` ppi ON ppi.parent = pp.name
+		WHERE pp.custom_bulk_pre_production_plan = %(bulk_pp)s
+			AND pp.docstatus < 2
+			AND ppi.sales_order IN %(sos)s
+		""",
+		{"bulk_pp": bulk_pp, "sos": sales_orders},
+	)
+
+
+def _get_own_so_demand_qty(group_rows: list[dict[str, Any]], warehouse: str) -> float:
+	"""
+	Sales Order demand of FG rows that the MRP balance already holds: per SO line its
+	open qty (stock UOM) when the SO reserves in `warehouse`, capped at what these rows
+	plan — the rest of the line is still uncovered demand and must keep its claim on stock.
+	"""
+	gross_by_so_item: dict[str, float] = {}
+	for row in group_rows:
+		if row.get("sales_order_item"):
+			gross_by_so_item[row["sales_order_item"]] = (
+				gross_by_so_item.get(row["sales_order_item"], 0.0) + flt(row.get("gross_qty"))
+			)
+	if not gross_by_so_item or not warehouse:
+		return 0.0
+
+	open_rows = frappe.db.sql(
+		"""
+		SELECT soi.name, (soi.qty - soi.delivered_qty) * soi.conversion_factor AS open_qty
+		FROM `tabSales Order Item` soi
+		JOIN `tabSales Order` so ON so.name = soi.parent
+		WHERE soi.name IN %(names)s
+			AND soi.warehouse = %(wh)s
+			AND so.docstatus = 1
+			AND so.status NOT IN ('Completed', 'Closed')
+			AND soi.delivered_by_supplier = 0
+			AND soi.qty > soi.delivered_qty
+		""",
+		{"names": list(gross_by_so_item), "wh": warehouse},
+		as_dict=True,
+	)
+	return sum(min(flt(r.open_qty), gross_by_so_item[r.name]) for r in open_rows)
 
 
 def _allocate_group_net_qty(group_rows: list[dict[str, Any]], stock_qty: float) -> dict[str, float]:
@@ -1018,11 +1163,18 @@ def _requirement_row_key(row: Any) -> str:
 	return getattr(row, "name", None) or f"tmp::{id(row)}"
 
 
-def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], target_warehouse_map: dict[str, str]) -> dict[str, Any]:
+def _build_stock_adjusted_requirement_context(
+	items: dict[str, list[Any]],
+	target_warehouse_map: dict[str, str],
+	bulk_pp: str | None = None,
+) -> dict[str, Any]:
 	"""Compute gross/net FG, SFG and MR requirements using row warehouses and BOM ratios."""
 	fg_rows = list(items.get("fg") or [])
 	sfg_rows = sorted(items.get("sfg") or [], key=lambda row: cint(getattr(row, "bom_level", 0) or 0))
 	mr_rows = list(items.get("mr") or [])
+	own_pps = _get_own_production_plans(
+		bulk_pp, list({getattr(row, "sales_order", None) for row in fg_rows + sfg_rows + mr_rows})
+	)
 	bom_component_map = _fetch_bom_component_map([
 		bom_no
 		for bom_no in [getattr(row, "bom_no", None) for row in fg_rows + sfg_rows]
@@ -1085,10 +1237,13 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			"row_key": row_key,
 			"gross_qty": gross_qty,
 			"warehouse": warehouse,
+			"sales_order_item": getattr(fg, "sales_order_item", None),
 		})
 
 	for (item_code, warehouse), group_rows in fg_groups.items():
-		stock_qty = _get_projected_qty_for_requirement(item_code, warehouse)
+		stock_qty = _get_available_qty_for_requirement(
+			item_code, warehouse, own_pps, _get_own_so_demand_qty(group_rows, warehouse)
+		)
 		allocations = _allocate_group_net_qty(group_rows, stock_qty)
 		item_state = fg_item_states.setdefault(item_code, {
 			"gross_qty": 0.0,
@@ -1148,7 +1303,7 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 			})
 
 		for (fg_item_code, parent_item_code, item_code, current_level, warehouse), group_rows in sfg_groups_by_level.items():
-			stock_qty = _get_projected_qty_for_requirement(item_code, warehouse)
+			stock_qty = _get_available_qty_for_requirement(item_code, warehouse, own_pps)
 			allocations = _allocate_group_net_qty(group_rows, stock_qty)
 			parent_state = sfg_parent_states.setdefault((fg_item_code, item_code, current_level), {
 				"gross_qty": 0.0,
@@ -1242,7 +1397,7 @@ def _build_stock_adjusted_requirement_context(items: dict[str, list[Any]], targe
 	for (_, warehouse), data in sorted(mr_totals.items(), key=lambda item: (item[0][0], item[0][1])):
 		item_code = data.get("item_code") or ""
 		eff_warehouse = warehouse or _item_default_wh.get(item_code, "")
-		stock_qty = _get_projected_qty_for_requirement(item_code, eff_warehouse)
+		stock_qty = _get_available_qty_for_requirement(item_code, eff_warehouse, own_pps)
 		required_bom_qty = max(flt(data.get("required_bom_qty") or 0), 0.0)  # gross
 		net_required_qty = max(flt(data.get("net_required_qty") or 0), 0.0)  # net
 		mr_items_out.append(frappe._dict({
@@ -2015,8 +2170,8 @@ def get_sales_orders(
 	fully_planned_sos = set()
 	for row in so_line_rows:
 		planned = plan_map.get(row.sales_order_item) or {}
-		basis_qty = flt((basis_map.get(row.sales_order_item) or {}).get("qty"))
-		if basis_qty - flt(planned.get("planned_qty")) > 0.001:
+		basis = basis_map.get(row.sales_order_item) or {}
+		if _so_item_left_to_plan(basis.get("qty"), planned.get("planned_qty"), basis.get("delivered_qty")) > 0.001:
 			if row.sales_order not in seen_sos:
 				sales_orders.append(row)
 				seen_sos.add(row.sales_order)
@@ -2166,7 +2321,7 @@ def _get_so_item_basis_qty(so_item_names: list[str]) -> dict[str, frappe._dict]:
 	rows = frappe.db.sql(
 		"""
 		SELECT
-			soi.name, soi.parent AS sales_order, soi.item_code, soi.qty,
+			soi.name, soi.parent AS sales_order, soi.item_code, soi.qty, soi.delivered_qty,
 			so.order_type,
 			COALESCE(item.custom_planning_type, '') AS custom_planning_type,
 			COALESCE(item.custom_forecast_threashold, 0) AS custom_forecast_threashold
@@ -2182,6 +2337,15 @@ def _get_so_item_basis_qty(so_item_names: list[str]) -> dict[str, frappe._dict]:
 		if row.order_type == "Forecast" and row.custom_planning_type == "2":
 			row.qty = flt(row.custom_forecast_threashold) or row.qty
 	return {row.name: row for row in rows}
+
+
+def _so_item_left_to_plan(qty: float, planned_qty: float, delivered_qty: float) -> float:
+	"""
+	Qty of a Sales Order line still to plan. Delivered qty counts as covered too — goods
+	shipped from stock before the line was planned need no Work Order. max(), not a sum:
+	deliveries made out of an earlier plan's production are already inside planned_qty.
+	"""
+	return max(flt(qty) - max(flt(planned_qty), flt(delivered_qty)), 0.0)
 
 
 def _validate_so_items_not_over_planned(bulk_pp, so_name: str) -> None:
@@ -2212,7 +2376,7 @@ def _validate_so_items_not_over_planned(bulk_pp, so_name: str) -> None:
 		# Nothing planned elsewhere → no conflict (over-producing an SO line stays allowed as before)
 		if not basis or not planned:
 			continue
-		remaining = max(flt(basis.qty) - flt(planned["planned_qty"]), 0.0)
+		remaining = _so_item_left_to_plan(basis.qty, planned["planned_qty"], basis.delivered_qty)
 		if flt(qty) > remaining + 0.001:
 			over_planned.append(
 				_("<b>{0}</b> — planning {1}, only {2} of {3} left (planned in {4})").format(
@@ -2268,6 +2432,7 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 			soi.item_code,
 			soi.item_name,
 			soi.qty,
+			soi.delivered_qty,
 			soi.stock_uom,
 			soi.bom_no,
 			soi.delivery_date,
@@ -2291,12 +2456,13 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 		if row.so_order_type == 'Forecast' and row.custom_planning_type == '2':
 			row.qty = flt(row.custom_forecast_threashold) or row.qty
 
-	# Qty already planned elsewhere (other Bulk PPs / Production Plans) → what is left to pick
+	# Qty already planned elsewhere (other Bulk PPs / Production Plans) or delivered → what is left to pick
 	plan_map = _get_so_item_plan_map([row.sales_order_item for row in rows], exclude_bulk_pp=docname)
 	for row in rows:
 		planned = plan_map.get(row.sales_order_item) or {}
 		row.planned_qty = flt(planned.get("planned_qty"))
-		row.remaining_qty = max(flt(row.qty) - row.planned_qty, 0.0)
+		row.delivered_qty = flt(row.delivered_qty)
+		row.remaining_qty = _so_item_left_to_plan(row.qty, row.planned_qty, row.delivered_qty)
 		row.planned_in = planned.get("planned_in") or []
 
 	for row in rows:
@@ -2714,7 +2880,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
 			for link in linked_rm_rows:
 				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
-		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map, docname)
 		fg_requirement_map = requirement_ctx["fg_by_row"]
 		sfg_requirement_map = requirement_ctx["sfg_by_row"]
 		effective_mr_items = requirement_ctx["mr_items"]
@@ -3768,7 +3934,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 			""", {"boms": sfg_bom_nos, "items": so_mr_item_codes}, as_dict=True)
 			for link in linked_rm_rows:
 				sfg_bom_links.setdefault(link.bom_no, set()).add(link.item_code)
-		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+		requirement_ctx = _build_stock_adjusted_requirement_context(items, target_warehouse_map, docname)
 		fg_requirement_map = requirement_ctx["fg_by_row"]
 		sfg_requirement_map = requirement_ctx["sfg_by_row"]
 		effective_mr_items = requirement_ctx["mr_items"]
@@ -4859,6 +5025,7 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 			soi.item_code,
 			soi.item_name,
 			soi.qty,
+			soi.delivered_qty,
 			soi.stock_uom,
 			soi.warehouse,
 			soi.delivery_date,
@@ -4884,10 +5051,12 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 		if item.so_order_type == 'Forecast' and item.custom_planning_type == '2':
 			item.qty = flt(item.custom_forecast_threashold) or item.qty
 
-	# Plan only what other Bulk PPs / Production Plans haven't planned yet; fully planned lines drop out
+	# Plan only what other Bulk PPs / Production Plans haven't planned and isn't delivered yet; covered lines drop out
 	plan_map = _get_so_item_plan_map([item.sales_order_item for item in so_items], exclude_bulk_pp=doc.name)
 	for item in so_items:
-		item.qty = max(flt(item.qty) - flt((plan_map.get(item.sales_order_item) or {}).get("planned_qty")), 0.0)
+		item.qty = _so_item_left_to_plan(
+			item.qty, (plan_map.get(item.sales_order_item) or {}).get("planned_qty"), item.delivered_qty
+		)
 	so_items = [item for item in so_items if item.qty > 0]
 
 	po_count = 0
@@ -5167,7 +5336,7 @@ def _get_so_requirement_context(doc: "Document", so_name: str) -> dict[str, Any]
 			| {r.production_item for r in items["sfg"] if r.production_item}),
 		doc.company,
 	)
-	return _build_stock_adjusted_requirement_context(items, target_warehouse_map)
+	return _build_stock_adjusted_requirement_context(items, target_warehouse_map, doc.name)
 
 
 def _get_net_qty(ctx: dict[str, Any], row: Any, gross_qty: float) -> float:

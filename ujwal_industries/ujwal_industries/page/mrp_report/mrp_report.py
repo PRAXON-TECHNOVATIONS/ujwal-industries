@@ -21,16 +21,7 @@ def get_stock_requirements(item_code, warehouse=None):
     opening_qty = _get_actual_stock(item_code, warehouse)
 
     # ── 2. Gather all MRP elements ────────────────────────────────────────
-    rows += _get_purchase_orders(item_code, warehouse)
-    rows += _get_subcontracted_po_receipts(item_code, warehouse)
-    rows += _get_material_request_receipts(item_code, warehouse)
-    rows += _get_work_orders_receipt(item_code, warehouse)
-    rows += _get_subcontracting_receipts(item_code, warehouse)
-    rows += _get_stock_entries(item_code, warehouse)
-    rows += _get_sales_orders(item_code, warehouse)
-    rows += _get_work_order_requirements(item_code, warehouse)
-    rows += _get_subcontracting_requirements(item_code, warehouse)
-    rows += _get_material_request_requirements(item_code, warehouse)
+    rows += _get_mrp_elements(item_code, warehouse)
 
     for_items = {r["for_item"] for r in rows if r.get("for_item")}
     if for_items:
@@ -368,6 +359,29 @@ def _related_to_row(d):
         "available_qty": None,
         "in_mrp": 0,
     }
+
+
+def get_available_qty(item_code, warehouse):
+    """End balance of the Stock/Requirements list: stock + every open receipt
+    − every open requirement, drafts included. Bulk PP nets planning against it."""
+    return flt(_get_actual_stock(item_code, warehouse)) + sum(
+        flt(r["qty"]) for r in _get_mrp_elements(item_code, warehouse)
+    )
+
+
+def _get_mrp_elements(item_code, warehouse):
+    return (
+        _get_purchase_orders(item_code, warehouse)
+        + _get_subcontracted_po_receipts(item_code, warehouse)
+        + _get_material_request_receipts(item_code, warehouse)
+        + _get_work_orders_receipt(item_code, warehouse)
+        + _get_subcontracting_receipts(item_code, warehouse)
+        + _get_stock_entries(item_code, warehouse)
+        + _get_sales_orders(item_code, warehouse)
+        + _get_work_order_requirements(item_code, warehouse)
+        + _get_subcontracting_requirements(item_code, warehouse)
+        + _get_material_request_requirements(item_code, warehouse)
+    )
 
 
 def _get_actual_stock(item_code, warehouse):
