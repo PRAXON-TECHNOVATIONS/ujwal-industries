@@ -387,6 +387,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 						merged.qty = (merged.qty || 0) + (item.qty || 0);
 						merged.remaining_qty = (merged.remaining_qty || 0) + (item.remaining_qty || 0);
 						merged.planned_qty = (merged.planned_qty || 0) + (item.planned_qty || 0);
+						merged.delivered_qty = (merged.delivered_qty || 0) + (item.delivered_qty || 0);
 						merged.planned_in = [...new Set([...(merged.planned_in || []), ...(item.planned_in || [])])];
 					} else {
 						item_map[key] = Object.assign({}, item);
@@ -407,7 +408,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					)
 				);
 
-				// Fully planned elsewhere (other Bulk PP / Production Plan) → locked
+				// Fully planned elsewhere (other Bulk PP / Production Plan) or delivered → locked
 				const is_selectable = (item) => flt(item.remaining_qty) > 0;
 
 				// Build dialog fields — one Check per unique item_code+delivery_date
@@ -417,11 +418,15 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					const date_label = item.delivery_date
 						? `  [Del: ${frappe.datetime.str_to_user(item.delivery_date)}]` : '';
 					const planned_in = (item.planned_in || []).join(', ');
+					// Left = Qty − the larger of planned / delivered — say which one covers it
+					const covered = flt(item.planned_qty) > 0 && flt(item.planned_qty) >= flt(item.delivered_qty)
+						? `${item.planned_qty} planned in ${planned_in}`
+						: `${item.delivered_qty} delivered`;
 					let qty_label = `(Qty: ${item.qty || ''} ${item.stock_uom || ''})`;
 					if (!selectable) {
-						qty_label = `(Qty: ${item.qty || ''} ${item.stock_uom || ''} — fully planned in ${planned_in})`;
-					} else if (flt(item.planned_qty) > 0) {
-						qty_label = `(Left: ${item.remaining_qty} of ${item.qty} ${item.stock_uom || ''} — ${item.planned_qty} planned in ${planned_in})`;
+						qty_label = `(Qty: ${item.qty || ''} ${item.stock_uom || ''} — fully covered: ${covered})`;
+					} else if (flt(item.planned_qty) > 0 || flt(item.delivered_qty) > 0) {
+						qty_label = `(Left: ${item.remaining_qty} of ${item.qty} ${item.stock_uom || ''} — ${covered})`;
 					}
 					return {
 						fieldtype: 'Check',
@@ -760,7 +765,7 @@ function load_bom_selections(frm) {
 				// Skip if this SO has a selection and this item is not in it
 				const sel = so_selected_map[item.sales_order];
 				if (sel && !sel.has(item.item_code)) return;
-				// Fully planned elsewhere — nothing left to choose a BOM for
+				// Fully planned elsewhere / delivered — nothing left to choose a BOM for
 				if (flt(item.remaining_qty) <= 0) return;
 
 				const row = frappe.model.add_child(frm.doc, 'Bulk PP BOM Selection', 'bom_selections');
