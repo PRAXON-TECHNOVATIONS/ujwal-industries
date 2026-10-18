@@ -138,3 +138,67 @@ def filter_rows_by_po_access(rows, po_field="purchase_order", user=None):
     ) if po_names else set()
 
     return [row for row in rows if row.get(po_field) in visible]
+
+
+# ---------------------------------------------------------------------------
+# Submission tracking — system-generated POs (from Bulk PP / Production Plan)
+# are created as drafts. Record when they were generated and when / by whom
+# they were submitted, and date the PO on its submit day so the delay shows.
+# ---------------------------------------------------------------------------
+
+def _is_system_generated(doc) -> bool:
+    return any(row.get("production_plan") for row in doc.get("items") or [])
+
+
+def set_generated_on(doc, method=None):
+    """before_insert: stamp when the system created this PO."""
+    if _is_system_generated(doc) and not doc.get("custom_generated_on"):
+        doc.custom_generated_on = frappe.utils.now_datetime()
+
+
+def date_po_on_submit(doc, method=None):
+    """
+    before_validate on submit: PO date becomes the submit date (ERPNext's own date checks
+    then run against it), payment-schedule due dates move by the same number of days,
+    and Submitted On / By / Delay are recorded. Blocks when a Required By date has already
+    passed — the buyer should agree a new date with the supplier first.
+    """
+    from frappe.utils import add_days, date_diff, getdate, now_datetime, time_diff_in_hours
+
+    if doc._action != "submit" or not _is_system_generated(doc):
+        return
+
+    submitted_on = now_datetime()
+    today = submitted_on.date()
+
+    late_rows = [
+        frappe._("Row {0}: <b>{1}</b> — Required By {2}").format(
+            row.idx, row.item_code, frappe.format_value(row.schedule_date, {"fieldtype": "Date"})
+        )
+        for row in doc.items
+        if row.schedule_date and getdate(row.schedule_date) < today
+    ]
+    if late_rows:
+        frappe.throw(
+            frappe._(
+                "The Required By date has already passed for these items:<br><br>{0}<br><br>"
+                "Agree a new Required By date with the supplier, update the rows, then submit."
+            ).format("<br>".join(late_rows)),
+            title=frappe._("Required By Date Passed"),
+        )
+
+    shift_days = date_diff(today, doc.transaction_date)
+    if shift_days:
+        doc.transaction_date = today
+        for row in doc.get("payment_schedule") or []:
+            if row.due_date:
+                row.due_date = add_days(row.due_date, shift_days)
+            if row.get("discount_date"):
+                row.discount_date = add_days(row.discount_date, shift_days)
+
+    doc.custom_generated_on = doc.get("custom_generated_on") or doc.creation
+    doc.custom_submitted_on = submitted_on
+    doc.custom_submitted_by = frappe.session.user
+    doc.custom_submission_delay_days = round(
+        max(time_diff_in_hours(submitted_on, doc.custom_generated_on), 0) / 24, 1
+    )

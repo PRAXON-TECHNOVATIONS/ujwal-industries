@@ -144,3 +144,13 @@ def notify_store_incharge_on_work_order_submit(doc, method):
 				),
 			}
 		)
+
+
+def remove_assignments_on_cancel(doc, method=None):
+	"""A cancelled document needs no action any more — take it off everyone's ToDo list."""
+	for todo in frappe.get_all(
+		"ToDo",
+		filters={"reference_type": doc.doctype, "reference_name": doc.name, "status": "Open"},
+		pluck="name",
+	):
+		assign_to.set_status(doc.doctype, doc.name, todo=todo, status="Cancelled", ignore_permissions=True)

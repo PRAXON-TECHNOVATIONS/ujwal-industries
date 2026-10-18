@@ -1571,7 +1571,16 @@ class BulkPreProductionPlan(Document):
 
 	def on_submit(self):
 		self.set_status()
-  
+
+	def on_cancel(self):
+		"""Reverse every Production Plan of this Bulk PP and what it generated (all-or-nothing)."""
+		reversal = _collect_plan_reversal(self.name)
+		if reversal["blockers"]:
+			_throw_reversal_blockers(reversal["blockers"], _("This Bulk Pre Production Plan"))
+		_execute_plan_reversal(reversal)
+		self.set_status()
+		self.db_set("status", self.status, update_modified=False)
+
 	@frappe.whitelist()
 	def get_items(self):
 		"""
@@ -1890,7 +1899,8 @@ def get_sales_orders(
 	"""
 	Fetch Sales Orders using the same logic as Production Plan's get_sales_orders():
 	  - Excludes Stopped / Closed SOs
-	  - Only includes SOs where at least one item has qty > production_plan_qty
+	  - Only includes SOs where at least one item still has qty not planned by
+	    another Bulk PP / Production Plan (see _get_so_item_plan_map)
 	  - Requires an active BOM or packed items with an active BOM
 	  - Supports the same optional filters: date ranges, customer, project,
 	    sales_order_status, item_code
@@ -1905,8 +1915,7 @@ def get_sales_orders(
 		"so.docstatus = 1",
 		"so.status NOT IN ('Stopped', 'Closed')",
 		"so.company = %(company)s",
-		# Mirror PP: only SOs where at least one item has remaining planned qty
-		"so_item.qty > so_item.production_plan_qty",
+		# "Has qty left to plan" is checked per line below (other Bulk PPs / Production Plans)
 	]
 
 	# Transaction date range (same as PP's from_date / to_date)
@@ -1967,8 +1976,10 @@ def get_sales_orders(
 		)
 	"""
 
-	sales_orders = frappe.db.sql(f"""
-		SELECT DISTINCT
+	so_line_rows = frappe.db.sql(f"""
+		SELECT
+			so_item.name       AS sales_order_item,
+			so_item.item_code  AS item_code,
 			so.name            AS sales_order,
 			so.customer,
 			so.delivery_date,
@@ -1993,6 +2004,26 @@ def get_sales_orders(
 			so.delivery_date ASC
 	""", filters, as_dict=True)
 
+	# Keep an SO only while at least one eligible line still has qty left to plan
+	so_item_names = [row.sales_order_item for row in so_line_rows]
+	basis_map = _get_so_item_basis_qty(so_item_names)
+	plan_map = _get_so_item_plan_map(so_item_names)
+	sales_orders = []
+	seen_sos = set()
+	# SOs hidden because every eligible line is fully planned — counted in the message,
+	# details in the "SO Plan Status" report
+	fully_planned_sos = set()
+	for row in so_line_rows:
+		planned = plan_map.get(row.sales_order_item) or {}
+		basis_qty = flt((basis_map.get(row.sales_order_item) or {}).get("qty"))
+		if basis_qty - flt(planned.get("planned_qty")) > 0.001:
+			if row.sales_order not in seen_sos:
+				sales_orders.append(row)
+				seen_sos.add(row.sales_order)
+		else:
+			fully_planned_sos.add(row.sales_order)
+	fully_planned_sos -= seen_sos
+
 	# ── Build user-facing message ────────────────────────────────────────────
 	filter_bits = []
 	if from_date or to_date:
@@ -2008,12 +2039,31 @@ def get_sales_orders(
 	if item_code:
 		filter_bits.append(_('item {0}').format(frappe.bold(item_code)))
 
-	frappe.msgprint(
-		_('Found {0} Sales Orders{1}').format(
-			len(sales_orders),
-			(' for ' + ', '.join(filter_bits)) if filter_bits else ''
-		)
+	message = _('Found {0} Sales Orders{1}').format(
+		len(sales_orders),
+		(' for ' + ', '.join(filter_bits)) if filter_bits else ''
 	)
+	if fully_planned_sos:
+		from urllib.parse import urlencode
+
+		report_filters = {
+			"company": company,
+			"item_code": item_code,
+			"customer": customer,
+			"from_date": from_date,
+			"to_date": to_date,
+			"from_delivery_date": from_delivery_date,
+			"to_delivery_date": to_delivery_date,
+			"plan_status": "Fully Planned",
+		}
+		report_url = "/app/query-report/SO Plan Status?" + urlencode(
+			{k: v for k, v in report_filters.items() if v}
+		)
+		message += "<br><br>" + _(
+			'{0} more already fully planned — <a href="{1}" target="_blank">View in SO Plan Status</a>'
+		).format(len(fully_planned_sos), report_url)
+
+	frappe.msgprint(message)
 
 	return {
 		'sales_orders': [
@@ -2032,6 +2082,154 @@ def get_sales_orders(
 			for so in sales_orders
 		]
 	}
+
+
+def _get_so_item_plan_map(so_item_names: list[str], exclude_bulk_pp: str | None = None) -> dict[str, dict[str, Any]]:
+	"""
+	Qty of each Sales Order line already committed to a plan, and the documents holding it:
+	{so_item: {"planned_qty": float, "planned_in": [names], "planned_refs": [(doctype, name)],
+	           "qty_by_ref": {name: qty}}}.
+
+	- Bulk PP: the FG row's planned_qty (the qty picked from the SO, before stock netting)
+	  once the Production Plan for that SO is created (`custom_pp_created`) and the Bulk PP
+	  is not cancelled. Cancelling / deleting that PP clears the flag, freeing the qty again.
+	- Production Plans made outside Bulk PP: their planned_qty, PP not cancelled.
+
+	`exclude_bulk_pp` leaves out the Bulk PP being worked on, so its own rows never
+	lock themselves (e.g. when items are regenerated).
+	"""
+	names = list({n for n in (so_item_names or []) if n})
+	if not names:
+		return {}
+
+	result: dict[str, dict[str, Any]] = {}
+
+	def _add(so_item, qty, doctype, ref):
+		entry = result.setdefault(
+			so_item, {"planned_qty": 0.0, "planned_in": [], "planned_refs": [], "qty_by_ref": {}}
+		)
+		entry["planned_qty"] += flt(qty)
+		entry["qty_by_ref"][ref] = entry["qty_by_ref"].get(ref, 0.0) + flt(qty)
+		if ref not in entry["planned_in"]:
+			entry["planned_in"].append(ref)
+			entry["planned_refs"].append((doctype, ref))
+
+	for row in frappe.db.sql(
+		"""
+		SELECT bi.sales_order_item, bi.planned_qty, bpp.name AS ref
+		FROM `tabBulk PP Item` bi
+		INNER JOIN `tabBulk Pre Production Plan` bpp ON bpp.name = bi.parent
+		WHERE bi.parenttype = 'Bulk Pre Production Plan'
+			AND bi.parentfield = 'po_items'
+			AND bi.sales_order_item IN %(names)s
+			AND bpp.docstatus < 2
+			AND bpp.name != %(exclude)s
+			AND EXISTS (
+				SELECT 1 FROM `tabBulk PP Sales Order` bso
+				WHERE bso.parent = bpp.name
+					AND bso.sales_order = bi.sales_order
+					AND bso.custom_pp_created = 1
+			)
+		""",
+		{"names": names, "exclude": exclude_bulk_pp or ""},
+		as_dict=True,
+	):
+		_add(row.sales_order_item, row.planned_qty, "Bulk Pre Production Plan", row.ref)
+
+	for row in frappe.db.sql(
+		"""
+		SELECT ppi.sales_order_item, ppi.planned_qty, pp.name AS ref
+		FROM `tabProduction Plan Item` ppi
+		INNER JOIN `tabProduction Plan` pp ON pp.name = ppi.parent
+		WHERE ppi.parenttype = 'Production Plan'
+			AND ppi.sales_order_item IN %(names)s
+			AND pp.docstatus < 2
+			AND COALESCE(pp.custom_bulk_pre_production_plan, '') = ''
+		""",
+		{"names": names},
+		as_dict=True,
+	):
+		_add(row.sales_order_item, row.planned_qty, "Production Plan", row.ref)
+
+	return result
+
+
+def _get_so_item_basis_qty(so_item_names: list[str]) -> dict[str, frappe._dict]:
+	"""
+	The qty each Sales Order line can be planned for: SO qty, or the item's forecast
+	threshold for planning-type-2 items on Forecast SOs (same rule as the item picker).
+	"""
+	names = list({n for n in (so_item_names or []) if n})
+	if not names:
+		return {}
+
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			soi.name, soi.parent AS sales_order, soi.item_code, soi.qty,
+			so.order_type,
+			COALESCE(item.custom_planning_type, '') AS custom_planning_type,
+			COALESCE(item.custom_forecast_threashold, 0) AS custom_forecast_threashold
+		FROM `tabSales Order Item` soi
+		LEFT JOIN `tabSales Order` so ON so.name = soi.parent
+		LEFT JOIN `tabItem` item ON item.name = soi.item_code
+		WHERE soi.name IN %(names)s
+		""",
+		{"names": names},
+		as_dict=True,
+	)
+	for row in rows:
+		if row.order_type == "Forecast" and row.custom_planning_type == "2":
+			row.qty = flt(row.custom_forecast_threashold) or row.qty
+	return {row.name: row for row in rows}
+
+
+def _validate_so_items_not_over_planned(bulk_pp, so_name: str) -> None:
+	"""
+	Block a Production Plan that would plan a Sales Order line beyond its remaining qty —
+	the item picker hides fully planned qty, this catches plans made in the meantime
+	(e.g. two Bulk PPs picking the same line). The SO lines are row-locked so two
+	concurrent creations can't both pass.
+	"""
+	fg_qty_by_so_item: dict[str, float] = {}
+	for row in bulk_pp.po_items:
+		if row.sales_order == so_name and row.sales_order_item:
+			fg_qty_by_so_item[row.sales_order_item] = fg_qty_by_so_item.get(row.sales_order_item, 0.0) + flt(row.planned_qty)
+	if not fg_qty_by_so_item:
+		return
+
+	frappe.db.sql(
+		"SELECT name FROM `tabSales Order Item` WHERE name IN %(names)s FOR UPDATE",
+		{"names": list(fg_qty_by_so_item)},
+	)
+	basis_map = _get_so_item_basis_qty(list(fg_qty_by_so_item))
+	plan_map = _get_so_item_plan_map(list(fg_qty_by_so_item), exclude_bulk_pp=bulk_pp.name)
+
+	over_planned = []
+	for so_item, qty in fg_qty_by_so_item.items():
+		basis = basis_map.get(so_item)
+		planned = plan_map.get(so_item)
+		# Nothing planned elsewhere → no conflict (over-producing an SO line stays allowed as before)
+		if not basis or not planned:
+			continue
+		remaining = max(flt(basis.qty) - flt(planned["planned_qty"]), 0.0)
+		if flt(qty) > remaining + 0.001:
+			over_planned.append(
+				_("<b>{0}</b> — planning {1}, only {2} of {3} left (planned in {4})").format(
+					basis.item_code,
+					frappe.format_value(qty, {"fieldtype": "Float"}),
+					frappe.format_value(remaining, {"fieldtype": "Float"}),
+					frappe.format_value(basis.qty, {"fieldtype": "Float"}),
+					", ".join(planned["planned_in"]),
+				)
+			)
+
+	if over_planned:
+		frappe.throw(
+			_("Sales Order <b>{0}</b> has items that are already planned elsewhere:<br><br>{1}<br><br>"
+			  "Regenerate the items to pick up the remaining qty.").format(so_name, "<br>".join(over_planned)),
+			title=_("Already Planned"),
+		)
 
 
 @frappe.whitelist()
@@ -2092,6 +2290,14 @@ def get_sales_order_item_bom_rows(sales_orders: str | list[str], docname: str | 
 	for row in rows:
 		if row.so_order_type == 'Forecast' and row.custom_planning_type == '2':
 			row.qty = flt(row.custom_forecast_threashold) or row.qty
+
+	# Qty already planned elsewhere (other Bulk PPs / Production Plans) → what is left to pick
+	plan_map = _get_so_item_plan_map([row.sales_order_item for row in rows], exclude_bulk_pp=docname)
+	for row in rows:
+		planned = plan_map.get(row.sales_order_item) or {}
+		row.planned_qty = flt(planned.get("planned_qty"))
+		row.remaining_qty = max(flt(row.qty) - row.planned_qty, 0.0)
+		row.planned_in = planned.get("planned_in") or []
 
 	for row in rows:
 		row.bom_no = (
@@ -3299,6 +3505,7 @@ def calculate_parallel_batch_schedule(docname: str) -> dict:
 				"tool_load_qty":           cint(tool_details.get("tool_load_qty") or 0),
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
+				"sales_order_item":        getattr(fg, "sales_order_item", "") or "",
 				"planned_qty":             planned_qty,
 				"planned_qty_as_show":     gross_qty,
 				"actual_qty":              actual_qty,
@@ -4266,6 +4473,7 @@ def calculate_consolidated_batch_schedule(docname: str) -> dict:
 				"tool_load_qty":           cint(tool_details.get("tool_load_qty") or 0),
 				"pm_days":                 cint(tool_details.get("pm_days") or 0),
 				"sales_order":             fg.sales_order or "",
+				"sales_order_item":        getattr(fg, "sales_order_item", "") or "",
 				"planned_qty":             planned_qty,
 				"planned_qty_as_show":     gross_qty,
 				"actual_qty":              actual_qty,
@@ -4675,6 +4883,12 @@ def generate_items_for_sales_order(doc: Document, so_name: str) -> dict[str, int
 	for item in so_items:
 		if item.so_order_type == 'Forecast' and item.custom_planning_type == '2':
 			item.qty = flt(item.custom_forecast_threashold) or item.qty
+
+	# Plan only what other Bulk PPs / Production Plans haven't planned yet; fully planned lines drop out
+	plan_map = _get_so_item_plan_map([item.sales_order_item for item in so_items], exclude_bulk_pp=doc.name)
+	for item in so_items:
+		item.qty = max(flt(item.qty) - flt((plan_map.get(item.sales_order_item) or {}).get("planned_qty")), 0.0)
+	so_items = [item for item in so_items if item.qty > 0]
 
 	po_count = 0
 	sfg_count = 0
@@ -6160,6 +6374,7 @@ def _build_sequential_so_details(bulk_pp, so_name: str) -> dict[str, Any]:
 		"item_code": row.item_code,
 		"bom_no": row.bom_no,
 		"sales_order": so_name,
+		"sales_order_item": row.sales_order_item or "",
 		"manufacturing_type": row.manufacturing_type or "In House",
 		"supplier": row.custom_supplier or "",
 		"custom_workstations_csv": row.custom_workstations_csv or "",
@@ -6244,13 +6459,20 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		(row.sales_order, row.item_code): (row.custom_supplier or "")
 		for row in bulk_pp.po_items
 	}
+	# SO line per FG — lets ERPNext keep Sales Order Item production_plan_qty in sync.
+	# Fallback for batch schedules stored before sales_order_item was added to them.
+	fg_so_item_by_key = {
+		(row.sales_order, row.item_code): (row.sales_order_item or "")
+		for row in bulk_pp.po_items
+	}
 
 	for so_name in sales_orders:
 		if so_name not in so_data:
 			continue
 
 		_validate_so_before_pp_creation(bulk_pp, so_name, so_data.get(so_name))
-		
+		_validate_so_items_not_over_planned(bulk_pp, so_name)
+
 		# Check if already processed in this doc
 		is_already_created = False
 		for row in bulk_pp.sales_orders:
@@ -6301,6 +6523,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 					'planned_start_date' : k.get('start_date'),
 					'custom_planned_end_date' : k.get('end_date'),
 					'sales_order' : j.get('sales_order'),
+					'sales_order_item' : j.get('sales_order_item') or fg_so_item_by_key.get((i, j.get('item_code'))) or None,
 					'warehouse' : warehouse,
 					'custom_workstation' : j.get('custom_workstations_csv'),
 					'custom_mfg_days' : k.get('mfg_days'),
@@ -7005,3 +7228,199 @@ def clear_rm_received_date(docname: str, so_name: str) -> dict:
 	)
 	frappe.db.commit()
 	return _recalculate_rm_override_schedule(docname)
+
+
+# ---------------------------------------------------------------------------
+# Plan reversal — undo the Production Plan of a Sales Order (or of the whole
+# Bulk PP on cancel) together with everything it generated.
+# ---------------------------------------------------------------------------
+
+def _collect_plan_reversal(bulk_pp_name: str, sales_order: str | None = None) -> dict[str, Any]:
+	"""
+	Everything the Production Plan(s) of this Bulk PP (one SO, or all) generated, split into
+	what reversal deletes (drafts), cancels (submitted, in a safe order) and what blocks it
+	(real work already done — reversing that automatically would corrupt stock / purchasing).
+	"""
+	def _live(doctype, field, values, fields=None, pluck=None):
+		"""Non-cancelled rows whose `field` is one of `values` (none when `values` is empty)."""
+		if not values:
+			return []
+		return frappe.get_all(
+			doctype,
+			filters={field: ["in", list(values)], "docstatus": ["<", 2]},
+			fields=[pluck] if pluck else (fields or ["name"]),
+			pluck=pluck,
+		)
+
+	pp_filters = {"custom_bulk_pre_production_plan": bulk_pp_name, "docstatus": ["<", 2]}
+	if sales_order:
+		so_pp_names = frappe.get_all(
+			"Production Plan Sales Order",
+			filters={"parenttype": "Production Plan", "sales_order": sales_order},
+			pluck="parent",
+		)
+		pp_filters["name"] = ["in", so_pp_names]
+	pps = frappe.get_all("Production Plan", filters=pp_filters, fields=["name", "docstatus"]) if (
+		not sales_order or so_pp_names
+	) else []
+	pp_names = [pp.name for pp in pps]
+
+	blockers: list[str] = []
+	delete: list[tuple[str, str]] = []
+	cancel: list[tuple[str, str]] = []
+
+	def _queue(doctype, row):
+		(cancel if row.docstatus == 1 else delete).append((doctype, row.name))
+
+	# ── Work Orders (+ their Job Cards / Stock Entries) ─────────────────────
+	work_orders = _live(
+		"Work Order", "production_plan", pp_names,
+		fields=["name", "docstatus", "status", "produced_qty", "material_transferred_for_manufacturing"],
+	)
+	wo_names = [wo.name for wo in work_orders]
+	for wo in work_orders:
+		if flt(wo.produced_qty) > 0 or flt(wo.material_transferred_for_manufacturing) > 0:
+			blockers.append(_("Work Order {0} — material transferred / produced").format(wo.name))
+		elif wo.status in ("Stopped", "Closed"):
+			blockers.append(_("Work Order {0} — {1}, re-open it first").format(wo.name, wo.status))
+
+	for se in _live("Stock Entry", "work_order", wo_names, fields=["name", "docstatus"]):
+		if se.docstatus == 1:
+			blockers.append(_("Stock Entry {0} — submitted against a Work Order").format(se.name))
+		else:
+			delete.append(("Stock Entry", se.name))
+
+	for jc in _live(
+		"Job Card", "work_order", wo_names,
+		fields=["name", "docstatus", "total_completed_qty", "total_time_in_mins"],
+	):
+		if jc.docstatus == 1 or flt(jc.total_completed_qty) > 0 or flt(jc.total_time_in_mins) > 0:
+			blockers.append(_("Job Card {0} — work already logged").format(jc.name))
+		else:
+			delete.append(("Job Card", jc.name))
+
+	for wo in work_orders:
+		_queue("Work Order", wo)
+
+	# ── Purchase Orders (+ Subcontracting Orders made from them) ────────────
+	po_names = set(_live("Purchase Order Item", "production_plan", pp_names, pluck="parent"))
+	purchase_orders = _live(
+		"Purchase Order", "name", po_names,
+		fields=["name", "docstatus", "status", "per_received", "per_billed"],
+	)
+	for po in purchase_orders:
+		if flt(po.per_received) > 0 or flt(po.per_billed) > 0:
+			blockers.append(_("Purchase Order {0} — already received / billed").format(po.name))
+		elif po.status in ("Closed", "On Hold"):
+			blockers.append(_("Purchase Order {0} — {1}, re-open it first").format(po.name, po.status))
+
+	for pr in set(_live("Purchase Receipt Item", "purchase_order", po_names, pluck="parent")):
+		blockers.append(_("Purchase Receipt {0} — made against a planned Purchase Order").format(pr))
+
+	for sco in _live(
+		"Subcontracting Order", "purchase_order", po_names, fields=["name", "docstatus", "per_received"]
+	):
+		if flt(sco.per_received) > 0:
+			blockers.append(_("Subcontracting Order {0} — already received").format(sco.name))
+		_queue("Subcontracting Order", sco)
+
+	for po in purchase_orders:
+		_queue("Purchase Order", po)
+
+	# ── Material Requests ───────────────────────────────────────────────────
+	mr_names = set(_live("Material Request Item", "production_plan", pp_names, pluck="parent"))
+	material_requests = _live(
+		"Material Request", "name", mr_names, fields=["name", "docstatus", "per_ordered", "per_received"]
+	)
+	for mr in material_requests:
+		if flt(mr.per_ordered) > 0 or flt(mr.per_received) > 0:
+			blockers.append(_("Material Request {0} — already ordered / received").format(mr.name))
+
+	# Documents raised from those MRs by purchasing / stores (drafts included)
+	for doctype, label in (
+		("Purchase Order Item", "Purchase Order"),
+		("Request for Quotation Item", "Request for Quotation"),
+		("Stock Entry Detail", "Stock Entry"),
+	):
+		for parent in set(_live(doctype, "material_request", mr_names, pluck="parent")):
+			if label == "Purchase Order" and parent in po_names:
+				continue
+			blockers.append(_("{0} {1} — raised from a planned Material Request").format(label, parent))
+
+	for mr in material_requests:
+		_queue("Material Request", mr)
+
+	# ── Production Plans last (submitted MRs / WOs link to them) ────────────
+	for pp in pps:
+		_queue("Production Plan", pp)
+
+	return {
+		"production_plans": pp_names,
+		"delete": delete,
+		"cancel": cancel,
+		"blockers": sorted(set(blockers)),
+	}
+
+
+def _throw_reversal_blockers(blockers: list[str], what: str) -> None:
+	frappe.throw(
+		_("{0} can't be reversed — work has already started on these documents:<br><br>{1}<br><br>"
+		  "Reverse or finish them first.").format(what, "<br>".join(blockers)),
+		title=_("Cannot Reverse Plan"),
+	)
+
+
+def _execute_plan_reversal(reversal: dict[str, Any]) -> None:
+	"""Delete drafts, then cancel submitted documents — children before the Production Plan."""
+	# Deleting the newest document of a series rolls the counter back, so the next plan would
+	# reuse that name — and Frappe's after-commit cleanup of the deleted doc (ToDo, DocShare,
+	# Version, Comment) would then wipe the new document's. Keep the counters where they were.
+	series_before = dict(frappe.db.sql("SELECT name, current FROM `tabSeries`"))
+
+	for doctype, name in reversal["delete"]:
+		if doctype == "Production Plan":
+			continue
+		frappe.delete_doc(doctype, name)
+	for doctype, name in reversal["cancel"]:
+		frappe.get_doc(doctype, name).cancel()
+	for doctype, name in reversal["delete"]:
+		if doctype == "Production Plan":
+			frappe.delete_doc(doctype, name)
+
+	for series, current in frappe.db.sql("SELECT name, current FROM `tabSeries`"):
+		if series in series_before and cint(current) < cint(series_before[series]):
+			frappe.db.sql("UPDATE `tabSeries` SET current = %s WHERE name = %s", (series_before[series], series))
+
+
+@frappe.whitelist()
+def get_plan_reversal_preview(bulk_pp_name: str, sales_order: str) -> dict[str, Any]:
+	"""What 'Cancel Plan' would delete / cancel for this SO, and anything blocking it."""
+	frappe.has_permission("Bulk Pre Production Plan", "write", bulk_pp_name, throw=True)
+	return _collect_plan_reversal(bulk_pp_name, sales_order)
+
+
+@frappe.whitelist()
+def cancel_plan_for_sales_order(bulk_pp_name: str, sales_order: str) -> dict[str, Any]:
+	"""
+	Reverse the Production Plan of one Sales Order in a draft Bulk PP: drafts it generated are
+	deleted, submitted documents cancelled. All-or-nothing. The PP cancel / delete hooks clear
+	`custom_pp_created`, so the SO can be planned again and its qty is free for other plans.
+	"""
+	frappe.has_permission("Bulk Pre Production Plan", "write", bulk_pp_name, throw=True)
+	if frappe.db.get_value("Bulk Pre Production Plan", bulk_pp_name, "docstatus") != 0:
+		frappe.throw(_("Cancel Plan works on a draft Bulk Pre Production Plan. Cancel the whole document instead."))
+
+	reversal = _collect_plan_reversal(bulk_pp_name, sales_order)
+	if reversal["blockers"]:
+		_throw_reversal_blockers(reversal["blockers"], _("The plan for {0}").format(sales_order))
+	if not reversal["production_plans"]:
+		frappe.throw(_("No Production Plan found for {0}.").format(sales_order))
+
+	_execute_plan_reversal(reversal)
+	# Safety net in case a PP hook didn't run (e.g. PP already gone)
+	frappe.db.sql(
+		"""UPDATE `tabBulk PP Sales Order` SET custom_pp_created = 0
+		   WHERE parent = %s AND sales_order = %s""",
+		(bulk_pp_name, sales_order),
+	)
+	return reversal

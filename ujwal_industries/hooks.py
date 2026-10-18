@@ -251,6 +251,7 @@ doc_events = {
 		"before_insert": "ujwal_industries.ujwal_industries.patches.mr_reorder.set_reorder_field",
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_material_request_create",
 		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_sales_purchase_head_on_material_request_submit",
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.remove_assignments_on_cancel",
 	},
  
 	"Sales Order": {
@@ -306,9 +307,11 @@ doc_events = {
 			"ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_work_order_submit",
 			"ujwal_industries.ujwal_industries.overrides.work_order.preserve_production_plan_end_date",
 		],
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.remove_assignments_on_cancel",
 	},
 	"Subcontracting Order": {
 		"after_insert": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_outsource_store_manager_on_subcontract_create",
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.remove_assignments_on_cancel",
 	},
  	"Quality Inspection": {
         "on_submit": "ujwal_industries.ujwal_industries.overrides.quality_inspection.update_grn_processing_time"
@@ -341,9 +344,14 @@ doc_events = {
     },
  
 	"Purchase Order":{
-		"before_insert": "ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
+		"before_insert": [
+			"ujwal_industries.ujwal_industries.overrides.purchase_order.before_insert",
+			"ujwal_industries.ujwal_industries.overrides.purchase_order.set_generated_on",
+		],
+		"before_validate": "ujwal_industries.ujwal_industries.overrides.purchase_order.date_po_on_submit",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.purchase_order.autoname",
 		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_purchase_order_submit",
+		"on_cancel": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.remove_assignments_on_cancel",
 	},
 	"Quotation":{
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.quotation.before_insert",

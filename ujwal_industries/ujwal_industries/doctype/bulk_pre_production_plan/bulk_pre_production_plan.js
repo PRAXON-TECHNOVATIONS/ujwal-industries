@@ -48,6 +48,13 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 	},
 
 	onload(frm) {
+		// Cancelling the Bulk PP reverses its Production Plans and their WO / PO / MR on the
+		// server (on_cancel) in a safe order — keep them out of Frappe's "Cancel All" dialog.
+		frm.ignore_doctypes_on_cancel_all = [
+			'Production Plan', 'Work Order', 'Job Card', 'Purchase Order',
+			'Subcontracting Order', 'Material Request',
+		];
+
 		setTimeout(() => {
 
 			frm.fields_dict['sales_orders'].grid.wrapper.on(
@@ -150,7 +157,10 @@ frappe.ui.form.on('Bulk Pre Production Plan', {
 				if (so_row.custom_pp_created) {
 					frm.set_df_property('start_pre_production', 'hidden', 1); // Hide start if already processed
 					frm.remove_custom_button(__('Create Production Plan'));
+					frm.remove_custom_button(__('Cancel Plan'));
+					frm.add_custom_button(__('Cancel Plan'), () => cancel_plan_for_sales_order(frm, active_so)).addClass('btn-danger');
 				} else {
+					frm.remove_custom_button(__('Cancel Plan'));
 					frm.set_df_property('start_pre_production', 'hidden', 0);
 					frm.add_custom_button(__('Create Production Plan'), function () {
 						const current_tab = frm.fields_dict.production_items_html.$wrapper.find('.bpp-so-tab.active');
@@ -360,7 +370,7 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 
 		frappe.call({
 			method: 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan.get_sales_order_item_bom_rows',
-			args: { sales_orders: [row.sales_order] },
+			args: { sales_orders: [row.sales_order], docname: frm.is_new() ? null : frm.doc.name },
 			callback(r) {
 				if (!r.message || !r.message.length) {
 					frappe.msgprint(__('No items found for this Sales Order'));
@@ -373,7 +383,11 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 				r.message.forEach(item => {
 					const key = `${item.item_code}__${item.delivery_date || ''}`;
 					if (item_map[key]) {
-						item_map[key].qty = (item_map[key].qty || 0) + (item.qty || 0);
+						const merged = item_map[key];
+						merged.qty = (merged.qty || 0) + (item.qty || 0);
+						merged.remaining_qty = (merged.remaining_qty || 0) + (item.remaining_qty || 0);
+						merged.planned_qty = (merged.planned_qty || 0) + (item.planned_qty || 0);
+						merged.planned_in = [...new Set([...(merged.planned_in || []), ...(item.planned_in || [])])];
 					} else {
 						item_map[key] = Object.assign({}, item);
 					}
@@ -393,7 +407,8 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					)
 				);
 
-				const is_selectable = (_item) => true;
+				// Fully planned elsewhere (other Bulk PP / Production Plan) → locked
+				const is_selectable = (item) => flt(item.remaining_qty) > 0;
 
 				// Build dialog fields — one Check per unique item_code+delivery_date
 				const fields = items.map(item => {
@@ -401,11 +416,19 @@ frappe.ui.form.on('Bulk PP Sales Order', {
 					const selectable = is_selectable(item);
 					const date_label = item.delivery_date
 						? `  [Del: ${frappe.datetime.str_to_user(item.delivery_date)}]` : '';
+					const planned_in = (item.planned_in || []).join(', ');
+					let qty_label = `(Qty: ${item.qty || ''} ${item.stock_uom || ''})`;
+					if (!selectable) {
+						qty_label = `(Qty: ${item.qty || ''} ${item.stock_uom || ''} — fully planned in ${planned_in})`;
+					} else if (flt(item.planned_qty) > 0) {
+						qty_label = `(Left: ${item.remaining_qty} of ${item.qty} ${item.stock_uom || ''} — ${item.planned_qty} planned in ${planned_in})`;
+					}
 					return {
 						fieldtype: 'Check',
 						fieldname: key,
-						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}${date_label}  (Qty: ${item.qty || ''} ${item.stock_uom || ''})`,
+						label: `${item.item_code}  —  ${item.item_name || ''}${item.custom_planning_type === '2' ? '  [Level 2]' : ''}${date_label}  ${qty_label}`,
 						default: selectable && (already_selected.length === 0 || already_selected_keys.has(key)) ? 1 : 0,
+						read_only: selectable ? 0 : 1,
 					};
 				});
 
@@ -658,6 +681,53 @@ function reset_bulk_pp_submit_button_styles(frm) {
 }
 
 
+function cancel_plan_for_sales_order(frm, sales_order) {
+	if (!sales_order) return;
+	const method_base = 'ujwal_industries.ujwal_industries.doctype.bulk_pre_production_plan.bulk_pre_production_plan';
+
+	frappe.call({
+		method: `${method_base}.get_plan_reversal_preview`,
+		args: { bulk_pp_name: frm.doc.name, sales_order },
+		freeze: true,
+		callback(r) {
+			const preview = r.message || {};
+			if ((preview.blockers || []).length) {
+				frappe.msgprint({
+					title: __('Cannot Reverse Plan'),
+					indicator: 'red',
+					message: __('Work has already started on these documents — reverse or finish them first:')
+						+ '<br><br>' + preview.blockers.map(b => frappe.utils.escape_html(b)).join('<br>'),
+				});
+				return;
+			}
+
+			const doc_list = (rows) => rows.length
+				? '<ul>' + rows.map(([dt, name]) => `<li>${__(dt)} ${frappe.utils.escape_html(name)}</li>`).join('') + '</ul>'
+				: `<p class="text-muted">${__('None')}</p>`;
+
+			frappe.confirm(
+				__('Reverse the Production Plan for {0}? This cannot be undone.', [sales_order])
+					+ `<br><br><b>${__('Will be cancelled')}</b>` + doc_list(preview.cancel || [])
+					+ `<b>${__('Will be deleted (drafts)')}</b>` + doc_list(preview.delete || []),
+				() => {
+					frappe.call({
+						method: `${method_base}.cancel_plan_for_sales_order`,
+						args: { bulk_pp_name: frm.doc.name, sales_order },
+						freeze: true,
+						freeze_message: __('Reversing plan...'),
+						callback(res) {
+							if (res.exc) return;
+							frappe.show_alert({ message: __('Plan for {0} reversed', [sales_order]), indicator: 'green' });
+							frm.reload_doc();
+						},
+					});
+				}
+			);
+		},
+	});
+}
+
+
 function load_bom_selections(frm) {
 	const sales_orders = (frm.doc.sales_orders || []).map(row => row.sales_order).filter(Boolean);
 	if (!sales_orders.length) {
@@ -690,13 +760,15 @@ function load_bom_selections(frm) {
 				// Skip if this SO has a selection and this item is not in it
 				const sel = so_selected_map[item.sales_order];
 				if (sel && !sel.has(item.item_code)) return;
+				// Fully planned elsewhere — nothing left to choose a BOM for
+				if (flt(item.remaining_qty) <= 0) return;
 
 				const row = frappe.model.add_child(frm.doc, 'Bulk PP BOM Selection', 'bom_selections');
 				row.sales_order = item.sales_order;
 				row.sales_order_item = item.sales_order_item;
 				row.item_code = item.item_code;
 				row.item_name = item.item_name;
-				row.qty = item.qty;
+				row.qty = item.remaining_qty;
 				row.stock_uom = item.stock_uom;
 				row.bom_no = item.bom_no;
 				row.spm = item.spm;
