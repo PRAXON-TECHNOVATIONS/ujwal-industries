@@ -1072,11 +1072,14 @@ def _get_own_production_plans(bulk_pp: str | None, sales_orders: list[str]) -> l
 	)
 
 
-def _get_own_so_demand_qty(group_rows: list[dict[str, Any]], warehouse: str) -> float:
+def _get_so_demand_add_back_qty(group_rows: list[dict[str, Any]], item_code: str, warehouse: str) -> float:
 	"""
-	Sales Order demand of FG rows that the MRP balance already holds: per SO line its
-	open qty (stock UOM) when the SO reserves in `warehouse`, capped at what these rows
-	plan — the rest of the line is still uncovered demand and must keep its claim on stock.
+	Sales Order demand inside the MRP balance that must not claim stock from these FG rows:
+	- the rows' own SO lines: open qty (stock UOM), capped at what these rows plan — the
+	  rest of the line is still uncovered demand and keeps its claim on stock;
+	- other SO lines due after them and not planned yet: stock goes to the earliest
+	  delivery first, otherwise two unplanned SOs block each other and nobody gets it.
+	  A planned line keeps its claim — its WO / PO is counted as supply in the balance.
 	"""
 	gross_by_so_item: dict[str, float] = {}
 	for row in group_rows:
@@ -1089,20 +1092,35 @@ def _get_own_so_demand_qty(group_rows: list[dict[str, Any]], warehouse: str) -> 
 
 	open_rows = frappe.db.sql(
 		"""
-		SELECT soi.name, (soi.qty - soi.delivered_qty) * soi.conversion_factor AS open_qty
+		SELECT soi.name, COALESCE(soi.delivery_date, so.delivery_date) AS delivery_date,
+			(soi.qty - soi.delivered_qty) * soi.conversion_factor AS open_qty
 		FROM `tabSales Order Item` soi
 		JOIN `tabSales Order` so ON so.name = soi.parent
-		WHERE soi.name IN %(names)s
+		WHERE soi.item_code = %(item)s
 			AND soi.warehouse = %(wh)s
 			AND so.docstatus = 1
 			AND so.status NOT IN ('Completed', 'Closed')
 			AND soi.delivered_by_supplier = 0
 			AND soi.qty > soi.delivered_qty
 		""",
-		{"names": list(gross_by_so_item), "wh": warehouse},
+		{"item": item_code, "wh": warehouse},
 		as_dict=True,
 	)
-	return sum(min(flt(r.open_qty), gross_by_so_item[r.name]) for r in open_rows)
+	own_rows = [r for r in open_rows if r.name in gross_by_so_item]
+	add_back = sum(min(flt(r.open_qty), gross_by_so_item[r.name]) for r in own_rows)
+
+	own_dates = [getdate(r.delivery_date) for r in own_rows if r.delivery_date]
+	later_rows = [
+		r for r in open_rows
+		if r.name not in gross_by_so_item and own_dates and r.delivery_date
+		and getdate(r.delivery_date) > min(own_dates)
+	]
+	if later_rows:
+		plan_map = _get_so_item_plan_map([r.name for r in later_rows])
+		for r in later_rows:
+			planned = flt((plan_map.get(r.name) or {}).get("planned_qty"))
+			add_back += max(flt(r.open_qty) - planned, 0.0)
+	return add_back
 
 
 def _allocate_group_net_qty(group_rows: list[dict[str, Any]], stock_qty: float) -> dict[str, float]:
@@ -1242,7 +1260,7 @@ def _build_stock_adjusted_requirement_context(
 
 	for (item_code, warehouse), group_rows in fg_groups.items():
 		stock_qty = _get_available_qty_for_requirement(
-			item_code, warehouse, own_pps, _get_own_so_demand_qty(group_rows, warehouse)
+			item_code, warehouse, own_pps, _get_so_demand_add_back_qty(group_rows, item_code, warehouse)
 		)
 		allocations = _allocate_group_net_qty(group_rows, stock_qty)
 		item_state = fg_item_states.setdefault(item_code, {
@@ -5579,6 +5597,8 @@ def _compute_sequential_schedule_data(doc: Document, so_name: str) -> dict[str, 
 			"row_name":     row.name,
 			"item_code":    row.item_code,
 			"planned_qty":  net_qty,
+			# Warehouse stock used for Planned Qty (shown in the Stock Details popup)
+			"actual_qty":   flt((req_ctx.get("fg_by_row", {}).get(_requirement_row_key(row)) or {}).get("stock_qty")),
 			"per_shift_qty": _capacity(row, row.manufacturing_type or "In House", net_qty, fg_bom_cache)[0],
 			"mfg_days":     mfg_days,
 			"grn_days":     grn_days,
