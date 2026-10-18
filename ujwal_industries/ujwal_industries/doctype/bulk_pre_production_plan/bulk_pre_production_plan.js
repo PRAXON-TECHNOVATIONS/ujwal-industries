@@ -1716,7 +1716,7 @@ function _render_sequential_fg_grid(frm, so_data, container, seq_data) {
 			supplier_list:          item.supplier_list || [],
 			supplier_name:          item.supplier_name || '',
 			target_warehouse:       item.fg_warehouse || item.target_warehouse || '',
-			actual_qty:             Number(item.actual_qty || 0),
+			actual_qty:             _seq.actual_qty !== undefined ? Number(_seq.actual_qty) : Number(item.actual_qty || 0),
 			planned_qty_as_show:    Number(item.planned_qty_as_show || item.planned_qty || 0),
 			start_date:             item.planned_start_date || '',
 			end_date:               item.custom_planned_end_date || '',
