@@ -1344,6 +1344,69 @@ function _update_delivery_disclaimer(frm, so_map, mode, par_data, $wrapper) {
 
 
 // ---------------------------------------------------------------------------
+// Read-only view once the SO's Production Plan is created
+// ---------------------------------------------------------------------------
+
+// Keys that only move focus / scroll — let them through so the user can still navigate
+const _BPP_RO_NAV_KEYS = new Set([
+	'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+	'PageUp', 'PageDown', 'Home', 'End', 'Tab',
+]);
+const _BPP_RO_BLOCKED_EVENTS = [
+	'click', 'dblclick', 'contextmenu', 'mousedown', 'pointerdown', 'touchstart',
+	'keydown', 'keypress', 'input', 'change', 'paste', 'cut', 'drop', 'dragstart',
+];
+
+/**
+ * Block every edit / click inside the SO grid container while still allowing
+ * scroll (wheel, scrollbars), hover, and column header resize / sort.
+ * Capture-phase listeners on the container run before AG Grid and the cell
+ * renderers, so no editor, popup, checkbox or change handler is ever reached.
+ * Installed once per container; re-renders just toggle data-bpp-readonly.
+ */
+function _install_bpp_readonly_guard(container) {
+	if (container._bpp_ro_guard) return;
+	container._bpp_ro_guard = true;
+
+	const block = e => {
+		if (container.dataset.bppReadonly !== '1') return;
+		const t = e.target instanceof Element ? e.target : e.target?.parentElement;
+		if (t?.closest('.ag-header, .ag-body-horizontal-scroll, .ag-body-vertical-scroll')) return;
+		// Batch expand / collapse chevron — view only, so batches stay visible when read-only
+		if (t?.closest('.ag-cell[col-id="_expanded"], .ag-cell[col-id="_expandeds"]')) return;
+
+		e.stopPropagation();
+		if (e.type === 'keydown' && (_BPP_RO_NAV_KEYS.has(e.key)
+			|| ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c'))) return;
+		// Plain mousedown keeps native scrollbar drag / text selection; form controls still blocked
+		if (['mousedown', 'pointerdown', 'touchstart'].includes(e.type)
+			&& !t?.closest('input, select, textarea, button, label, a')) return;
+		e.preventDefault();
+	};
+	_BPP_RO_BLOCKED_EVENTS.forEach(type => container.addEventListener(type, block, true));
+}
+
+function _apply_bpp_readonly(container, so_data) {
+	_install_bpp_readonly_guard(container);
+	const readonly = !!so_data.custom_pp_created;
+	container.dataset.bppReadonly = readonly ? '1' : '';
+	container.style.opacity = readonly ? '0.85' : '';
+	container.style.pointerEvents = '';
+	if (!readonly) return;
+
+	const banner = document.createElement('div');
+	banner.innerHTML = `
+		<div style="background:#DCFCE7; color:#16A34A; padding:12px 20px; text-align:center;
+			font-weight:700; border-radius:8px; margin-bottom:16px; border:1px solid #BBF7D0;
+			display:flex; align-items:center; justify-content:center; gap:10px; font-size:14px;">
+			<i class="fa fa-check-circle" style="font-size:18px;"></i>
+			Production Plan has been created for ${so_data.so_name}. This view is now read-only.
+		</div>`;
+	container.appendChild(banner);
+}
+
+
+// ---------------------------------------------------------------------------
 // Sequential Grid — 1 row per SFG (existing data from sub_assembly_items)
 // ---------------------------------------------------------------------------
 
@@ -1351,19 +1414,7 @@ function _render_sequential_grid(frm, so_data, container, seq_data) {
 	container.innerHTML = '';
 
 	// ── FG section ──────────────────────────────────────────────────────────
-	if (so_data.custom_pp_created) {
-		const banner = document.createElement('div');
-		banner.innerHTML = `
-			<div style="background:#DCFCE7; color:#16A34A; padding:12px 20px; text-align:center; 
-				font-weight:700; border-radius:8px; margin-bottom:16px; border:1px solid #BBF7D0;
-				display:flex; align-items:center; justify-content:center; gap:10px; font-size:14px;">
-				<i class="fa fa-check-circle" style="font-size:18px;"></i>
-				Production Plan has been created for ${so_data.so_name}. This view is now read-only.
-			</div>`;
-		container.appendChild(banner);
-		container.style.opacity = '0.85';
-		container.style.pointerEvents = 'none';
-	}
+	_apply_bpp_readonly(container, so_data);
 
 	// ── FG AG Grid (top, matches Parallel order) ────────────────────────────
 	_render_sequential_fg_grid(frm, so_data, container, seq_data);
@@ -2172,20 +2223,7 @@ function _dispatch_checkbox_col(frm, par_data, rebuild) {
 
 function _render_parallel_grid(frm, so_data, par_data, container) {
 	container.innerHTML = '';
-
-	if (so_data.custom_pp_created) {
-		const banner = document.createElement('div');
-		banner.innerHTML = `
-			<div style="background:#DCFCE7; color:#16A34A; padding:12px 20px; text-align:center; 
-				font-weight:700; border-radius:8px; margin-bottom:16px; border:1px solid #BBF7D0;
-				display:flex; align-items:center; justify-content:center; gap:10px; font-size:14px;">
-				<i class="fa fa-check-circle" style="font-size:18px;"></i>
-				Production Plan has been created for ${so_data.so_name}. This view is now read-only.
-			</div>`;
-		container.appendChild(banner);
-		container.style.opacity = '0.85';
-		container.style.pointerEvents = 'none';
-	}
+	_apply_bpp_readonly(container, so_data);
 
 	if (!par_data) {
 		container.innerHTML = `
@@ -3089,6 +3127,7 @@ function _on_par_cell_changed(frm, params, par_data) {
 
 function _render_parallel_grid(frm, so_data, par_data, container) {
 	container.innerHTML = '';
+	_apply_bpp_readonly(container, so_data);
 	if (!par_data) {
 		container.innerHTML = `
 			<div style="padding:32px 20px; text-align:center; color:#94A3B8; font-size:13px;
