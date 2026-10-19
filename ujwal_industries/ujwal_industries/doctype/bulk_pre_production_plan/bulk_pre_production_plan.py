@@ -6245,7 +6245,7 @@ def create_production_plans_document(bulk_pp_name) :
 		pp_doc = frappe.new_doc("Production Plan")
 		pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
 		pp_doc.get_items_from = 'Sales Order'
-		pp_doc.custom_parallel_planning = 1
+		pp_doc.custom_parallel_planning = 0 if (bulk_pp.custom_planning_mode or "Sequential") == "Sequential" else 1
 
 		pp_doc.append('sales_orders',{
 			'sales_order': i
@@ -6677,7 +6677,7 @@ def create_selected_production_plans(bulk_pp_name, sales_orders):
 		pp_doc = frappe.new_doc("Production Plan")
 		pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
 		pp_doc.get_items_from = 'Sales Order'
-		pp_doc.custom_parallel_planning = 1
+		pp_doc.custom_parallel_planning = 0 if (bulk_pp.custom_planning_mode or "Sequential") == "Sequential" else 1
 
 		pp_doc.append('sales_orders',{
 			'sales_order': i
@@ -6904,7 +6904,7 @@ def create_production_plan_for_sales_order(bulk_pp, sales_order):
 				pp_doc = frappe.new_doc("Production Plan")
 				pp_doc.custom_bulk_pre_production_plan = bulk_pp.name
 				pp_doc.get_items_from = "Sales Order"
-				pp_doc.custom_parallel_planning = 1
+				pp_doc.custom_parallel_planning = 0 if (bulk_pp.custom_planning_mode or "Sequential") == "Sequential" else 1
 				pp_doc.append("sales_orders", {"sales_order": sales_order})
 
 				for fg_data in so_details.get("fg") or []:

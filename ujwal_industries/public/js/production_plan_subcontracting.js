@@ -23,7 +23,8 @@ frappe.ui.form.on('Production Plan', {
 		if (frm.doc.docstatus === 0 && !frm.is_new()) {
 			frm.add_custom_button(__("Manage Dates"), () => {
 
-				if (frm.doc.custom_parallel_planning === 1) {
+				// BPP-made PPs always use the static dialog (dates only, no cascade) — any mode
+				if (frm.doc.custom_parallel_planning === 1 || frm.doc.custom_bulk_pre_production_plan) {
 					open_parallel_manage_dates_dialog(frm);
 
 				} else {
