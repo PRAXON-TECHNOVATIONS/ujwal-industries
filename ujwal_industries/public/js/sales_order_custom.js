@@ -18,6 +18,7 @@ frappe.ui.form.on('Sales Order', {
 	refresh: function (frm) {
 		ujwal_configure_so_position_number_field(frm);
 		ujwal_patch_timeline_reasons(frm);
+		ujwal_add_so_update_items_button(frm);
 		ujwal_add_so_approval_buttons(frm);
 		ujwal_show_so_pending_approval_note(frm);
 		ujwal_style_so_pending_rows(frm);
@@ -317,7 +318,9 @@ function ujwal_show_so_pending_approval_note(frm) {
 			const requestData = ujwal_parse_so_request_data(row.custom_update_request_data);
 			const requester = requestData.requested_by || __('Unknown User');
 			const reason = requestData.reason || row.custom_update_request_reason || __('No reason provided');
-			const changedFields = (requestData.changed_fields || []).join(', ') || __('details updated');
+			const changedFields = requestData.action === 'delete'
+				? __('Row deletion requested')
+				: (requestData.changed_fields || []).join(', ') || __('details updated');
 			return `
 				<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(107, 114, 128, 0.18);">
 					<div><strong>Row ${frappe.utils.escape_html(String(row.idx || ''))}</strong> - ${frappe.utils.escape_html(row.item_code || '')}</div>
@@ -357,9 +360,31 @@ function ujwal_so_has_pending_rows(frm) {
 }
 
 function ujwal_can_approve_so_updates() {
-	return frappe.session.user === 'Administrator'
-		|| frappe.user.has_role('Sales Manager')
-		|| frappe.user.has_role('System Manager');
+	return frappe.session.user === 'Administrator' || frappe.user.has_role('Super Approver');
+}
+
+function ujwal_add_so_update_items_button(frm) {
+	// Core hides Update Items once the order is fully delivered / received or
+	// billed. Keep it available in every status except Closed / On Hold; the
+	// server override validates the actual changes and routes them to the
+	// Super Approver.
+	if (frm.doc.docstatus !== 1 || ['Closed', 'On Hold'].includes(frm.doc.status) || !frm.has_perm('write')) {
+		return;
+	}
+	if (frm.doc.__onload && frm.doc.__onload.can_update_items === false) {
+		return;
+	}
+
+	// add_custom_button skips a label that already exists, so this never
+	// duplicates core's button.
+	frm.add_custom_button(__('Update Items'), () => {
+		erpnext.utils.update_child_items({
+			frm: frm,
+			child_docname: 'items',
+			child_doctype: 'Sales Order Detail',
+			cannot_add_row: false,
+		});
+	});
 }
 
 function ujwal_style_so_pending_rows(frm) {
@@ -370,6 +395,9 @@ function ujwal_style_so_pending_rows(frm) {
 		(grid.grid_rows || []).forEach((grid_row) => {
 			const is_pending = grid_row.doc && grid_row.doc.custom_update_approval_status === 'Pending Approval';
 			const background = is_pending ? '#e0e0e0' : '';
+			const is_pending_delete = is_pending
+				&& ujwal_parse_so_request_data(grid_row.doc.custom_update_request_data).action === 'delete';
+			$(grid_row.row).find('.data-row').css('text-decoration', is_pending_delete ? 'line-through' : '');
 
 			$(grid_row.row).css('background-color', background);
 			$(grid_row.row).css('border-left', '');
