@@ -3,9 +3,10 @@ from contextlib import contextmanager
 
 import frappe
 from frappe import _
-from frappe.utils import flt
+from frappe.utils import flt, getdate
 
 from erpnext.controllers.accounts_controller import update_child_qty_rate as erpnext_update_child_qty_rate
+from erpnext.controllers.accounts_controller import validate_child_on_delete
 from erpnext.stock.get_item_details import get_conversion_factor, get_item_tax_map, get_item_tax_template
 
 
@@ -13,20 +14,33 @@ ORDER_CONFIG = {
 	"Sales Order": {
 		"child_doctype": "Sales Order Item",
 		"date_field": "delivery_date",
-		"approval_roles": {"Sales Manager", "System Manager"},
+		"invoice_item_doctype": "Sales Invoice Item",
+		"invoice_link_field": "so_detail",
 	},
 	"Purchase Order": {
 		"child_doctype": "Purchase Order Item",
 		"date_field": "schedule_date",
-		"approval_roles": {"Purchase Manager", "System Manager"},
+		"invoice_item_doctype": "Purchase Invoice Item",
+		"invoice_link_field": "po_detail",
 	},
 }
+
+# Only this role (and Administrator) can approve / reject item update requests.
+APPROVER_ROLE = "Super Approver"
+
+# Orders in these statuses are frozen on purpose -- no item updates at all.
+LOCKED_STATUSES = ("Closed", "On Hold")
 
 APPROVAL_STATUS_FIELD = "custom_update_approval_status"
 APPROVAL_REASON_FIELD = "custom_update_request_reason"
 APPROVAL_DATA_FIELD = "custom_update_request_data"
 PENDING_APPROVAL_STATUS = "Pending Approval"
 APPROVED_STATUS = "Approved"
+
+# Stored in the row's request data. A row removed in the Update Items dialog
+# is not deleted right away -- it stays (greyed out) as a pending delete
+# request and is only deleted once the Super Approver approves it.
+ACTION_DELETE = "delete"
 
 POSITION_FIELDNAME = "custom_po_no"
 
@@ -48,6 +62,12 @@ ITEM_SWAP_BLOCKING_FIELDS = {
 	},
 }
 
+# Same idea for deleting a row -- plus reserved stock on Sales Order rows.
+ROW_DELETE_BLOCKING_FIELDS = {
+	"Sales Order": {**ITEM_SWAP_BLOCKING_FIELDS["Sales Order"], "stock_reserved_qty": "Stock Reserved Qty"},
+	"Purchase Order": ITEM_SWAP_BLOCKING_FIELDS["Purchase Order"],
+}
+
 
 @frappe.whitelist()
 def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, child_docname="items", reason=None):
@@ -62,12 +82,22 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 	doc = frappe.get_doc(parent_doctype, parent_doctype_name)
 	incoming_items = _parse_trans_items(trans_items)
 
+	_validate_order_editable(doc)
 	_ensure_no_pending_item_approvals(doc, child_docname)
-	_ensure_no_item_deletions(doc, child_docname, incoming_items)
+
+	deleted_rows = _get_requested_deletions(doc, child_docname, incoming_items)
+	_validate_row_deletions(doc, deleted_rows, incoming_items)
 
 	if parent_doctype == "Sales Order":
 		_validate_sales_order_update_items_qty_lock(parent_doctype_name, incoming_items)
 		_validate_position_numbers_present(incoming_items)
+
+	_validate_qty_not_below_billed(doc, child_docname, incoming_items)
+	_validate_row_dates(doc, incoming_items)
+
+	# Rows removed in the dialog go back into the payload unchanged so core
+	# doesn't delete them now; they are marked as pending delete instead.
+	incoming_items.extend(_build_row_payload(row, parent_doctype) for row in deleted_rows)
 
 	before_rows = _get_row_snapshots(doc, child_docname, parent_doctype)
 
@@ -78,7 +108,8 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 	if item_code_changes:
 		_validate_item_code_changes(doc, item_code_changes, validate_new_item=True)
 		_apply_item_code_changes(doc, item_code_changes)
-		trans_items = frappe.as_json(incoming_items)
+
+	trans_items = frappe.as_json(incoming_items)
 
 	if parent_doctype == "Sales Order":
 		with _position_number_not_mandatory():
@@ -105,12 +136,13 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 		_apply_position_numbers(updated_doc, child_docname, before_rows, incoming_items)
 
 	changed_rows = _get_changed_rows(before_rows, updated_doc, child_docname, parent_doctype)
+	changed_rows.extend(_build_delete_requests(before_rows, deleted_rows))
 
 	if changed_rows:
 		_mark_rows_pending_approval(updated_doc, changed_rows, parent_doctype, reason)
 		_log_reason(parent_doctype, parent_doctype_name, reason)
 		_log_item_update_request(parent_doctype, parent_doctype_name, updated_doc, changed_rows, reason)
-		_notify_approvers(parent_doctype, parent_doctype_name, changed_rows, reason)
+		_notify_approvers(parent_doctype, parent_doctype_name, updated_doc, changed_rows, reason)
 
 	return result
 
@@ -120,7 +152,7 @@ def approve_pending_item_updates(doctype, docname):
 	if doctype not in ORDER_CONFIG:
 		frappe.throw(_("Approval is only supported for Sales Order and Purchase Order item updates."))
 
-	_ensure_approval_permission(doctype)
+	_ensure_approval_permission()
 
 	doc = frappe.get_doc(doctype, docname)
 	pending_rows = _get_pending_rows(doc)
@@ -129,7 +161,20 @@ def approve_pending_item_updates(doctype, docname):
 		frappe.msgprint(_("There are no pending item updates to approve."))
 		return
 
-	_set_row_approval_status(doctype, pending_rows, APPROVED_STATUS)
+	# Capture everything needed for the log / notification before the
+	# approved delete rows disappear.
+	row_details = _describe_pending_rows(doctype, pending_rows)
+	requesters = _get_requesters(pending_rows)
+
+	delete_rows = [row for row in pending_rows if _is_delete_request(row)]
+	if delete_rows:
+		_delete_approved_rows(doc, delete_rows)
+
+	delete_names = {row.name for row in delete_rows}
+	_set_row_approval_status(doctype, [row for row in pending_rows if row.name not in delete_names], APPROVED_STATUS)
+
+	_log_item_update_approval(doctype, docname, row_details)
+	_notify_requesters(doctype, docname, requesters, approved=True, row_details=row_details)
 
 	frappe.msgprint(_("Pending item updates approved successfully."))
 
@@ -139,7 +184,7 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 	if doctype not in ORDER_CONFIG:
 		frappe.throw(_("Approval is only supported for Sales Order and Purchase Order item updates."))
 
-	_ensure_approval_permission(doctype)
+	_ensure_approval_permission()
 
 	doc = frappe.get_doc(doctype, docname)
 	pending_rows = _get_pending_rows(doc)
@@ -147,6 +192,9 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 	if not pending_rows:
 		frappe.msgprint(_("There are no pending item updates to reject."))
 		return
+
+	row_details = _describe_pending_rows(doctype, pending_rows)
+	requesters = _get_requesters(pending_rows)
 
 	reverted_items = _build_reverted_items_payload(doc, doctype, pending_rows)
 
@@ -174,17 +222,167 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 	remaining_pending_rows = [row for row in pending_rows if row.name in reverted_names]
 	_clear_row_approval_state(doctype, remaining_pending_rows)
 	_log_item_update_rejection(doctype, docname, pending_rows, reason)
+	_notify_requesters(doctype, docname, requesters, approved=False, row_details=row_details, reason=reason)
 
 	frappe.msgprint(_("Pending item updates rejected and reverted successfully."))
 
 
-def _ensure_approval_permission(doctype):
+def _ensure_approval_permission():
 	if frappe.session.user == "Administrator":
 		return
 
-	allowed_roles = ORDER_CONFIG[doctype]["approval_roles"]
-	if not allowed_roles.intersection(set(frappe.get_roles())):
-		frappe.throw(_("You are not allowed to approve pending item updates for {0}.").format(doctype))
+	if APPROVER_ROLE not in frappe.get_roles():
+		frappe.throw(_("Only users with the {0} role can approve or reject item updates.").format(APPROVER_ROLE))
+
+
+def _validate_order_editable(doc):
+	if doc.docstatus != 1:
+		frappe.throw(_("Update Items is only available on a submitted {0}.").format(doc.doctype))
+
+	if doc.status in LOCKED_STATUSES:
+		frappe.throw(_("Items cannot be updated while {0} {1} is {2}.").format(doc.doctype, doc.name, doc.status))
+
+	if doc.doctype == "Purchase Order" and not doc.can_update_items():
+		frappe.throw(_("Items cannot be updated because a Subcontracting Order exists against this Purchase Order."))
+
+
+def _get_requested_deletions(doc, child_docname, incoming_items):
+	incoming_docnames = {row.get("docname") for row in incoming_items if row.get("docname")}
+	return [row for row in doc.get(child_docname, []) if row.name not in incoming_docnames]
+
+
+def _validate_row_deletions(doc, deleted_rows, incoming_items):
+	if not deleted_rows:
+		return
+
+	if not any(row.get("item_code") for row in incoming_items):
+		frappe.throw(_("At least one item must remain on the {0}.").format(doc.doctype))
+
+	errors = []
+	for row in deleted_rows:
+		blocking = [
+			_(label)
+			for fieldname, label in ROW_DELETE_BLOCKING_FIELDS[doc.doctype].items()
+			if flt(row.get(fieldname)) > 0
+		]
+		if blocking:
+			errors.append(
+				_("Row #{0} ({1}) cannot be deleted because it is already linked ({2}).").format(
+					row.idx, row.item_code, ", ".join(blocking)
+				)
+			)
+
+	if errors:
+		frappe.throw("<br>".join(errors))
+
+	# Core's own delete checks, so the request fails now rather than at approval.
+	for row in deleted_rows:
+		validate_child_on_delete(row, doc)
+
+
+def _build_row_payload(row, parent_doctype):
+	payload = _build_row_snapshot(row, parent_doctype)
+	payload["docname"] = row.name
+	if parent_doctype == "Sales Order":
+		payload[POSITION_FIELDNAME] = row.get(POSITION_FIELDNAME)
+	return payload
+
+
+def _build_delete_requests(before_rows, deleted_rows):
+	return [
+		{
+			"row_name": row.name,
+			"action": ACTION_DELETE,
+			"old_values": before_rows.get(row.name) or {},
+			"new_values": {},
+			"changed_fields": [],
+		}
+		for row in deleted_rows
+	]
+
+
+def _is_delete_request(row):
+	return _get_row_request_data(row).get("action") == ACTION_DELETE
+
+
+def _delete_approved_rows(doc, delete_rows):
+	"""Re-check the rows (something may have been made against them since the
+	request) and let core delete them, which also fixes bins / prevdoc status."""
+
+	delete_names = {row.name for row in delete_rows}
+	remaining_items = [_build_row_payload(row, doc.doctype) for row in doc.get("items", []) if row.name not in delete_names]
+	_validate_row_deletions(doc, delete_rows, remaining_items)
+
+	frappe.flags.ujwal_skip_item_update_approval = True
+	try:
+		erpnext_update_child_qty_rate(
+			parent_doctype=doc.doctype,
+			trans_items=frappe.as_json(remaining_items),
+			parent_doctype_name=doc.name,
+			child_docname="items",
+		)
+	finally:
+		frappe.flags.ujwal_skip_item_update_approval = False
+
+
+def _validate_qty_not_below_billed(doc, child_docname, incoming_items):
+	"""Core only stops qty going below delivered / received qty -- also stop it
+	going below what is already invoiced (SI / PI, net of returns)."""
+
+	rows_by_name = {row.name: row for row in doc.get(child_docname, [])}
+	row_names = [row.get("docname") for row in incoming_items if row.get("docname") in rows_by_name]
+	if not row_names:
+		return
+
+	config = ORDER_CONFIG[doc.doctype]
+	billed = frappe.db.sql(
+		f"""
+		SELECT `{config["invoice_link_field"]}` AS row_name, SUM(stock_qty) AS stock_qty
+		FROM `tab{config["invoice_item_doctype"]}`
+		WHERE docstatus = 1 AND `{config["invoice_link_field"]}` IN %(row_names)s
+		GROUP BY `{config["invoice_link_field"]}`
+		""",
+		{"row_names": row_names},
+		as_dict=True,
+	)
+	billed_by_row = {row.row_name: flt(row.stock_qty) for row in billed}
+
+	errors = []
+	for incoming in incoming_items:
+		row = rows_by_name.get(incoming.get("docname"))
+		billed_stock_qty = billed_by_row.get(incoming.get("docname"))
+		if not row or not billed_stock_qty:
+			continue
+
+		conversion_factor = flt(incoming.get("conversion_factor")) or flt(row.conversion_factor) or 1
+		if flt(incoming.get("qty")) * conversion_factor < billed_stock_qty - 0.0001:
+			errors.append(
+				_("Row #{0} ({1}): Qty cannot be less than the already invoiced qty {2}.").format(
+					row.idx, row.item_code, frappe.format_value(billed_stock_qty / conversion_factor, {"fieldtype": "Float"})
+				)
+			)
+
+	if errors:
+		frappe.throw("<br>".join(errors))
+
+
+def _validate_row_dates(doc, incoming_items):
+	date_field = ORDER_CONFIG[doc.doctype]["date_field"]
+	label = _("Delivery Date") if doc.doctype == "Sales Order" else _("Reqd By Date")
+	order_date = getdate(doc.transaction_date)
+
+	errors = [
+		_("{0} {1} for item {2} cannot be before the order date {3}.").format(
+			label,
+			frappe.format_value(row.get(date_field), {"fieldtype": "Date"}),
+			row.get("item_code"),
+			frappe.format_value(doc.transaction_date, {"fieldtype": "Date"}),
+		)
+		for row in incoming_items
+		if row.get("item_code") and row.get(date_field) and getdate(row.get(date_field)) < order_date
+	]
+	if errors:
+		frappe.throw("<br>".join(errors))
 
 
 def _ensure_no_pending_item_approvals(doc, child_docname):
@@ -198,14 +396,6 @@ def _ensure_no_pending_item_approvals(doc, child_docname):
 
 def _get_pending_rows(doc, child_docname="items"):
 	return [row for row in doc.get(child_docname, []) if row.get(APPROVAL_STATUS_FIELD) == PENDING_APPROVAL_STATUS]
-
-
-def _ensure_no_item_deletions(doc, child_docname, incoming_items):
-	existing_docnames = {row.name for row in doc.get(child_docname, [])}
-	incoming_docnames = {row.get("docname") for row in incoming_items if row.get("docname")}
-	missing_docnames = existing_docnames - incoming_docnames
-	if missing_docnames:
-		frappe.throw(_("Deleting items through this approval flow is not supported."))
 
 
 def _get_item_code_changes(doc, child_docname, incoming_items):
@@ -507,6 +697,7 @@ def _mark_rows_pending_approval(doc, changed_rows, parent_doctype, reason):
 				APPROVAL_REASON_FIELD: reason,
 				APPROVAL_DATA_FIELD: frappe.as_json(
 					{
+						"action": change.get("action") or "update",
 						"reason": reason,
 						"requested_by": user,
 						"requested_on": now,
@@ -585,22 +776,13 @@ def _get_row_request_data(row):
 
 def _log_item_update_rejection(doctype, docname, pending_rows, reason):
 	request_reasons = []
-	reverted_row_details = []
 	for row in pending_rows:
 		request_data = _get_row_request_data(row)
 		request_reason = request_data.get("reason") or row.get(APPROVAL_REASON_FIELD)
 		if request_reason:
 			request_reasons.append(_("Row {0}: {1}").format(row.idx, request_reason))
 
-		row_detail = _format_change_details(
-			doctype,
-			row.idx,
-			row.item_code,
-			request_data.get("new_values") or {},
-			request_data.get("old_values") or {},
-		)
-		if row_detail:
-			reverted_row_details.append(row_detail)
+	reverted_row_details = _describe_pending_rows(doctype, pending_rows, reverse=True)
 
 	comment_lines = [_("Pending item updates were rejected and reverted.")]
 	if reason:
@@ -628,13 +810,7 @@ def _log_item_update_request(doctype, docname, doc, changed_rows, reason):
 		row = items_by_name.get(change.get("row_name"))
 		if not row:
 			continue
-		row_detail = _format_change_details(
-			doctype,
-			row.idx,
-			row.item_code,
-			change.get("old_values") or {},
-			change.get("new_values") or {},
-		)
+		row_detail = _describe_request(doctype, row.idx, row.item_code, change)
 		if row_detail:
 			row_descriptions.append(row_detail)
 
@@ -653,6 +829,43 @@ def _log_item_update_request(doctype, docname, doc, changed_rows, reason):
 		"reference_name": docname,
 		"content": "<br>".join(comment_lines),
 	}).insert(ignore_permissions=True)
+
+
+def _log_item_update_approval(doctype, docname, row_details):
+	approver = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
+	comment_lines = [_("Pending item updates were approved by {0}.").format(approver)]
+	if row_details:
+		comment_lines.append(_("Approved change(s): {0}").format(" | ".join(row_details)))
+
+	frappe.get_doc({
+		"doctype": "Comment",
+		"comment_type": "Comment",
+		"reference_doctype": doctype,
+		"reference_name": docname,
+		"content": "<br>".join(comment_lines),
+	}).insert(ignore_permissions=True)
+
+
+def _describe_request(doctype, row_idx, item_code, request_data, reverse=False):
+	"""One-line summary of a row's request; reverse=True describes the revert."""
+	if request_data.get("action") == ACTION_DELETE:
+		label = _("Delete request withdrawn") if reverse else _("Delete requested")
+		return _("Row {0} ({1}) - {2}").format(row_idx, item_code or _("Unknown Item"), label)
+
+	old_values = request_data.get("old_values") or {}
+	new_values = request_data.get("new_values") or {}
+	if reverse:
+		old_values, new_values = new_values, old_values
+
+	return _format_change_details(doctype, row_idx, item_code, old_values, new_values)
+
+
+def _describe_pending_rows(doctype, rows, reverse=False):
+	details = [
+		_describe_request(doctype, row.idx, row.item_code, _get_row_request_data(row), reverse=reverse)
+		for row in rows
+	]
+	return [detail for detail in details if detail]
 
 
 def _format_change_details(doctype, row_idx, item_code, old_values, new_values):
@@ -807,91 +1020,96 @@ def _get_linked_production_plans(sales_order_name, sales_order_items):
 	return {item_code: sorted(plan_names) for item_code, plan_names in plans_by_item.items()}
 
 
-def _notify_approvers(doctype, docname, changed_rows, reason):
-	approval_roles = ORDER_CONFIG[doctype]["approval_roles"]
+def _notify_approvers(doctype, docname, doc, changed_rows, reason):
+	"""Requester -> Super Approver: bell notification always, email too when an
+	outgoing email account is set up."""
 
 	approvers = frappe.get_all(
 		"Has Role",
-		filters={"role": ("in", list(approval_roles)), "parenttype": "User"},
-		fields=["parent as user", "parent as email"],
-		pluck="user",
+		filters={"role": APPROVER_ROLE, "parenttype": "User"},
+		pluck="parent",
 	)
-	approvers = list(
-		{u for u in approvers if u not in ("Administrator", "Guest", frappe.session.user)}
-	)
-
+	approvers = {user for user in approvers if user not in ("Administrator", "Guest", frappe.session.user)}
 	if not approvers:
 		return
 
-	requester = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
-	row_count = len(changed_rows)
-	reason_text = f" — Reason: {reason}" if reason else ""
+	requester = _get_full_name(frappe.session.user)
+	items_by_name = {row.name: row for row in doc.get("items", [])}
+	row_details = []
+	for change in changed_rows:
+		row = items_by_name.get(change["row_name"])
+		if row:
+			row_details.append(_describe_request(doctype, row.idx, row.item_code, change))
 
-	subject = _("{0} {1}: {2} item row(s) pending your approval").format(
-		doctype, docname, row_count
+	subject = _("{0} {1}: {2} item row(s) pending your approval").format(doctype, docname, len(changed_rows))
+	intro = _("<b>{0}</b> has requested approval for item changes in <b>{1} {2}</b>.").format(
+		frappe.utils.escape_html(requester), doctype, docname
 	)
-	plain_message = _(
-		"{0} updated {1} item row(s) in {2} {3} and the change requires approval.{4}"
-	).format(requester, row_count, doctype, docname, reason_text)
+	_send_notifications(approvers, doctype, docname, subject, intro, row_details, reason, _("Reason"))
+
+
+def _notify_requesters(doctype, docname, requesters, approved, row_details, reason=None):
+	"""Super Approver -> the user(s) who raised the request."""
+
+	recipients = {user for user in requesters if user and user not in ("Guest", frappe.session.user)}
+	if not recipients:
+		return
+
+	approver = _get_full_name(frappe.session.user)
+	decision = _("approved") if approved else _("rejected")
+	subject = _("{0} {1}: your item update request was {2}").format(doctype, docname, decision)
+	intro = _("<b>{0}</b> has {1} your item update request for <b>{2} {3}</b>.").format(
+		frappe.utils.escape_html(approver), decision, doctype, docname
+	)
+	_send_notifications(recipients, doctype, docname, subject, intro, row_details, reason, _("Rejection Reason"))
+
+
+def _get_requesters(rows):
+	return {_get_row_request_data(row).get("requested_by") for row in rows} - {None}
+
+
+def _get_full_name(user):
+	return frappe.db.get_value("User", user, "full_name") or user
+
+
+def _send_notifications(users, doctype, docname, subject, intro, row_details, reason, reason_label):
+	reason_html = (
+		f"<p><b>{reason_label}:</b> {frappe.utils.escape_html(reason)}</p>" if reason else ""
+	)
+	details_html = "".join(
+		f"<li>{frappe.utils.escape_html(detail)}</li>" for detail in row_details
+	)
+	details_html = f"<ul>{details_html}</ul>" if details_html else ""
 
 	doc_url = frappe.utils.get_url_to_form(doctype, docname)
-
-	# Build change detail rows for the email table
-	change_rows_html = ""
-	for row in changed_rows:
-		data = {}
-		try:
-			raw = frappe.db.get_value(
-				ORDER_CONFIG[doctype]["child_doctype"],
-				row,
-				APPROVAL_DATA_FIELD,
-			)
-			if raw:
-				import json as _json
-				data = _json.loads(raw)
-		except Exception:
-			pass
-		changed_fields = ", ".join(data.get("changed_fields", [])) or "—"
-		item_code = data.get("new_values", {}).get("item_code", "") or row
-		change_rows_html += f"<tr><td style='padding:4px 8px;border:1px solid #ddd;'>{item_code}</td><td style='padding:4px 8px;border:1px solid #ddd;'>{changed_fields}</td></tr>"
-
 	email_body = f"""
 <p>Hello,</p>
-<p><b>{requester}</b> has requested approval for changes in <b>{doctype} {docname}</b>.</p>
-{"<p><b>Reason:</b> " + reason + "</p>" if reason else ""}
-<table style="border-collapse:collapse;width:100%;margin:12px 0;">
-  <thead>
-    <tr style="background:#f5f5f5;">
-      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Item</th>
-      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Changed Fields</th>
-    </tr>
-  </thead>
-  <tbody>
-    {change_rows_html if change_rows_html else "<tr><td colspan='2' style='padding:6px 8px;border:1px solid #ddd;'>" + str(row_count) + " row(s) updated</td></tr>"}
-  </tbody>
-</table>
+<p>{intro}</p>
+{reason_html}
+{details_html}
 <p><a href="{doc_url}" style="background:#4CAF50;color:white;padding:8px 16px;text-decoration:none;border-radius:4px;">Open {doctype}</a></p>
 <p style="color:#888;font-size:12px;">This is an automated notification from Ujwal Industries ERP.</p>
 """
 
-	approver_emails = frappe.get_all(
+	enabled_users = frappe.get_all(
 		"User",
-		filters={"name": ["in", approvers], "enabled": 1},
+		filters={"name": ["in", list(users)], "enabled": 1},
 		fields=["name", "email"],
 	)
 
-	has_outgoing_email = bool(frappe.db.get_value(
-		"Email Account", {"default_outgoing": 1, "enable_outgoing": 1}, "name"
-	))
+	has_outgoing_email = bool(
+		frappe.db.get_value("Email Account", {"default_outgoing": 1, "enable_outgoing": 1}, "name")
+	)
 
-	for approver in approver_emails:
+	for user in enabled_users:
 		# Bell icon notification
 		frappe.get_doc(
 			{
 				"doctype": "Notification Log",
 				"subject": subject,
-				"email_content": plain_message,
-				"for_user": approver["name"],
+				"email_content": f"<p>{intro}</p>{reason_html}{details_html}",
+				"for_user": user.name,
+				"from_user": frappe.session.user,
 				"document_type": doctype,
 				"document_name": docname,
 				"type": "Alert",
@@ -899,9 +1117,9 @@ def _notify_approvers(doctype, docname, changed_rows, reason):
 		).insert(ignore_permissions=True)
 
 		# Email notification (only if outgoing email account is configured)
-		if has_outgoing_email and approver.get("email"):
+		if has_outgoing_email and user.email:
 			frappe.sendmail(
-				recipients=[approver["email"]],
+				recipients=[user.email],
 				subject=subject,
 				message=email_body,
 				reference_doctype=doctype,
