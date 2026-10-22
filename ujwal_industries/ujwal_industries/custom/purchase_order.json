@@ -1211,7 +1211,7 @@
    "property": "default_print_format",
    "property_type": "Data",
    "row_name": null,
-   "value": "Custom PO"
+   "value": "Print PO"
   },
   {
    "_assign": null,
