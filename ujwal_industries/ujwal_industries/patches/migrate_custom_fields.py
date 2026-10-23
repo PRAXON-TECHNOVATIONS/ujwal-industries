@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Ujwal Industries and contributors
 # For license information, please see license.txt
 
-from .custom_fields import asset, asset_category, manufacturing_settings, order_item_approval, sales_order, serial_no
+from .custom_fields import asset, asset_category, manufacturing_settings, order_item_approval, purchase_order, sales_order, serial_no
 
 
 def run_all():
@@ -12,3 +12,4 @@ def run_all():
     asset_category.create_fields()
     sales_order.create_fields()
     order_item_approval.create_fields()
+    purchase_order.create_fields()
