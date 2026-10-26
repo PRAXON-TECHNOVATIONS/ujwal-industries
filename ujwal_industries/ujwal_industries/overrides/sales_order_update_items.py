@@ -1101,8 +1101,9 @@ def _send_notifications(users, doctype, docname, subject, intro, row_details, re
 		frappe.db.get_value("Email Account", {"default_outgoing": 1, "enable_outgoing": 1}, "name")
 	)
 
+	# Bell notifications for everyone first: an email failure below must never
+	# stop the remaining users from being notified.
 	for user in enabled_users:
-		# Bell icon notification
 		frappe.get_doc(
 			{
 				"doctype": "Notification Log",
@@ -1116,13 +1117,21 @@ def _send_notifications(users, doctype, docname, subject, intro, row_details, re
 			}
 		).insert(ignore_permissions=True)
 
-		# Email notification (only if outgoing email account is configured)
-		if has_outgoing_email and user.email:
+	if not has_outgoing_email:
+		return
+
+	# Queued (not now=True) so a misconfigured SMTP account fails in the
+	# background instead of aborting this request mid-loop.
+	for user in enabled_users:
+		if not user.email:
+			continue
+		try:
 			frappe.sendmail(
 				recipients=[user.email],
 				subject=subject,
 				message=email_body,
 				reference_doctype=doctype,
 				reference_name=docname,
-				now=True,
 			)
+		except Exception:
+			frappe.log_error(title=f"Item update notification email failed: {doctype} {docname}")
