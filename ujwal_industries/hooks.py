@@ -190,6 +190,7 @@ has_permission = {
 override_doctype_class = {
 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
 	"Asset Category": "ujwal_industries.ujwal_industries.overrides.asset_category.CustomAssetCategory",
+	"Salary Slip": "ujwal_industries.ujwal_industries.overrides.salary_slip_class.CustomSalarySlip",
 }
 
 # Document Events
