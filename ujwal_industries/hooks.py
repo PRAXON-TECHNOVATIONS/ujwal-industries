@@ -190,6 +190,7 @@ has_permission = {
 override_doctype_class = {
 	"Production Plan": "ujwal_industries.ujwal_industries.overrides.production_plan_class.CustomProductionPlan",
 	"Asset Category": "ujwal_industries.ujwal_industries.overrides.asset_category.CustomAssetCategory",
+	"Salary Slip": "ujwal_industries.ujwal_industries.overrides.salary_slip_class.CustomSalarySlip",
 }
 
 # Document Events
@@ -266,6 +267,9 @@ doc_events = {
 	"Delivery Note": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers",
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.delivery_note.before_insert",
+	},
+	"Purchase Invoice": {
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_update_items.block_invoice_rows_pending_approval",
 	},
 	"Sales Invoice": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers",

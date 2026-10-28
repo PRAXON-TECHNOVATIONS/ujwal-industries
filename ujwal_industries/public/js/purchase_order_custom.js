@@ -316,15 +316,36 @@ function ujwal_po_update_items_dialog(opts) {
 		);
 	}
 
+	if (opts.rate_only) {
+		fields.forEach((df) => {
+			if (df.fieldname !== 'rate') {
+				df.read_only = 1;
+				df.reqd = 0;
+			}
+		});
+	}
+
 	let dialog = new frappe.ui.Dialog({
-		title: __('Update Items'),
+		title: opts.rate_only ? __('Update Items (Rate only)') : __('Update Items'),
 		size: 'extra-large',
 		fields: [
+			...(opts.rate_only
+				? [
+						{
+							fieldtype: 'HTML',
+							fieldname: 'rate_only_note',
+							options: `<div class="alert alert-info small">${__(
+								'A Subcontracting Order exists against this Purchase Order, so only the Rate can be changed. The new rate is also applied to the Subcontracting Order.'
+							)}</div>`,
+						},
+				  ]
+				: []),
 			{
 				fieldname: 'trans_items',
 				fieldtype: 'Table',
 				label: 'Items',
 				cannot_add_rows: cannot_add_row,
+				cannot_delete_rows: !!opts.rate_only,
 				in_place_edit: false,
 				reqd: 1,
 				data: data,
@@ -526,9 +547,10 @@ function ujwal_add_po_update_items_button(frm) {
 	if (frm.doc.docstatus !== 1 || ['Closed', 'On Hold'].includes(frm.doc.status) || !frm.has_perm('write')) {
 		return;
 	}
-	if (frm.doc.__onload && frm.doc.__onload.can_update_items === false) {
-		return;
-	}
+	// Core's can_update_items is false only when a Subcontracting Order
+	// exists against this PO. The server still allows rate changes then
+	// (and pushes the new rate into the SCO), so open the dialog rate-only.
+	const rate_only = !!(frm.doc.__onload && frm.doc.__onload.can_update_items === false);
 
 	// add_custom_button skips a label that already exists, so this never
 	// duplicates core's button.
@@ -537,7 +559,8 @@ function ujwal_add_po_update_items_button(frm) {
 			frm: frm,
 			child_docname: 'items',
 			child_doctype: 'Purchase Order Detail',
-			cannot_add_row: false,
+			cannot_add_row: rate_only,
+			rate_only: rate_only,
 		});
 	});
 }
