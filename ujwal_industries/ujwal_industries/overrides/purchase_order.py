@@ -156,6 +156,15 @@ def set_generated_on(doc, method=None):
         doc.custom_generated_on = frappe.utils.now_datetime()
 
 
+def validate_po_type(doc, method=None):
+    """A PO is either Subcontracted or Service, never both."""
+    if doc.get("is_subcontracted") and doc.get("custom_service_po"):
+        frappe.throw(
+            frappe._("A Purchase Order can be either Subcontracted or Service PO, not both. Please untick one."),
+            title=frappe._("Conflicting PO Type"),
+        )
+
+
 def date_po_on_submit(doc, method=None):
     """
     before_validate on submit: PO date becomes the submit date (ERPNext's own date checks

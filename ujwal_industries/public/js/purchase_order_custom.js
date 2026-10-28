@@ -10,7 +10,25 @@ frappe.ui.form.on('Purchase Order', {
 		ujwal_style_po_pending_rows(frm);
 		ujwal_fetch_subcontract_po_rates_for_all_rows(frm);
 	},
+	is_subcontracted: function (frm) {
+		ujwal_check_po_type_conflict(frm, 'is_subcontracted');
+	},
+	custom_service_po: function (frm) {
+		ujwal_check_po_type_conflict(frm, 'custom_service_po');
+	},
 });
+
+function ujwal_check_po_type_conflict(frm, changed_field) {
+	// Subcontracted and Service PO are mutually exclusive — undo the tick
+	// that just caused the clash. Server-side validate enforces it too.
+	if (!(frm.doc.is_subcontracted && frm.doc.custom_service_po)) return;
+	frm.set_value(changed_field, 0);
+	frappe.msgprint({
+		title: __('Conflicting PO Type'),
+		indicator: 'orange',
+		message: __('A Purchase Order can be either Subcontracted or Service PO, not both. Please untick one first.'),
+	});
+}
 
 frappe.ui.form.on('Purchase Order Item', {
 	fg_item(frm, cdt, cdn) {

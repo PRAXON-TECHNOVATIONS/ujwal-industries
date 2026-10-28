@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-28 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "rm_code",
+  "rm_name",
+  "column_break_1",
+  "rm_rate_per_kg",
+  "gross_wt_per_pc",
+  "gross_rm_cost_per_pc"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "rm_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "RM Code"
+  },
+  {
+   "columns": 2,
+   "fieldname": "rm_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "RM Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "fieldname": "rm_rate_per_kg",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "RM Rate / Kg",
+   "precision": "3"
+  },
+  {
+   "columns": 2,
+   "fieldname": "gross_wt_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Gross Wt / Pc (Kg)",
+   "precision": "6"
+  },
+  {
+   "columns": 2,
+   "fieldname": "gross_rm_cost_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Gross RM Cost / Pc",
+   "precision": "3",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-28 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Quotation Cost Estimation RM Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

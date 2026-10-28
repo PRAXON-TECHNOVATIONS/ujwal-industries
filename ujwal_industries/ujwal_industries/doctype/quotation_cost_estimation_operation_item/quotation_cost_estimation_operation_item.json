@@ -1,0 +1,79 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-28 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "operation",
+  "workstation",
+  "machine_name",
+  "shift_rate_per_min",
+  "time_per_pc_min",
+  "rate_per_pc"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "operation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Operation",
+   "options": "Operation",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Machine",
+   "options": "Workstation"
+  },
+  {
+   "columns": 2,
+   "fieldname": "machine_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Machine Name",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "shift_rate_per_min",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Shift Rate per Min",
+   "precision": "3"
+  },
+  {
+   "columns": 1,
+   "fieldname": "time_per_pc_min",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Per Min / Pc"
+  },
+  {
+   "columns": 2,
+   "fieldname": "rate_per_pc",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate per Pc",
+   "precision": "3"
+  }
+ ],
+ "grid_page_length": 50,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-28 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Ujwal Industries",
+ "name": "Quotation Cost Estimation Operation Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

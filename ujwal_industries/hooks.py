@@ -354,6 +354,7 @@ doc_events = {
 		],
 		"before_validate": "ujwal_industries.ujwal_industries.overrides.purchase_order.date_po_on_submit",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.purchase_order.autoname",
+		"validate": "ujwal_industries.ujwal_industries.overrides.purchase_order.validate_po_type",
 		"on_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.notify_store_incharge_on_purchase_order_submit",
 		"on_cancel": "ujwal_industries.ujwal_industries.overrides.sales_order_notifications.remove_assignments_on_cancel",
 	},
