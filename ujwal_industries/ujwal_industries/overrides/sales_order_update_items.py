@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate
+from frappe.utils import cstr, flt, getdate
 
 from erpnext.controllers.accounts_controller import update_child_qty_rate as erpnext_update_child_qty_rate
 from erpnext.controllers.accounts_controller import validate_child_on_delete
@@ -85,6 +85,9 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 	_validate_order_editable(doc)
 	_ensure_no_pending_item_approvals(doc, child_docname)
 
+	if _is_po_with_subcontracting_order(doc):
+		_validate_rate_only_update(doc, child_docname, incoming_items)
+
 	deleted_rows = _get_requested_deletions(doc, child_docname, incoming_items)
 	_validate_row_deletions(doc, deleted_rows, incoming_items)
 
@@ -109,23 +112,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 		_validate_item_code_changes(doc, item_code_changes, validate_new_item=True)
 		_apply_item_code_changes(doc, item_code_changes)
 
-	trans_items = frappe.as_json(incoming_items)
-
-	if parent_doctype == "Sales Order":
-		with _position_number_not_mandatory():
-			result = erpnext_update_child_qty_rate(
-				parent_doctype=parent_doctype,
-				trans_items=trans_items,
-				parent_doctype_name=parent_doctype_name,
-				child_docname=child_docname,
-			)
-	else:
-		result = erpnext_update_child_qty_rate(
-			parent_doctype=parent_doctype,
-			trans_items=trans_items,
-			parent_doctype_name=parent_doctype_name,
-			child_docname=child_docname,
-		)
+	result = _run_core_update(parent_doctype, parent_doctype_name, incoming_items, child_docname)
 
 	if item_code_changes:
 		_refresh_bins_for_replaced_items(parent_doctype, item_code_changes)
@@ -205,12 +192,7 @@ def reject_pending_item_updates(doctype, docname, reason=None):
 
 	frappe.flags.ujwal_skip_item_update_approval = True
 	try:
-		erpnext_update_child_qty_rate(
-			parent_doctype=doctype,
-			trans_items=frappe.as_json(reverted_items),
-			parent_doctype_name=docname,
-			child_docname="items",
-		)
+		_run_core_update(doctype, docname, reverted_items, "items")
 	finally:
 		frappe.flags.ujwal_skip_item_update_approval = False
 
@@ -242,8 +224,206 @@ def _validate_order_editable(doc):
 	if doc.status in LOCKED_STATUSES:
 		frappe.throw(_("Items cannot be updated while {0} {1} is {2}.").format(doc.doctype, doc.name, doc.status))
 
-	if doc.doctype == "Purchase Order" and not doc.can_update_items():
-		frappe.throw(_("Items cannot be updated because a Subcontracting Order exists against this Purchase Order."))
+	# A subcontracted PO with a Subcontracting Order is still editable, but
+	# rate-only -- see _validate_rate_only_update().
+
+
+def _run_core_update(parent_doctype, parent_doctype_name, items, child_docname):
+	trans_items = frappe.as_json(items)
+
+	if parent_doctype == "Sales Order":
+		with _position_number_not_mandatory():
+			return erpnext_update_child_qty_rate(
+				parent_doctype=parent_doctype,
+				trans_items=trans_items,
+				parent_doctype_name=parent_doctype_name,
+				child_docname=child_docname,
+			)
+
+	doc = frappe.get_doc(parent_doctype, parent_doctype_name)
+	if not _is_po_with_subcontracting_order(doc):
+		return erpnext_update_child_qty_rate(
+			parent_doctype=parent_doctype,
+			trans_items=trans_items,
+			parent_doctype_name=parent_doctype_name,
+			child_docname=child_docname,
+		)
+
+	frappe.flags.ujwal_po_rate_only_update = True
+	try:
+		result = erpnext_update_child_qty_rate(
+			parent_doctype=parent_doctype,
+			trans_items=trans_items,
+			parent_doctype_name=parent_doctype_name,
+			child_docname=child_docname,
+		)
+	finally:
+		frappe.flags.ujwal_po_rate_only_update = False
+
+	_sync_po_rates_to_subcontracting_orders(parent_doctype_name)
+	return result
+
+
+def _is_po_with_subcontracting_order(doc):
+	return (
+		doc.doctype == "Purchase Order"
+		and doc.is_subcontracted
+		and not doc.is_old_subcontracting_flow
+		and bool(_get_active_subcontracting_orders(doc.name))
+	)
+
+
+def _get_active_subcontracting_orders(purchase_order):
+	return frappe.get_all(
+		"Subcontracting Order",
+		filters={"purchase_order": purchase_order, "docstatus": ["!=", 2]},
+		pluck="name",
+	)
+
+
+def _validate_rate_only_update(doc, child_docname, incoming_items):
+	"""Once a Subcontracting Order exists, core blocks Update Items on the PO
+	entirely. Qty / item / FG changes would leave the SCO, its transfers and
+	receipts out of step, so we only open up the rate -- the subcontractor
+	revising the job work rate is the case that has to be handled."""
+	current_rows = {row.name: row for row in doc.get(child_docname, [])}
+	incoming_docnames = {row.get("docname") for row in incoming_items if row.get("docname")}
+	sco_label = _("a Subcontracting Order exists against this Purchase Order")
+
+	if any(row.get("item_code") and not row.get("docname") for row in incoming_items):
+		frappe.throw(_("Rows cannot be added because {0}. Only the Rate can be updated.").format(sco_label))
+
+	if set(current_rows) - incoming_docnames:
+		frappe.throw(_("Rows cannot be removed because {0}. Only the Rate can be updated.").format(sco_label))
+
+	errors = []
+	for incoming in incoming_items:
+		row = current_rows.get(incoming.get("docname"))
+		if not row:
+			continue
+
+		changed = []
+		for fieldname, label in (("item_code", _("Item Code")), ("uom", _("UOM")), ("fg_item", _("Finished Good Item"))):
+			if incoming.get(fieldname) is not None and cstr(incoming.get(fieldname)) != cstr(row.get(fieldname)):
+				changed.append(label)
+
+		for fieldname, label in (
+			("qty", _("Qty")),
+			("conversion_factor", _("Conversion Factor")),
+			("fg_item_qty", _("Finished Good Item Qty")),
+		):
+			if incoming.get(fieldname) is not None and flt(incoming.get(fieldname)) != flt(row.get(fieldname)):
+				changed.append(label)
+
+		if incoming.get("schedule_date") and getdate(incoming.get("schedule_date")) != getdate(row.schedule_date):
+			changed.append(_("Reqd By Date"))
+
+		if changed:
+			errors.append(_("Row #{0}: {1}").format(row.idx, ", ".join(changed)))
+
+	if errors:
+		frappe.throw(
+			_("Only the Rate can be updated because {0}. These fields were changed:").format(sco_label)
+			+ "<br>"
+			+ "<br>".join(errors)
+		)
+
+
+def _sync_po_rates_to_subcontracting_orders(purchase_order):
+	"""Push the PO's (new) job work rate into every live Subcontracting Order:
+	service item rate/amount, then the FG rows' service cost and rate, the
+	same way SubcontractingOrder.set_missing_values() derives them. Raw
+	material cost per qty is left as it is. Already submitted Subcontracting
+	Receipts are not touched."""
+	po_rates = dict(
+		frappe.get_all(
+			"Purchase Order Item",
+			filters={"parent": purchase_order, "parenttype": "Purchase Order"},
+			fields=["name", "rate"],
+			as_list=True,
+		)
+	)
+
+	for sco_name in _get_active_subcontracting_orders(purchase_order):
+		sco = frappe.get_doc("Subcontracting Order", sco_name)
+
+		changed_service_items = []
+		for service_item in sco.service_items:
+			new_rate = po_rates.get(service_item.purchase_order_item)
+			if new_rate is None or flt(service_item.rate) == flt(new_rate):
+				continue
+			changed_service_items.append((service_item.idx, service_item.item_code, service_item.rate, new_rate))
+			service_item.rate = new_rate
+			service_item.amount = flt(service_item.qty) * flt(new_rate)
+
+		if not changed_service_items:
+			continue
+
+		sco.calculate_service_costs()
+		sco.calculate_items_qty_and_amount()
+		_recalculate_subcontracting_order_taxes(sco)
+
+		for row in sco.service_items + sco.items + sco.get("taxes", []):
+			row.db_update()
+		sco.db_set(
+			{
+				"total": sco.total,
+				"total_qty": sco.total_qty,
+				"total_taxes": sco.get("total_taxes"),
+				"base_grand_total": sco.get("base_grand_total"),
+			},
+			update_modified=True,
+		)
+
+		sco.add_comment(
+			"Comment",
+			_("Job work rate updated from Purchase Order {0}:<br>{1}").format(
+				purchase_order,
+				"<br>".join(
+					_("Row #{0} {1}: {2} → {3}").format(idx, item_code, flt(old), flt(new))
+					for idx, item_code, old, new in changed_service_items
+				),
+			),
+		)
+
+
+def _recalculate_subcontracting_order_taxes(sco):
+	"""India Compliance keeps e-waybill "Estimated Taxes" on the SCO, worked
+	out from its total in validate(). We write the SCO with db_update, so redo
+	that calculation here or the taxes / grand total keep the old rate."""
+	if not sco.get("taxes"):
+		return
+
+	from india_compliance.gst_india.overrides.subcontracting_transaction import (
+		SUBCONTRACTING_ORDER_RECEIPT_FIELD_MAP,
+	)
+	from india_compliance.gst_india.utils.taxes_controller import CustomTaxController
+
+	CustomTaxController(sco, SUBCONTRACTING_ORDER_RECEIPT_FIELD_MAP).set_taxes_and_totals()
+
+
+def _allow_po_update_items_with_sco():
+	"""Core update_child_qty_rate throws for a subcontracted PO whenever
+	can_update_items() is False (a Subcontracting Order exists). While our
+	rate-only update runs (request-local flag), let it through. Everywhere
+	else -- onload, core's own checks -- the original answer is kept."""
+	from erpnext.buying.doctype.purchase_order.purchase_order import PurchaseOrder
+
+	if getattr(PurchaseOrder.can_update_items, "_ujwal_patched", False):
+		return
+
+	original = PurchaseOrder.can_update_items
+
+	def can_update_items(self):
+		if frappe.flags.ujwal_po_rate_only_update:
+			return True
+		return original(self)
+
+	can_update_items._ujwal_patched = True
+	PurchaseOrder.can_update_items = can_update_items
+
+
+_allow_po_update_items_with_sco()
 
 
 def _get_requested_deletions(doc, child_docname, incoming_items):
@@ -1135,3 +1315,50 @@ def _send_notifications(users, doctype, docname, subject, intro, row_details, re
 			)
 		except Exception:
 			frappe.log_error(title=f"Item update notification email failed: {doctype} {docname}")
+
+
+def block_invoice_rows_pending_approval(doc, method=None):
+	"""Invoice before_submit: an order row whose Update Items change is still
+	waiting for the Super Approver must not be billed yet -- otherwise the
+	unapproved rate gets invoiced, and a later Reject can't revert the order
+	below the billed amount. Only the affected rows block; the rest of the
+	order can be invoiced. Drafts and rows without an order link are left
+	alone."""
+	order_doctype, config = next(
+		(order_doctype, config)
+		for order_doctype, config in ORDER_CONFIG.items()
+		if config["invoice_item_doctype"] == f"{doc.doctype} Item"
+	)
+	link_field = config["invoice_link_field"]
+
+	order_rows = {row.get(link_field) for row in doc.get("items", []) if row.get(link_field)}
+	if not order_rows:
+		return
+
+	pending = {
+		row.name: row
+		for row in frappe.get_all(
+			config["child_doctype"],
+			filters={"name": ["in", list(order_rows)], APPROVAL_STATUS_FIELD: PENDING_APPROVAL_STATUS},
+			fields=["name", "parent", "idx"],
+		)
+	}
+	if not pending:
+		return
+
+	errors = []
+	for row in doc.get("items", []):
+		order_row = pending.get(row.get(link_field))
+		if order_row:
+			errors.append(
+				_("Row #{0} ({1}): {2} {3} row #{4} has an item update pending Super Approver approval.").format(
+					row.idx, row.item_code, order_doctype, order_row.parent, order_row.idx
+				)
+			)
+
+	frappe.throw(
+		"<br>".join(errors)
+		+ "<br><br>"
+		+ _("Submit after the update is approved, or remove these rows from the invoice."),
+		title=_("Item Update Pending Approval"),
+	)

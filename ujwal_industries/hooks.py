@@ -268,6 +268,9 @@ doc_events = {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_delivery_note_position_numbers",
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.delivery_note.before_insert",
 	},
+	"Purchase Invoice": {
+		"before_submit": "ujwal_industries.ujwal_industries.overrides.sales_order_update_items.block_invoice_rows_pending_approval",
+	},
 	"Sales Invoice": {
 		"before_save": "ujwal_industries.ujwal_industries.overrides.position_number_sync.sync_sales_invoice_position_numbers",
 		"before_insert": "ujwal_industries.ujwal_industries.overrides.sales_invoice.before_insert",
