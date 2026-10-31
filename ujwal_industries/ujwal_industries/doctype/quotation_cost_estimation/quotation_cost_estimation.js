@@ -1,6 +1,14 @@
 // Copyright (c) 2026, Ujwal Industries and contributors
 // For license information, please see license.txt
 
+// FUTURE USE — currently hidden (2026-10-31).
+// This doctype is not needed in the system right now, so all role permissions
+// were removed from quotation_cost_estimation.json: only Administrator can
+// open it and it does not appear for any other user. The code is kept as-is
+// for a future quotation-costing flow (costing new parts that have no Item/BOM
+// yet). To re-enable: add role permissions back in the JSON (previously System
+// Manager, Manufacturing Manager, Manufacturing User) and run `bench migrate`.
+
 // Same costing as Cost Estimation, but Part/RM/Scrap are typed by hand (no
 // Item/BOM links) and every figure is per piece — only the final total is
 // multiplied by Quantity. Keep formulas in sync with
