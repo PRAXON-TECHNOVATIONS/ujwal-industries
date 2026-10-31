@@ -282,59 +282,19 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-28 00:00:00",
+ "modified": "2026-10-31 00:00:00",
  "modified_by": "Administrator",
  "module": "Ujwal Industries",
  "name": "Quotation Cost Estimation",
  "naming_rule": "Expression (old style)",
  "owner": "Administrator",
- "permissions": [
-  {
-   "amend": 1,
-   "cancel": 1,
-   "create": 1,
-   "delete": 1,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "System Manager",
-   "select": 1,
-   "share": 1,
-   "submit": 1,
-   "write": 1
-  },
-  {
-   "create": 1,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "Manufacturing Manager",
-   "select": 1,
-   "share": 1,
-   "submit": 1,
-   "write": 1
-  },
-  {
-   "create": 1,
-   "email": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "Manufacturing User",
-   "select": 1,
-   "share": 1,
-   "write": 1
-  }
- ],
+ "permissions": [],
  "row_format": "Dynamic",
  "search_fields": "part_name, part_no",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
  "title_field": "part_name",
- "show_title_field_in_link": 1
+ "show_title_field_in_link": 1,
+ "description": "PARKED FOR FUTURE USE: hidden for now by removing all role permissions (only Administrator can open it). To bring it back, add role permissions again (System Manager, Manufacturing Manager, Manufacturing User) and run bench migrate."
 }
