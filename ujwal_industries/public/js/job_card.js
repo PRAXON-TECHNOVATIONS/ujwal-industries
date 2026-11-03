@@ -188,6 +188,7 @@ frappe.ui.form.on("Job Card", {
 		// Subscribe to real-time workstation status updates
 		setup_realtime_workstation_status(frm);
 		hide_button(frm);
+		show_tool_required_alert(frm);
 	},
 
 	onload: function (frm) {
@@ -242,6 +243,10 @@ frappe.ui.form.on("Job Card", {
 				});
 			}
 		}
+
+		// Timer buttons are added async (after the Work Order lookup), so
+		// re-apply the tool guard here as well as in refresh.
+		hide_button(frm);
 	},
 });
 
@@ -307,15 +312,26 @@ function hide_button(frm) {
 		frm.page.remove_inner_button(__("Start Job"));
 		frm.page.remove_inner_button(__("Resume Job"));
 		hide_job_card_timer(frm);
+	} else if (!(frm.doc.__onload && frm.doc.__onload.has_active_downtime)) {
+		// hide_job_card_timer() leaves an inline display:none on the toolbar that
+		// survives save, so once the tool is set bring the buttons back without
+		// needing a manual reload.
+		frm.page.inner_toolbar.css("display", "");
 	}
 }
 
-function hide_job_card_timer(frm) {
-	// Hide stopwatch shown in page header
-	$(frm.page.wrapper)
-		.find(".page-actions .custom-actions .stopwatch")
-		.closest(".custom-actions")
-		.hide();
+// Tell the operator why Start Job is missing. Called from refresh only, so the
+// alert is added once per render. Skipped when a downtime alert is active.
+function show_tool_required_alert(frm) {
+	const requires_tool = frm.doc.__onload && frm.doc.__onload.operation_requires_tool;
+	const has_active_downtime = frm.doc.__onload && frm.doc.__onload.has_active_downtime;
+	if (requires_tool && !frm.doc.custom_tool_name && frm.doc.docstatus === 0 && !has_active_downtime) {
+		frm.dashboard.add_comment(
+			__("Select a <b>Tool Name</b> and save to enable <b>Start Job</b> - this operation requires a tool."),
+			"yellow",
+			true
+		);
+	}
 }
 
 function hide_job_card_timer(frm) {
