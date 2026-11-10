@@ -82,6 +82,7 @@ doctype_js = {
 	"Sales Order": "public/js/sales_order_custom.js",
 	"Purchase Order": "public/js/purchase_order_custom.js",
 	"Purchase Receipt": "public/js/purchase_receipt.js",
+	"Job Applicant": "public/js/job_applicant.js",
 }
 doctype_tree_js = {
 	"Asset Category": "public/js/asset_category_tree.js",
@@ -198,6 +199,10 @@ override_doctype_class = {
 # Hook on document methods and events
 
 doc_events = {
+	"Job Applicant": {
+		"before_insert": "ujwal_industries.ujwal_industries.overrides.job_applicant.copy_job_opening_skills",
+		"validate": "ujwal_industries.ujwal_industries.overrides.job_applicant.validate_skill_ratings",
+	},
 	"Item": {
 		"validate": "ujwal_industries.ujwal_industries.overrides.item.validate_subcontracting_suppliers",
 		"autoname": "ujwal_industries.ujwal_industries.overrides.item.autoname",

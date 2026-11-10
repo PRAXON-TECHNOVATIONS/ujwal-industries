@@ -1,0 +1,35 @@
+{
+ "custom_fields": [
+  {
+   "dt": "Job Applicant",
+   "fieldname": "custom_skills_section",
+   "fieldtype": "Section Break",
+   "label": "Skills",
+   "insert_after": "resume_link",
+   "name": "Job Applicant-custom_skills_section",
+   "doctype": "Custom Field",
+   "module": "Ujwal Industries",
+   "is_system_generated": 0,
+   "modified": "2026-11-10 13:20:00.000000"
+  },
+  {
+   "dt": "Job Applicant",
+   "fieldname": "custom_skills",
+   "fieldtype": "Table",
+   "label": "Skills",
+   "insert_after": "custom_skills_section",
+   "name": "Job Applicant-custom_skills",
+   "doctype": "Custom Field",
+   "module": "Ujwal Industries",
+   "is_system_generated": 0,
+   "modified": "2026-11-10 13:20:00.000000",
+   "options": "Job Applicant Skill",
+   "description": "Skills from the Job Opening are filled automatically. Add rows for any extra skills and give a skill rating for each."
+  }
+ ],
+ "custom_perms": [],
+ "doctype": "Job Applicant",
+ "links": [],
+ "property_setters": [],
+ "sync_on_migrate": 1
+}
